@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# models and textures
+*.dds binary
+*.glb binary
+*.jpg binary
+*.png binary
+*.obj text eol=lf -diff
+*.mtl text eol=lf

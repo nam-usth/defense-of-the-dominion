@@ -1,0 +1,6 @@
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+# Claude Code: personal permission settings
+.claude/settings.local.json

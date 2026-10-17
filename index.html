@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Defense of the Dominion</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 29 9.5v13L16 30 3 22.5v-13z' fill='%230b1a2e' stroke='%234aa8ff' stroke-width='2'/%3E%3Cpath d='M10 19h12v-4l-6-4-6 4z' fill='%234aa8ff'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<link rel="stylesheet" href="css/hud.css?v=1">
+</head>
+<body>
+<!-- Icon sprite (24×24, stroke icons unless .solid) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-strike" viewBox="0 0 24 24"><path d="M12 2l2.2 7.2L21 12l-6.8 2.1L13 20l2.5 2h-7L11 20l-1.2-5.9L3 12l6.8-2.8z"/></symbol>
+  <symbol id="i-nuke" viewBox="0 0 24 24"><path class="f" d="M10.5 9.4L7.5 4.2A9 9 0 0 1 16.5 4.2L13.5 9.4A3 3 0 0 0 10.5 9.4z M15 12h6a9 9 0 0 1-4.5 7.8l-3-5.2A3 3 0 0 0 15 12z M10.5 14.6l-3 5.2A9 9 0 0 1 3 12h6a3 3 0 0 0 1.5 2.6z" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-roster" viewBox="0 0 24 24"><circle cx="8.5" cy="8" r="3"/><path d="M2.5 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M15.5 5.2a3 3 0 0 1 0 5.6M17 14.3c2.6.6 4.5 2.9 4.5 5.7"/></symbol>
+  <symbol id="i-damage" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5"/><path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></symbol>
+  <symbol id="i-armor" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.5 7.5-8 9-4.5-1.5-8-4.5-8-9V6z"/><path d="M8.5 11l3.5 3 3.5-3"/></symbol>
+  <symbol id="i-hp" viewBox="0 0 24 24"><path d="M12 2.5l8.5 4.75v9.5L12 21.5l-8.5-4.75v-9.5z"/><path d="M12 8v8M8 12h8"/></symbol>
+  <symbol id="i-ammo" viewBox="0 0 24 24"><path d="M5 20v-9l2-4 2 4v9M10.5 20v-9l2-4 2 4v9M16 20v-9l2-4 2 4v9M3 20.5h18"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="i-view" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-snd" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
+  <symbol id="i-snd-off" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></symbol>
+  <symbol id="i-mineral" viewBox="0 0 24 24"><path d="M12 2l6.5 7.5L12 22 5.5 9.5z" fill="currentColor" stroke="none"/><path d="M5.5 9.5h13M12 2v20" stroke="rgba(0,0,0,.35)" stroke-width="1.2"/></symbol>
+  <symbol id="i-gas" viewBox="0 0 24 24"><path d="M12 2.5s6.5 7.3 6.5 12a6.5 6.5 0 0 1-13 0c0-4.7 6.5-12 6.5-12z" fill="currentColor" stroke="none"/><path d="M9 15.5a3 3 0 0 0 3 3" stroke="rgba(255,255,255,.55)" stroke-width="1.6"/></symbol>
+  <symbol id="i-rank" viewBox="0 0 24 24"><path d="M5 13l7-5 7 5M5 19l7-5 7 5"/></symbol>
+  <symbol id="i-conc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4M5.3 5.3l2.8 2.8M15.9 15.9l2.8 2.8M5.3 18.7l2.8-2.8M15.9 8.1l2.8-2.8"/></symbol>
+  <symbol id="i-snipe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 1.5v7M12 15.5v7M1.5 12h7M15.5 12h7"/></symbol>
+  <symbol id="i-campaign" viewBox="0 0 24 24"><path d="M5 21V3.5M5 4h12l-2.5 4L17 12H5"/></symbol>
+  <symbol id="i-endless" viewBox="0 0 24 24"><path d="M7 8.5c-3 0-4.5 1.6-4.5 3.5S4 15.5 7 15.5c4 0 6-7 10-7 3 0 4.5 1.6 4.5 3.5s-1.5 3.5-4.5 3.5c-4 0-6-7-10-7z"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><path d="M5.5 11h13v10h-13z"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></symbol>
+  <symbol id="i-load" viewBox="0 0 24 24"><path d="M3 6.5h6l2 2.5h10v10.5H3z"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11.5L20 6.5V21H5z"/><path d="M8 3v5h7V3M8 14h8v7H8z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5l12.5 7.5L7 19.5z" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-restart" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 3.5V9h5.5"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11.5L12 4l9 7.5"/><path d="M6 9.5V20h12V9.5"/></symbol>
+  <symbol id="i-cheat" viewBox="0 0 24 24"><path d="M3.5 5h17v14h-17z"/><path d="M7 10l3 2-3 2M12.5 15H17"/></symbol>
+  <symbol id="i-gfx" viewBox="0 0 24 24"><path d="M3 4.5h18v11.5H3z"/><path d="M8 20h8M12 16v4"/></symbol>
+</svg>
+<div id="gw">
+  <canvas id="gc"></canvas>
+  <canvas id="crosshair-canvas"></canvas>
+
+  <!-- ── TOP BAR ──────────────────────────────────────────────────────────── -->
+  <div id="topbar">
+    <div class="tb-stat"><span class="tb-l">WAVE</span><span id="tv-wave" class="tb-v">1</span><span id="tv-wave-max" class="tb-sub">/15</span></div>
+    <div class="tb-stat"><span class="tb-l">SCORE</span><span id="tv-score" class="tb-v">0</span></div>
+    <div class="tb-stat"><span class="tb-l">KILLS</span><span id="tv-kills" class="tb-v">0</span></div>
+    <div class="tb-stat"><span class="tb-l">TIME</span><span id="tv-time" class="tb-v">0:00</span></div>
+    <span id="tv-mode" class="tb-mode">CAMPAIGN</span>
+    <div id="tv-status"></div>
+    <span id="tv-dn-wrap" style="display:none"><span id="tv-dn"></span></span>
+    <span id="tv-rank">PRIVATE</span>
+    <button class="tb-btn" id="tv-snd" onclick="G.toggleMute()" title="Sound on/off [K]"><svg class="ico"><use href="#i-snd"/></svg></button>
+    <button class="tb-btn" onclick="G.toggleGfx()" title="Graphics quality [Q]"><span>GFX</span><span id="tv-gfx">HIGH</span></button>
+    <button class="tb-btn" onclick="G.openMenu()" title="Menu [M / Esc]"><svg class="ico"><use href="#i-menu"/></svg><span>MENU</span></button>
+  </div>
+
+  <!-- ── BOTTOM CONSOLE ───────────────────────────────────────────────────── -->
+  <div id="sc2-console">
+    <!-- Left: hologram projector -->
+    <div id="con-left">
+      <div id="con-portrait">
+        <div id="con-portrait-inner">
+          <canvas id="portrait-canvas" width="120" height="80"></canvas>
+          <span class="holo-corner tl"></span><span class="holo-corner tr"></span>
+          <span class="holo-corner bl"></span><span class="holo-corner br"></span>
+          <div id="holo-scan"></div>
+          <div id="holo-status">&#9672; ONLINE</div>
+          <div id="holo-tier"><span class="ht-dot"></span><span class="ht-dot"></span><span class="ht-dot"></span></div>
+        </div>
+        <div id="con-portrait-label">COMMAND BUNKER</div>
+      </div>
+      <div id="con-wave-bar" title="Campaign: clear wave 15 to win">
+        <span class="wl">WAVE</span><span id="cw-wave">1</span><span id="cw-wave-max">/15</span>
+        <div class="wave-prog"><div id="cw-prog"></div></div>
+      </div>
+    </div>
+    <div class="con-sep"></div>
+
+    <!-- Centre: bunker status -->
+    <div id="con-centre">
+      <div class="cc-main">
+        <div class="cc-head">
+          <span id="con-name">TERRAN BUNKER</span>
+          <span id="con-rank-badge"><svg class="ico"><use href="#i-rank"/></svg><span id="con-rank-name">PRIVATE</span></span>
+          <span class="grow"></span>
+          <span class="cc-armor" title="Armor level — reduces bite damage"><svg class="ico"><use href="#i-armor"/></svg><span id="con-armor">ARMOR 0</span></span>
+        </div>
+        <div class="bar" id="hp-bar"><div class="fill" id="con-hp-fill"></div><div class="ticks"></div><span class="bar-l">HP</span><span class="bar-v" id="con-hp-nums">750 / 750</span></div>
+        <div class="bar" id="ammo-bar"><div class="fill" id="con-ammo-fill"></div><div class="ticks"></div><span class="bar-l">AMMO</span><span class="bar-v" id="con-ammo-nums">30 / 30</span></div>
+        <div class="cc-row">
+          <span class="cc-lbl">SLOTS</span><div id="con-slot-pips"></div><span id="con-slot-count">2/6</span>
+          <span class="grow" style="flex:1"></span>
+          <span class="res min" id="res-min" title="Minerals"><svg class="ico"><use href="#i-mineral"/></svg><span id="cr-min">150</span></span>
+          <span class="res gas" id="res-gas" title="Vespene gas"><svg class="ico"><use href="#i-gas"/></svg><span id="cr-gas">50</span></span>
+        </div>
+        <div id="con-status-text">READY</div>
+      </div>
+      <div id="con-upgrades">
+        <div class="upg-chip" id="upg-dmg"   title="Damage"><svg class="ico"><use href="#i-damage"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-armor" title="Armor"><svg class="ico"><use href="#i-armor"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-hp"    title="Bunker HP"><svg class="ico"><use href="#i-hp"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-ammo"  title="Ammo storage"><svg class="ico"><use href="#i-ammo"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-conc"  title="Concussive Shells" style="display:none"><svg class="ico"><use href="#i-conc"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-snipe" title="Snipe" style="display:none"><svg class="ico"><use href="#i-snipe"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+      </div>
+    </div>
+    <div class="con-sep"></div>
+
+    <!-- Right: command card (details in the hover tooltip) -->
+    <div id="con-right">
+      <div id="con-cmd-title">COMMAND <span>hover for details</span></div>
+      <div id="con-cmd-grid">
+        <div class="cmd-btn" id="cmd-air" data-cmd="air" onclick="G.doAirstrike()">
+          <span class="cmd-key">R</span><svg class="ico"><use href="#i-strike"/></svg><span class="cmd-label">STRIKE</span>
+          <div class="cmd-cd" id="cmd-air-cd"></div>
+        </div>
+        <div class="cmd-btn disabled" id="cmd-nuke" data-cmd="nuke" onclick="G.doNuke()">
+          <span class="cmd-key">N</span><svg class="ico"><use href="#i-nuke"/></svg><span class="cmd-label">NUKE</span>
+          <div class="cmd-cd" id="cmd-nuke-cd"></div>
+        </div>
+        <div class="cmd-btn" id="cmd-roster" data-cmd="roster" onclick="G.toggleRoster()">
+          <span class="cmd-key">B</span><svg class="ico"><use href="#i-roster"/></svg><span class="cmd-label">ROSTER</span>
+        </div>
+        <div class="cmd-btn" id="cmd-view" data-cmd="view" onclick="G.resetView()">
+          <span class="cmd-key">HOME</span><svg class="ico"><use href="#i-view"/></svg><span class="cmd-label">VIEW</span>
+        </div>
+        <div class="cmd-btn" id="cmd-menu" data-cmd="menu" onclick="G.openMenu()">
+          <span class="cmd-key">M</span><svg class="ico"><use href="#i-menu"/></svg><span class="cmd-label">MENU</span>
+        </div>
+        <div class="cmd-btn has-cost" id="cmd-dmg" data-cmd="dmg" onclick="G.buy('dmg')">
+          <span class="cmd-key">1</span><span class="cmd-pips" id="cmd-dmg-lv"><i></i><i></i><i></i></span>
+          <svg class="ico"><use href="#i-damage"/></svg><span class="cmd-label">DAMAGE</span><span class="cmd-cost" id="cmd-dmg-cost"></span>
+        </div>
+        <div class="cmd-btn has-cost" id="cmd-armor" data-cmd="armor" onclick="G.buy('armor')">
+          <span class="cmd-key">2</span><span class="cmd-pips" id="cmd-armor-lv"><i></i><i></i><i></i></span>
+          <svg class="ico"><use href="#i-armor"/></svg><span class="cmd-label">ARMOR</span><span class="cmd-cost" id="cmd-armor-cost"></span>
+        </div>
+        <div class="cmd-btn has-cost" id="cmd-hp" data-cmd="hp" onclick="G.buy('hp')">
+          <span class="cmd-key">3</span><span class="cmd-pips" id="cmd-hp-lv"><i></i><i></i><i></i></span>
+          <svg class="ico"><use href="#i-hp"/></svg><span class="cmd-label">BUNKER</span><span class="cmd-cost" id="cmd-hp-cost"></span>
+        </div>
+        <div class="cmd-btn has-cost" id="cmd-ammo" data-cmd="ammo" onclick="G.buy('ammo')">
+          <span class="cmd-key">4</span><span class="cmd-pips" id="cmd-ammo-lv"><i></i><i></i><i></i></span>
+          <svg class="ico"><use href="#i-ammo"/></svg><span class="cmd-label">AMMO</span><span class="cmd-cost" id="cmd-ammo-cost"></span>
+        </div>
+        <div class="cmd-btn empty-slot" aria-hidden="true"></div>
+      </div>
+    </div>
+  </div>
+  <div id="cmd-tip"></div>
+
+  <!-- SC2-style bunker slot overlay (shown on bunker hover; display only — click-through,
+       so shots at enemies behind the bunker are not swallowed. Roster: B / ROSTER button) -->
+  <div id="slot-overlay">
+    <div id="slot-bar"></div>
+  </div>
+
+  <!-- Bunker roster panel (B / ROSTER; pauses the game) -->
+  <div id="roster-panel">
+    <div class="roster-title">
+      <span class="rt-name">BUNKER ROSTER</span>
+      <span id="roster-slots-label"></span>
+      <span style="flex:1"></span>
+      <span class="rt-paused">&#10073;&#10073; PAUSED</span>
+      <button class="rt-resume" onclick="G.closeRoster()"><svg class="ico"><use href="#i-play"/></svg>RESUME</button>
+    </div>
+    <div class="roster-slots" id="roster-slots"></div>
+    <div class="unit-shop" id="unit-shop"></div>
+    <div class="upgrade-row" id="upgrade-row"></div>
+  </div>
+
+  <!-- MENU overlay -->
+  <div id="menu-overlay">
+    <div id="menu-panel">
+      <div id="menu-title">MENU</div>
+      <div class="menu-section">
+        <div class="menu-label">GRAPHICS QUALITY</div>
+        <div class="menu-row">
+          <button class="menu-gfx-btn" id="menu-gfx-high" onclick="G.setGfx('HIGH')">HIGH</button>
+          <button class="menu-gfx-btn" id="menu-gfx-low"  onclick="G.setGfx('LOW')">LOW</button>
+        </div>
+        <div class="menu-note" id="menu-gfx-desc">Shadows, soft shadow maps, hi-res rendering</div>
+      </div>
+      <div class="menu-section">
+        <div class="menu-label">EXPERIMENTAL</div>
+        <label class="menu-check"><input type="checkbox" id="menu-dn-cb" onchange="G.toggleDayNight()">&#9728; / &#9789; DAY/NIGHT CYCLE</label>
+        <div class="menu-note">At night only the area around the bunker is visible — enemies appear when they come close. [Y] toggles.</div>
+      </div>
+      <div class="menu-section">
+        <div class="menu-label">SOUND</div>
+        <div class="menu-row">
+          <label class="menu-check"><input type="checkbox" id="menu-mute-cb" onchange="G.setMuted(this.checked)">MUTE</label>
+          <input type="range" id="menu-vol" min="0" max="100" step="1" oninput="G.setVolume(this.value/100)" aria-label="Volume">
+          <span id="menu-vol-val"></span>
+        </div>
+      </div>
+      <div class="menu-section">
+        <div class="menu-label">SAVE / LOAD</div>
+        <div class="menu-row">
+          <button class="menu-action-btn" onclick="G.saveGame()"><svg class="ico"><use href="#i-save"/></svg>SAVE</button>
+          <button class="menu-action-btn" id="menu-load-btn" onclick="G.loadGame()"><svg class="ico"><use href="#i-load"/></svg>LOAD</button>
+        </div>
+        <div id="menu-save-info"></div>
+      </div>
+      <details class="menu-section menu-details">
+        <summary class="menu-label">CONTROLS</summary>
+        <div class="keys">
+          <kbd>CLICK</kbd><span>Fire a volley (every unit in the bunker shoots)</span>
+          <kbd>R</kbd><span>Airstrike + resupply — when out of ammo</span>
+          <kbd>N</kbd><span>Nuke (wave 5+)</span>
+          <kbd>B</kbd><span>Roster: hire units, research (pauses)</span>
+          <kbd>1 2 3 4</kbd><span>Upgrade damage · armor · bunker · ammo</span>
+          <kbd>WHEEL  + −</kbd><span>Zoom in on the bunker / out</span>
+          <kbd>INSERT  DELETE</kbd><span>Rotate the view 90° left / right</span>
+          <kbd>HOME</kbd><span>Reset the view</span>
+          <kbd>Q · Y · K</kbd><span>Graphics · day/night · sound</span>
+        </div>
+      </details>
+      <div class="menu-section">
+        <div class="menu-label">CHEAT CODES</div>
+        <div class="menu-note" style="margin:0 0 7px">Type <b style="color:var(--warn);letter-spacing:2px">dotd</b> during play to open the console</div>
+        <div class="menu-row"><button class="menu-action-btn warn" onclick="G.closeMenu();G.openCheat()"><svg class="ico"><use href="#i-cheat"/></svg>CHEAT CONSOLE</button></div>
+      </div>
+      <div class="menu-section menu-stack" style="border-bottom:none">
+        <button class="menu-action-btn" onclick="G.closeMenu()"><svg class="ico"><use href="#i-play"/></svg>RESUME</button>
+        <div class="menu-row">
+          <button class="menu-action-btn danger" onclick="G.closeMenu();G.start(G.mode())"><svg class="ico"><use href="#i-restart"/></svg>RESTART</button>
+          <button class="menu-action-btn danger" onclick="G.closeMenu();G.showTitle()"><svg class="ico"><use href="#i-home"/></svg>MAIN MENU</button>
+        </div>
+      </div>
+      <div class="menu-foot">[ M ] or [ ESC ] to close</div>
+    </div>
+  </div>
+
+  <div id="pause-dim"></div>
+  <div id="nuke-flash"></div>
+  <div id="repair-flash"></div>
+  <div id="dmg-flash"></div>
+
+  <!-- Cheat console (type "dotd") -->
+  <div id="cheat-wrap">
+    <div class="ch-t">&#9084; CHEAT CODE</div>
+    <div style="display:flex;gap:8px">
+      <input id="cheat-input" type="text" placeholder="enter code..." autocomplete="off"
+        onkeydown="if(event.key==='Enter')G.submitCheat(this.value);">
+      <button class="ch-ok" onclick="G.submitCheat(document.getElementById('cheat-input').value)">OK</button>
+    </div>
+    <div id="cheat-msg"></div>
+    <div class="ch-foot">press ESC to close · 'help' lists codes (F12)</div>
+  </div>
+  <div id="cheat-backdrop" onclick="G.closeCheat()"></div>
+
+  <!-- Title / results overlay (content built by showTitle / showResults) -->
+  <div id="overlay"><div class="ov-card" id="ov-card"></div></div>
+</div>
+
+<!-- three.js r128 + loaders (CDN) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DDSLoader.js"></script>
+<!-- Game: classic scripts sharing globals — keep this order. Bump ?v= when a file changes. -->
+<script src="js/lib/obj-loader.js?v=1"></script>
+<script src="js/radial-fog.js?v=1"></script>
+<script src="js/config.js?v=1"></script>
+<script src="js/model-loader.js?v=1"></script>
+<script src="js/game.js?v=1"></script>
+</body>
+</html>

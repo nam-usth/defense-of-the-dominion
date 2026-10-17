@@ -1,0 +1,12 @@
+{
+  "name": "defense-of-the-dominion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StarCraft II-style bunker defense in the browser, built with Three.js",
+  "scripts": {
+    "start": "node tools/serve.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
