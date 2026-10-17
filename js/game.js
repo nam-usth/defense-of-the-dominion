@@ -1383,10 +1383,10 @@ const G = (() => {
         });
       });
     });
-    autoSave();   // checkpoint: the title screen offers CONTINUE from here
     // Campaign won: the resupply above waits (scheduler is frozen) until the
     // player chooses "Continue · Endless" on the victory screen.
-    if (gameMode === 'campaign' && wave >= CFG.victory_wave) campaignVictory();
+    if (gameMode === 'campaign' && wave >= CFG.victory_wave) campaignVictory(); // writes its own checkpoint
+    else autoSave();   // checkpoint: the title screen offers CONTINUE from here
   }
 
   // ── Shoot ────────────────────────────────────────────────────────────────
@@ -2496,6 +2496,9 @@ const G = (() => {
     score+=5000;                            // victory bonus
     const newly=!endlessUnlocked();
     _store.set(ENDLESS_KEY,'1');
+    // Checkpoint = "Continue · Endless": CONTINUE on the title resumes in Endless,
+    // not as a 16th campaign wave that would bring this screen back
+    _writeSave(AUTO_KEY,{gameMode:'endless'});
     phase='victory';                        // freezes the game behind the results screen
     flash('nuke-flash'); SFX.play('clear');
     updateHUD();
@@ -3199,7 +3202,7 @@ const G = (() => {
       ts: Date.now()
     };
   }
-  function _writeSave(key) { try { localStorage.setItem(key, JSON.stringify(_snapshot())); return true; } catch (e) { return false; } }
+  function _writeSave(key, override) { try { localStorage.setItem(key, JSON.stringify({ ..._snapshot(), ...override })); return true; } catch (e) { return false; } }
   function _readSave(key) { try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e) { return null; } }
   // Reject saves we cannot restore BEFORE the running game is torn down
   function _validSave(d) {
