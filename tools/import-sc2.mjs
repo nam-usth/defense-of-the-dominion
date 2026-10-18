@@ -31,19 +31,24 @@ const MODELS = [
   { m3: 'Zergling.m3',          glb: `${Z}/zergling.glb`, anims: ['Walk', 'Attack'], frames: { Walk: 32 } },
   { m3: 'ZerglingUpgrade.m3',   glb: `${Z}/zergling_upgrade.glb`, anims: ['Walk', 'Attack'], frames: { Walk: 32 } },   // Metabolic Boost (wings)
 ];
+// [source, destination, max size]: 1024² maps are cut to 512² (tools/dds-resize.mjs drops the
+// top mip). Units are a few dozen pixels tall on screen and even the bunker covers about
+// 250 px at full zoom, so nothing visible is lost and the site loads 4× less. (The bunker
+// upgrade and Perdition maps, not imported here, were cut the same way.)
+const MAX = 512;
 const TEXTURES = [
-  ['bunker_diffuse.dds', `${T}/bunker_diffuse.dds`], ['bunker_emissive.dds', `${T}/bunker_emissive.dds`], ['bunker_normal.dds', `${T}/bunker_normal.dds`],
+  ['bunker_diffuse.dds', `${T}/bunker_diffuse.dds`, MAX], ['bunker_emissive.dds', `${T}/bunker_emissive.dds`, MAX], ['bunker_normal.dds', `${T}/bunker_normal.dds`, MAX],
   ['marine.dds', `${T}/marine_diffuse.dds`], ['marine_normal.dds', `${T}/marine_normal.dds`],
-  ['marauder_blackops_diff.dds', `${T}/marauder_diffuse.dds`], ['marauder_blackops_emiss.dds', `${T}/marauder_emissive.dds`], ['marauder_blackops_norm.dds', `${T}/marauder_normal.dds`],
-  ['ghost_covertops_collection_diff.dds', `${T}/ghost_diffuse.dds`],
+  ['marauder_blackops_diff.dds', `${T}/marauder_diffuse.dds`, MAX], ['marauder_blackops_emiss.dds', `${T}/marauder_emissive.dds`, MAX], ['marauder_blackops_norm.dds', `${T}/marauder_normal.dds`, MAX],
+  ['ghost_covertops_collection_diff.dds', `${T}/ghost_diffuse.dds`, MAX],
   ['nuke_missile.dds', `${T}/nuke_missile.dds`], ['nukeicon3.dds', `${T}/nuke_target.dds`],
   ['roach.dds', `${Z}/roach_diffuse.dds`],
   ['roachex1a_complete_diff.dds', `${Z}/roach_ex1a_diffuse.dds`], ['roachex1a_complete_emis.dds', `${Z}/roach_ex1a_emissive.dds`],
   ['roach_ex3_diff.dds', `${Z}/roach_ex3_diffuse.dds`], ['roach_ex3_emiss.dds', `${Z}/roach_ex3_emissive.dds`],
   // specular maps and zergling_eye_* (the portrait's eye glow) are not used
-  ['zergling_diffuse.dds', `${Z}/zergling_diffuse.dds`], ['zergling_emissive.dds', `${Z}/zergling_emissive.dds`], ['zergling_normal.dds', `${Z}/zergling_normal.dds`],
-  ['zerglingupgrade_collectionskin_webby_diff.dds', `${Z}/zergling_webby_diffuse.dds`], ['zerglingupgrade_collectionskin_webby_emis.dds', `${Z}/zergling_webby_emissive.dds`],
-  ['zerglingupgrade_collectionskin_webby_norm.dds', `${Z}/zergling_webby_normal.dds`],
+  ['zergling_diffuse.dds', `${Z}/zergling_diffuse.dds`, MAX], ['zergling_emissive.dds', `${Z}/zergling_emissive.dds`], ['zergling_normal.dds', `${Z}/zergling_normal.dds`],
+  ['zerglingupgrade_collectionskin_webby_diff.dds', `${Z}/zergling_webby_diffuse.dds`, MAX], ['zerglingupgrade_collectionskin_webby_emis.dds', `${Z}/zergling_webby_emissive.dds`, MAX],
+  ['zerglingupgrade_collectionskin_webby_norm.dds', `${Z}/zergling_webby_normal.dds`, MAX],
 ];
 const ICONS = [
   ['btn-upgrade-terran-buildingarmor.dds', `${UI}/btn-upgrade-terran-buildingarmor.png`],
@@ -76,6 +81,9 @@ for (const m of MODELS) {
     ...(m.anims ? ['--anims', m.anims.join(','), '--frames', frames] : []));
   fs.copyFileSync(from(m.m3), to(`assets/source/m3/${m.m3}`));
 }
-for (const [s, d] of TEXTURES) { fs.copyFileSync(from(s), to(d)); console.log(`${d}  ← ${s}`); }
+for (const [s, d, max] of TEXTURES) {
+  if (max) node('dds-resize.mjs', from(s), to(d), '--max', String(max));
+  else { fs.copyFileSync(from(s), to(d)); console.log(`${d}  ← ${s}`); }
+}
 for (const [s, d] of ICONS) node('dds-to-png.mjs', from(s), to(d));
 for (const f of KEEP) if (fs.existsSync(path.join(src, f))) fs.copyFileSync(path.join(src, f), to(`assets/source/m3/${f}`));

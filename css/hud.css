@@ -374,5 +374,9 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .ov-stat span{font-size:11px;font-weight:700;letter-spacing:2px;color:var(--muted)}
 .ov-keys{display:grid;grid-template-columns:repeat(2,auto 1fr);gap:3px 10px;text-align:left;font-size:13px;font-weight:500;color:#9fb8d3;
   padding-top:12px;border-top:1px solid #1d3a5a}
+.ov-load{margin:10px 0 0;font-size:12px;color:var(--muted)}   /* asset loading progress (title) */
+.ol-bar{height:4px;margin-bottom:5px;background:#0b1828;border:1px solid #1d3a5a}
+.ol-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2f6dff,#7fc0ff);transition:width .25s}
+.ol-skip{margin-left:8px;padding:0;border:none;background:none;color:var(--dim);font:inherit;text-decoration:underline;cursor:pointer}
 .ov-legal{margin-top:12px;font-size:11px;line-height:1.35;color:var(--dim)}   /* Blizzard notice */
 .ov-keys kbd{font-family:var(--num);font-size:11px;color:#ffd27a;border:1px solid #4a3c1c;background:rgba(40,30,8,.5);padding:0 5px;white-space:nowrap;justify-self:start}

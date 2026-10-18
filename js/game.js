@@ -381,8 +381,7 @@ const G = (() => {
       updateBunkerVisual();
       _mountShrike();
     }).catch(()=>{});
-    ModelLoader.load('shrike').then(_mountShrike)
-      .catch(err => console.warn('Shrike turret model failed to load — the HP Lv3 turret still fires, but is not drawn.', err));
+    ModelLoader.ready('shrike').then(_mountShrike);   // loaded in the last stage (needed from hull Lv3)
     scene.add(bunk);
   }
 
@@ -2898,16 +2897,36 @@ const G = (() => {
       <div class="ov-title">DEFENSE OF THE<br>DOMINION</div>
       <div class="ov-sub">Hold the bunker. Every unit inside fires with each click.</div>
       <div class="ov-modes">
-        <button class="ov-btn" onclick="G.start('campaign')"><svg class="ico"><use href="#i-campaign"/></svg>
+        <button class="ov-btn" data-play onclick="G.start('campaign')"><svg class="ico"><use href="#i-campaign"/></svg>
           <span><span class="ob-t">CAMPAIGN</span><span class="ob-d">Clear ${CFG.victory_wave} waves of the swarm to win</span></span></button>
-        <button class="ov-btn gold" ${unlocked?'':'disabled'} onclick="G.start('endless')"><svg class="ico"><use href="#i-${unlocked?'endless':'lock'}"/></svg>
+        <button class="ov-btn gold" data-play data-locked="${unlocked?0:1}" ${unlocked?'':'disabled'} onclick="G.start('endless')"><svg class="ico"><use href="#i-${unlocked?'endless':'lock'}"/></svg>
           <span><span class="ob-t">ENDLESS</span><span class="ob-d">${unlocked ? (best ? `Best: wave ${_esc(best.wave)} · score ${_esc(best.score)}` : 'No wave limit — how long can you hold?') : 'Locked — win the campaign to unlock'}</span></span></button>
-        ${_validSave(auto)?`<button class="ov-btn" onclick="G.loadGame('auto')"><svg class="ico"><use href="#i-play"/></svg>
+        ${_validSave(auto)?`<button class="ov-btn" data-play onclick="G.loadGame('auto')"><svg class="ico"><use href="#i-play"/></svg>
           <span><span class="ob-t">CONTINUE</span><span class="ob-d">Autosave — ${_esc(_saveLabel(auto))}</span></span></button>`:''}
-        ${_validSave(manual)?`<button class="ov-btn" onclick="G.loadGame()"><svg class="ico"><use href="#i-load"/></svg>
+        ${_validSave(manual)?`<button class="ov-btn" data-play onclick="G.loadGame()"><svg class="ico"><use href="#i-load"/></svg>
           <span><span class="ob-t">LOAD GAME</span><span class="ob-d">Saved game — ${_esc(_saveLabel(manual))}</span></span></button>`:''}
-      </div>${_KEYS_HTML}<div class="ov-legal">${BLIZZARD_NOTICE}</div>`);
+      </div>
+      <div class="ov-load" id="ov-load"><div class="ol-bar"><i></i></div><span class="ol-t"></span><button class="ol-skip" onclick="G.skipAssetWait()">start now</button></div>
+      ${_KEYS_HTML}<div class="ov-legal">${BLIZZARD_NOTICE}</div>`);
+    _assetGate();
+    if (!_gateTimer) _gateTimer = setInterval(_assetGate, 200);
   }
+  // Title screen: asset loading progress. The start buttons wait until the first
+  // two LOAD_STAGES (bunker, first waves' units) have loaded or failed — later
+  // ones keep loading in the background — unless the player skips the wait.
+  const ESSENTIAL = LOAD_STAGES.slice(0, 2).flat();
+  let _skipWait = false, _gateTimer = 0;
+  function _assetGate(){
+    const box = $('ov-load');
+    if (!box || phase !== 'menu') { clearInterval(_gateTimer); _gateTimer = 0; return; }
+    const { done, total } = ModelLoader.progress(), ready = _skipWait || ESSENTIAL.every(k => ModelLoader.isSettled(k));
+    box.hidden = done >= total;
+    box.querySelector('.ol-bar i').style.width = (total ? done / total * 100 : 100) + '%';
+    box.querySelector('.ol-t').textContent = ready ? `Ready — ${total - done} more files loading in the background` : `Loading StarCraft II assets… ${done} / ${total}`;
+    box.querySelector('.ol-skip').hidden = ready;
+    document.querySelectorAll('#ov-card .ov-btn[data-play]').forEach(b => { b.disabled = !ready || b.dataset.locked === '1'; });
+  }
+  function skipAssetWait(){ _skipWait = true; _assetGate(); }
   function showResults(victory,newlyUnlocked,newRecord){
     const rk=getRank(kills), t=Math.floor(_gameT), camp=gameMode==='campaign';
     const stats=[['WAVE',wave+(camp?' / '+CFG.victory_wave:'')],['TIME',Math.floor(t/60)+':'+String(t%60).padStart(2,'0')],['KILLS',kills],
@@ -2957,13 +2976,14 @@ const G = (() => {
     startWave();
   }
 
-  // Kick off model loading in background — game starts with procedural
-  // meshes instantly and swaps to OBJ models as they load.
-  ModelLoader.preloadAll();
+  // Kick off model loading in the background, in LOAD_STAGES order. The title
+  // screen shows the progress; anything not loaded yet is drawn procedurally
+  // and swapped for its SC2 model when it arrives.
+  ModelLoader.preloadAll(LOAD_STAGES);
   // An SC2 skin needs one instance pool per walk / attack frame (up to 40): bake them as
   // soon as the model has loaded, so the first spawn of a skin does not stall a frame
   ['zergling','zergling_upgrade','zergling_webby','roach','roach_ex1a','roach_ex3']
-    .forEach(k => ModelLoader.load(k).then(() => enemyLook(k)).catch(() => {}));
+    .forEach(k => ModelLoader.ready(k).then(() => enemyLook(k)));
   buildScene();
   initPortrait(); // hologram builds itself as soon as the bunker model is cached
   loop();
@@ -3684,6 +3704,6 @@ const G = (() => {
 
   _syncSoundUI();
   showTitle();
-  return {start, buy, buyArmory, doAirstrike, doNuke, doStim, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
+  return {start, buy, buyArmory, skipAssetWait, doAirstrike, doNuke, doStim, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
           saveGame, loadGame, toggleDayNight, setVolume, setMuted, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode};
 })();

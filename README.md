@@ -18,6 +18,8 @@ Hold a Terran bunker against waves of Zerg. Every unit inside the bunker fires w
 
 **Play online:** <https://nam-usth.github.io/defense-of-the-dominion/> — published by GitHub Pages on every push to `main` (`.github/workflows/pages.yml`; only `index.html`, `css/`, `js/`, `assets/models/` and `assets/ui/` go online). The repository settings must have **Pages → Source: GitHub Actions**.
 
+On the web the StarCraft II assets (5.9 MiB gzipped) load in priority order — the bunker, then the Zerglings and the Marine, then the Roach, Viking and nuke, then the rest (`LOAD_STAGES` in `js/config.js`). The title screen shows the progress, and its start buttons wait for the first two stages (or *start now* skips the wait); everything else streams in while you play.
+
 To run it locally you need a desktop browser with WebGL 2 (Chrome, Edge or Firefox) and, for the local server, Node.js 18 or newer.
 
 ```bash
@@ -135,6 +137,7 @@ tools/m3.mjs            .m3 reader (mesh, materials, skeleton, animation)
 tools/m3-to-glb.mjs     .m3 → .glb, bind pose and baked animations in one file (what the game loads); --check validates a .glb
 tools/m3-to-obj.mjs     .m3 → .obj, bind pose or a baked animation; lists a model; prints attachment points
 tools/dds-to-png.mjs    .dds → .png (DXT1, DXT5, uncompressed)
+tools/dds-resize.mjs    shrinks a .dds by dropping its largest mip levels (1024² → 512²)
 docs/screenshots/       images used in this README
 ```
 
@@ -161,7 +164,7 @@ The frame rate is the same: once loaded, both give identical geometry on the GPU
 node tools/import-sc2.mjs D:/sc2-extract
 ```
 
-`import-sc2.mjs` lists every file it imports. For each model it writes a `.glb` with the bind pose and, for units, the animations the game plays baked into frames (Walk; Roach and Zergling also Attack; 8 frames each, 32 for the Zergling's two-second walk of four gallops); it copies the textures under the names `ASSETS` expects, converts the HUD icons to PNG and keeps the `.m3` in `assets/source/m3`. To bring in a new model, add a line to its lists and an entry to `ASSETS` in `js/config.js`.
+`import-sc2.mjs` lists every file it imports. For each model it writes a `.glb` with the bind pose and, for units, the animations the game plays baked into frames (Walk; Roach and Zergling also Attack; 8 frames each, 32 for the Zergling's two-second walk of four gallops); it copies the textures under the names `ASSETS` expects (1024² maps cut to 512² by `dds-resize.mjs`: the units are a few dozen pixels tall and the bunker covers about 250 px even at full zoom, so nothing visible is lost while the site loads half as much), converts the HUD icons to PNG and keeps the `.m3` in `assets/source/m3`. To bring in a new model, add a line to its lists and an entry to `ASSETS` in `js/config.js`.
 
 The individual tools:
 

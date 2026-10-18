@@ -91,6 +91,17 @@ const ASSETS = {
                  stride: 2.25 * 0.434 * SC2_SCALE,
                  tex: { diffuse: ZERG_DIR + 'roach_ex3_diffuse.dds', emissive: ZERG_DIR + 'roach_ex3_emissive.dds' } },
 };
+// Load order (ModelLoader.preloadAll): each stage starts when the previous one
+// is done, so on a slow connection the bunker comes first, then what waves 1-3
+// need (Zerglings, the Marine that fetches crates) — the title screen's start
+// buttons wait for those two stages — then the Roach (wave 4), the airstrike's
+// Viking and the nuke (wave 5), then the rest (hired units, later skins, the Shrike).
+const LOAD_STAGES = [
+  ['bunker'],
+  ['zergling', 'marine'],
+  ['roach', 'viking', 'nukeMissile'],
+  ['marauder', 'marauderMissile', 'ghost', 'zergling_upgrade', 'roach_ex1a', 'shrike', 'zergling_webby', 'roach_ex3'],
+];
 // Roach acid (SC2: range 4, one spit every 2 game s = 1.43 s). The Roach stops
 // when the hull is in range and plays its Attack animation; the acid leaves
 // its mouth ("Ref_Head") at the lunge, 420 ms in:

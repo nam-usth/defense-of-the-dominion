@@ -2,6 +2,10 @@
 const ModelLoader = (() => {
   const _cache = {};   // key → THREE.Group (cloneable template)
   const _pending = {}; // key → Promise
+  const _settled = new Set();   // keys whose load finished, loaded or failed
+  const _waiters = {};          // key → [resolve] for ready()
+  const _filesDone = new Set(); // asset files fetched (or failed), for progress()
+  const _track = (path, p) => { p.then(() => _filesDone.add(path), () => _filesDone.add(path)); return p; };
 
   const _objLoader  = new THREE.OBJLoader();
   const _mtlLoader  = (typeof THREE !== 'undefined' && THREE.MTLLoader)  ? new THREE.MTLLoader()  : null;
@@ -13,7 +17,7 @@ const ModelLoader = (() => {
   function _loadTex(path) {
     const isDds = /\.dds$/i.test(path);
     const loader = (isDds && _ddsLoader) ? _ddsLoader : _texLoader;
-    return new Promise((res, rej) => loader.load(path, tex => {
+    return _track(path, new Promise((res, rej) => loader.load(path, tex => {
       if (isDds) {
         // DDS stores rows top-to-bottom, and compressed data can't be flipped on
         // upload (flipY is ignored), so the image lands upside down for the
@@ -24,7 +28,7 @@ const ModelLoader = (() => {
         tex.repeat.y = -1; tex.offset.y = 1;
       }
       res(tex);
-    }, null, rej));
+    }, null, rej)));
   }
 
   // ── SC2 material conventions ──────────────────────────────────────────────
@@ -110,7 +114,7 @@ const ModelLoader = (() => {
   const _glbWarned = {};   // path → true once its failure was reported
   function _loadGlb(path) {
     if (!_gltfLoader) return Promise.reject(new Error('THREE.GLTFLoader is not loaded'));
-    return _glbCache[path] || (_glbCache[path] = new Promise((res, rej) => _gltfLoader.load(path, res, null, rej)));
+    return _glbCache[path] || (_glbCache[path] = _track(path, new Promise((res, rej) => _gltfLoader.load(path, res, null, rej))));
   }
   // The bind pose of a parsed GLB as OBJLoader would return it: a Group of
   // meshes named "region_N", each with OBJLoader's default material
@@ -160,20 +164,23 @@ const ModelLoader = (() => {
         const wrapper = _normalizeGroup(root);
         return (def.tex ? _applyTextures(root, def).catch(() => {}) : Promise.resolve())
           .then(() => _loadAnims(key, def, wrapper, gltf))
-          .then(() => { _cache[key] = wrapper; resolve(wrapper); });
+          .then(() => {
+            _cache[key] = wrapper; _settled.add(key); resolve(wrapper);
+            (_waiters[key] || []).forEach(f => f(wrapper)); delete _waiters[key];
+          });
       };
 
       const tryObj = (materials) => {
         if (materials) _objLoader.setMaterials(materials);
-        _objLoader.load(def.obj, obj => finish(obj, null).catch(reject), null, reject);
+        _objLoader.load(def.obj, obj => { _filesDone.add(def.obj); finish(obj, null).catch(reject); }, null, err => { _filesDone.add(def.obj); reject(err); });
       };
       const objPipeline = () => {
         if (def.mtl && _mtlLoader) {
           _mtlLoader.load(
             def.mtl,
-            mat => { try { mat.preload(); tryObj(mat); } catch(e) { tryObj(null); } },
+            mat => { _filesDone.add(def.mtl); try { mat.preload(); tryObj(mat); } catch(e) { tryObj(null); } },
             null,
-            () => tryObj(null)
+            () => { _filesDone.add(def.mtl); tryObj(null); }
           );
         } else {
           tryObj(null);
@@ -195,7 +202,13 @@ const ModelLoader = (() => {
       }
     });
 
+    _pending[key].catch(() => _settled.add(key));
     return _pending[key];
+  }
+  // Resolves with key's template once it has loaded, without starting the load
+  // (preloadAll decides when); never rejects — a failed model keeps its fallback
+  function ready(key) {
+    return _cache[key] ? Promise.resolve(_cache[key]) : new Promise(res => (_waiters[key] = _waiters[key] || []).push(res));
   }
 
   // Returns a clone of the cached template, or null if not ready.
@@ -209,9 +222,36 @@ const ModelLoader = (() => {
     return fallbackFn ? fallbackFn() : null;
   }
 
-  // Preload all defined assets in background; never throws
-  function preloadAll() {
-    Object.keys(ASSETS).forEach(key => load(key).catch(() => {}));
+  // Load every asset in the background, one priority stage at a time (then the
+  // rest): on a slow connection the bunker and the first waves' units arrive
+  // first instead of ~40 files sharing the bandwidth. A stage that has not
+  // finished after STAGE_WAIT ms (a hung request, a cut-off file that the
+  // loader never settles) lets the next one start anyway. Never throws.
+  const STAGE_WAIT = 30000;
+  async function preloadAll(stages = []) {
+    const seen = new Set();
+    for (const keys of [...stages, Object.keys(ASSETS)]) {
+      const todo = keys.filter(k => ASSETS[k] && !seen.has(k));
+      todo.forEach(k => seen.add(k));
+      const stage = Promise.all(todo.map(k => load(k).catch(err => console.warn(`"${k}" failed to load — drawn with simple shapes instead.`, err))));
+      await Promise.race([stage, new Promise(res => setTimeout(res, STAGE_WAIT))]);
+    }
+  }
+  // Loading progress: asset files done out of every file ASSETS lists (each path
+  // once). A model that failed counts as done, files it never requested included.
+  function progress() {
+    const files = new Set(), done = new Set(_filesDone);
+    for (const [key, def] of Object.entries(ASSETS)) {
+      const own = [];
+      if (def.glb) own.push(def.glb);
+      else own.push(def.obj, _mtlLoader && def.mtl, ...ANIMS.map(a => def[a]));
+      for (const t of [def.tex, ...Object.values(def.meshTex || {})]) if (t) ['diffuse', 'emissive', 'normal'].forEach(m => own.push(t[m]));
+      const failed = _settled.has(key) && !_cache[key];
+      for (const f of own) if (f) { files.add(f); if (failed) done.add(f); }
+    }
+    let n = 0;
+    files.forEach(f => { if (done.has(f)) n++; });
+    return { done: n, total: files.size };
   }
 
   // A standalone texture (decals, ...), loaded once: Promise<THREE.Texture>
@@ -250,7 +290,7 @@ const ModelLoader = (() => {
       const nodes = gltf ? gltf.scene.children.filter(c => c.isMesh && new RegExp(`^${anim}_[0-9]+$`, 'i').test(c.name)) : [];
       if (nodes.length) { _frames[key][anim] = inOrder(nodes); return null; }
       if (!def[anim]) return null;
-      const parsed = _objCache[def[anim]] || (_objCache[def[anim]] = new Promise((res, rej) => _objLoader.load(def[anim], res, null, rej)));
+      const parsed = _objCache[def[anim]] || (_objCache[def[anim]] = _track(def[anim], new Promise((res, rej) => _objLoader.load(def[anim], res, null, rej))));
       return parsed.then(obj => { _frames[key][anim] = inOrder(obj.children.filter(c => c.isMesh && /_\d+$/.test(c.name))); })
         .catch(err => console.warn(`"${anim}" animation of "${key}" failed to load — it plays without it.`, err));
     }));
@@ -258,5 +298,6 @@ const ModelLoader = (() => {
   // Frame templates of key's animation (shared — clone before adding to the scene), or null
   const animFrames = (key, anim) => (_frames[key]?.[anim]?.length ? _frames[key][anim] : null);
 
-  return { load, clone, preloadAll, teamColor, texture, animFrames, isReady: (key) => !!_cache[key] };
+  return { load, ready, clone, preloadAll, progress, teamColor, texture, animFrames,
+           isReady: (key) => !!_cache[key], isSettled: (key) => _settled.has(key) };
 })();
