@@ -3,6 +3,7 @@
 # models and textures
 *.dds binary
 *.glb binary
+*.m3 binary
 *.jpg binary
 *.png binary
 *.obj text eol=lf -diff

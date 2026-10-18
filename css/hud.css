@@ -22,6 +22,8 @@ button{font-family:inherit}
 .num{font-family:var(--num);font-variant-numeric:tabular-nums}
 .ico{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .ico.solid{fill:currentColor;stroke:none}
+img.ico{object-fit:contain}
+img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* resource icon in a cost */
 .cut{clip-path:polygon(var(--cut) 0,100% 0,100% calc(100% - var(--cut)),calc(100% - var(--cut)) 100%,0 100%,0 var(--cut))}
 
 /* ── Top bar ─────────────────────────────────────────────────────────────── */
@@ -126,9 +128,13 @@ button{font-family:inherit}
 .csp.ghost{width:27px;background:#3d1a78;border-color:#9152e0}
 .csp.empty{background:rgba(255,255,255,.04);border-color:rgba(255,255,255,.16)}
 .csp.turret{background:#6a4c00;border-color:#ffb81f;box-shadow:0 0 5px rgba(255,184,31,.6)}
-#con-slot-count{font-family:var(--num);font-size:12px;color:var(--muted)}
+.csp.turret.od{background:#7a1010;border-color:#ff4a3a;animation:odPulse .5s ease-in-out infinite alternate}   /* Marine overdrive */
+@keyframes odPulse{from{box-shadow:0 0 4px rgba(255,60,40,.5)}to{box-shadow:0 0 10px rgba(255,60,40,1)}}
+#con-slot-count{font-family:var(--num);font-size:12px;color:var(--muted);white-space:nowrap}
+@media (max-width:1100px){.cc-row{gap:9px}.res img.ico{font-size:17px}}   /* narrow console: keep the slot count on one line */
 .res{display:flex;align-items:center;gap:5px;font-family:var(--num);font-size:15px}
 .res .ico{font-size:15px}
+.res img.ico{font-size:20px}
 .res.min{color:var(--mineral)} .res.gas{color:var(--gas)}
 .res.min .ico{filter:drop-shadow(0 0 3px rgba(80,180,255,.7))} .res.gas .ico{filter:drop-shadow(0 0 3px rgba(80,230,150,.7))}
 .res.pop{animation:resPop .35s ease-out}
@@ -141,12 +147,17 @@ button{font-family:inherit}
   background:linear-gradient(180deg,#0b1726,#050b14);border:1px solid #1d3048;transition:opacity .2s,border-color .2s,box-shadow .2s;
   clip-path:polygon(5px 0,100% 0,100% calc(100% - 5px),calc(100% - 5px) 100%,0 100%,0 5px)}
 .upg-chip .ico{font-size:16px}
+.upg-chip img.ico{font-size:18px}
 .upg-chip.active{opacity:1;color:#9fd2ff;border-color:#3a6aaa;box-shadow:0 0 6px rgba(60,130,200,.45)}
 .upg-chip.maxed{opacity:1;color:var(--gold);border-color:#b08a10;box-shadow:0 0 8px rgba(220,160,20,.45)}
 .uc-pips{display:flex;gap:2px}
 .upg-pip{width:6px;height:3px;background:#1c2c40}
 .upg-pip.on{background:#5aa2ff;box-shadow:0 0 3px #5aa2ff}
 .upg-chip.maxed .upg-pip.on{background:var(--gold);box-shadow:0 0 3px var(--gold)}
+.upg-chip img.ico:only-child{font-size:24px}   /* no level pips (single research, Shrike) */
+.uc-n{font-family:var(--num);font-size:10px;line-height:10px;color:var(--gold)}   /* Endless reinforcement count */
+.upg-chip.od{border-color:#ff4a3a;animation:odChip .5s ease-in-out infinite alternate}   /* Shrike overdrive (the clip-path hides outer glows) */
+@keyframes odChip{from{border-color:#a02a20;box-shadow:inset 0 0 3px rgba(255,60,40,.45)}to{border-color:#ff5a48;box-shadow:inset 0 0 12px rgba(255,60,40,.95)}}
 
 /* Right: command card */
 #con-right{width:318px;flex-shrink:0;display:flex;flex-direction:column;background:linear-gradient(180deg,#071222,#030810)}
@@ -162,6 +173,7 @@ button{font-family:inherit}
   background:linear-gradient(180deg,rgba(170,220,255,.25) 0,transparent 45%),linear-gradient(180deg,#25528a,#122a4a)}
 .cmd-btn:not(.disabled):active{filter:brightness(1.3);transform:translateY(1px)}
 .cmd-btn .ico{font-size:24px;filter:drop-shadow(0 0 4px rgba(90,180,255,.5))}
+.cmd-btn img.ico,.cmd-btn.ready img.ico{font-size:32px;filter:none;border:1px solid rgba(140,200,255,.35);border-radius:2px}   /* SC2 button art */
 .cmd-label{font-size:11px;font-weight:700;letter-spacing:1px;line-height:12px;color:#a8d4ff;text-shadow:0 0 6px rgba(80,170,255,.4)}
 .cmd-key{position:absolute;top:2px;left:4px;font-family:var(--num);font-size:10px;line-height:12px;color:#ffd27a;text-shadow:0 0 3px #000}
 .cmd-cost{position:absolute;bottom:2px;left:0;right:0;display:flex;justify-content:center;gap:5px;font-family:var(--num);font-size:10px;line-height:11px}
@@ -181,6 +193,8 @@ button{font-family:inherit}
 .cmd-cd{position:absolute;inset:0;display:none;align-items:center;justify-content:center;pointer-events:none;font-family:var(--num);font-size:16px;color:#fff;text-shadow:0 0 4px #000,0 0 2px #000;
   background:conic-gradient(rgba(0,0,0,.68) calc(var(--p,0) * 1turn),rgba(0,0,0,.15) 0)}
 .cmd-cd.on{display:flex}
+.cmd-btn.stim-on{border-color:#ff5a3a;box-shadow:0 0 12px rgba(255,90,58,.75),inset 0 1px 0 rgba(255,190,170,.4)}
+.cmd-btn.stim-on .ico{color:#ff8a6a}
 .cmd-btn.empty-slot{cursor:default;background:linear-gradient(180deg,#0a1524,#060d18);border-color:#16283c;box-shadow:none}
 .cmd-btn.empty-slot:hover{border-color:#16283c;box-shadow:none;background:linear-gradient(180deg,#0a1524,#060d18)}
 
@@ -216,6 +230,7 @@ button{font-family:inherit}
   background:linear-gradient(180deg,rgba(14,30,52,.97),rgba(5,12,22,.98));border:1px solid var(--edge-hi);
   box-shadow:0 0 24px rgba(40,120,220,.3),0 10px 30px rgba(0,0,0,.7);clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px)}
 #roster-panel.visible{opacity:1;pointer-events:auto}
+#roster-panel{max-height:calc(100% - 56px);overflow-y:auto}   /* the Endless armory makes it taller */
 .roster-title{display:flex;align-items:center;gap:12px;margin-bottom:12px;padding-bottom:9px;border-bottom:1px solid #1d3a5a}
 .roster-title .rt-name{font-size:18px;font-weight:700;letter-spacing:3px;color:#9fd2ff;text-shadow:0 0 8px rgba(80,170,255,.4)}
 #roster-slots-label{font-size:13px;font-weight:600;color:var(--muted)}
@@ -254,9 +269,23 @@ button{font-family:inherit}
 .upgrow{padding:8px 11px;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
 .upgrow.marauder{border:1px solid #d4761e;background:rgba(130,60,10,.16)}
 .upgrow.ghost{border:1px solid #9152e0;background:rgba(70,20,140,.16)}
+.upgrow.marine{border:1px solid #3a78d4;background:rgba(20,60,130,.16)}
 .upgrow.locked{opacity:.6}
+.armory-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.upgrow.armory{display:flex;flex-direction:column;border:1px solid #b08a10;background:rgba(120,90,10,.14);padding:7px 9px}
+.upgrow.armory .upgrow-ico{width:32px;height:32px}
+.upgrow.armory .upgrow-name{font-size:14px}
+.upgrow.armory .upgrow-desc{font-size:12px}
+.upgrow.armory .upgrow-btn{margin-top:auto}
+.upgrow-need{font-size:11px;color:var(--danger);margin-top:3px}
+.upgrow-name.armory{color:var(--gold)}
+.armory-head{grid-column:1/-1;margin-top:6px;font-size:13px;font-weight:700;letter-spacing:2.5px;color:var(--gold)}
+.armory-head span{margin-left:8px;font-size:11px;letter-spacing:.5px;font-weight:600;color:var(--dim)}
+.upgrow-head{display:flex;align-items:center;gap:9px}
+.upgrow-ico{width:40px;height:40px;flex-shrink:0;border:1px solid rgba(140,200,255,.35);border-radius:2px}
+.upgrow.locked .upgrow-ico{filter:grayscale(1) brightness(.7)}
 .upgrow-name{font-size:15px;font-weight:700;letter-spacing:1px;margin-bottom:2px}
-.upgrow-name.marauder{color:#ffbd8a}.upgrow-name.ghost{color:#d6b0ff}
+.upgrow-name.marauder{color:#ffbd8a}.upgrow-name.ghost{color:#d6b0ff}.upgrow-name.marine{color:#9fc8ff}
 .upgrow-desc{font-size:13px;font-weight:500;color:#b9cfe6;line-height:1.3}
 
 /* ── Menu ────────────────────────────────────────────────────────────────── */

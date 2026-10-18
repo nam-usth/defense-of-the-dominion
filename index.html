@@ -8,27 +8,17 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="css/hud.css?v=1">
+<link rel="stylesheet" href="css/hud.css?v=10">
 </head>
 <body>
 <!-- Icon sprite (24×24, stroke icons unless .solid) -->
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="i-strike" viewBox="0 0 24 24"><path d="M12 2l2.2 7.2L21 12l-6.8 2.1L13 20l2.5 2h-7L11 20l-1.2-5.9L3 12l6.8-2.8z"/></symbol>
-  <symbol id="i-nuke" viewBox="0 0 24 24"><path class="f" d="M10.5 9.4L7.5 4.2A9 9 0 0 1 16.5 4.2L13.5 9.4A3 3 0 0 0 10.5 9.4z M15 12h6a9 9 0 0 1-4.5 7.8l-3-5.2A3 3 0 0 0 15 12z M10.5 14.6l-3 5.2A9 9 0 0 1 3 12h6a3 3 0 0 0 1.5 2.6z" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-stim" viewBox="0 0 24 24"><path d="M17 3l4 4M19 5l-3 3"/><path d="M16 8L7.5 16.5l-3-3L13 5z"/><path d="M9 11l1.5 1.5M11.5 8.5L13 10M5.5 18.5L3 21"/></symbol>
   <symbol id="i-roster" viewBox="0 0 24 24"><circle cx="8.5" cy="8" r="3"/><path d="M2.5 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M15.5 5.2a3 3 0 0 1 0 5.6M17 14.3c2.6.6 4.5 2.9 4.5 5.7"/></symbol>
-  <symbol id="i-damage" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5"/><path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></symbol>
-  <symbol id="i-armor" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.5 7.5-8 9-4.5-1.5-8-4.5-8-9V6z"/><path d="M8.5 11l3.5 3 3.5-3"/></symbol>
-  <symbol id="i-hp" viewBox="0 0 24 24"><path d="M12 2.5l8.5 4.75v9.5L12 21.5l-8.5-4.75v-9.5z"/><path d="M12 8v8M8 12h8"/></symbol>
-  <symbol id="i-ammo" viewBox="0 0 24 24"><path d="M5 20v-9l2-4 2 4v9M10.5 20v-9l2-4 2 4v9M16 20v-9l2-4 2 4v9M3 20.5h18"/></symbol>
   <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
-  <symbol id="i-view" viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-snd" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/></symbol>
   <symbol id="i-snd-off" viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5"/></symbol>
-  <symbol id="i-mineral" viewBox="0 0 24 24"><path d="M12 2l6.5 7.5L12 22 5.5 9.5z" fill="currentColor" stroke="none"/><path d="M5.5 9.5h13M12 2v20" stroke="rgba(0,0,0,.35)" stroke-width="1.2"/></symbol>
-  <symbol id="i-gas" viewBox="0 0 24 24"><path d="M12 2.5s6.5 7.3 6.5 12a6.5 6.5 0 0 1-13 0c0-4.7 6.5-12 6.5-12z" fill="currentColor" stroke="none"/><path d="M9 15.5a3 3 0 0 0 3 3" stroke="rgba(255,255,255,.55)" stroke-width="1.6"/></symbol>
   <symbol id="i-rank" viewBox="0 0 24 24"><path d="M5 13l7-5 7 5M5 19l7-5 7 5"/></symbol>
-  <symbol id="i-conc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4M5.3 5.3l2.8 2.8M15.9 15.9l2.8 2.8M5.3 18.7l2.8-2.8M15.9 8.1l2.8-2.8"/></symbol>
-  <symbol id="i-snipe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 1.5v7M12 15.5v7M1.5 12h7M15.5 12h7"/></symbol>
   <symbol id="i-campaign" viewBox="0 0 24 24"><path d="M5 21V3.5M5 4h12l-2.5 4L17 12H5"/></symbol>
   <symbol id="i-endless" viewBox="0 0 24 24"><path d="M7 8.5c-3 0-4.5 1.6-4.5 3.5S4 15.5 7 15.5c4 0 6-7 10-7 3 0 4.5 1.6 4.5 3.5s-1.5 3.5-4.5 3.5c-4 0-6-7-10-7z"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><path d="M5.5 11h13v10h-13z"/><path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></symbol>
@@ -88,25 +78,28 @@
           <span id="con-name">TERRAN BUNKER</span>
           <span id="con-rank-badge"><svg class="ico"><use href="#i-rank"/></svg><span id="con-rank-name">PRIVATE</span></span>
           <span class="grow"></span>
-          <span class="cc-armor" title="Armor level — reduces bite damage"><svg class="ico"><use href="#i-armor"/></svg><span id="con-armor">ARMOR 0</span></span>
+          <span class="cc-armor" title="Armor level — reduces damage from bites and acid"><img class="ico" src="assets/ui/btn-upgrade-terran-buildingarmor.png" alt=""><span id="con-armor">ARMOR 0</span></span>
         </div>
         <div class="bar" id="hp-bar"><div class="fill" id="con-hp-fill"></div><div class="ticks"></div><span class="bar-l">HP</span><span class="bar-v" id="con-hp-nums">750 / 750</span></div>
         <div class="bar" id="ammo-bar"><div class="fill" id="con-ammo-fill"></div><div class="ticks"></div><span class="bar-l">AMMO</span><span class="bar-v" id="con-ammo-nums">30 / 30</span></div>
         <div class="cc-row">
           <span class="cc-lbl">SLOTS</span><div id="con-slot-pips"></div><span id="con-slot-count">2/6</span>
           <span class="grow" style="flex:1"></span>
-          <span class="res min" id="res-min" title="Minerals"><svg class="ico"><use href="#i-mineral"/></svg><span id="cr-min">150</span></span>
-          <span class="res gas" id="res-gas" title="Vespene gas"><svg class="ico"><use href="#i-gas"/></svg><span id="cr-gas">50</span></span>
+          <span class="res min" id="res-min" title="Minerals"><img class="ico" src="assets/ui/icon-mineral-terran.png" alt=""><span id="cr-min">150</span></span>
+          <span class="res gas" id="res-gas" title="Vespene gas"><img class="ico" src="assets/ui/icon-gas-terran.png" alt=""><span id="cr-gas">50</span></span>
         </div>
         <div id="con-status-text">READY</div>
       </div>
       <div id="con-upgrades">
-        <div class="upg-chip" id="upg-dmg"   title="Damage"><svg class="ico"><use href="#i-damage"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
-        <div class="upg-chip" id="upg-armor" title="Armor"><svg class="ico"><use href="#i-armor"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
-        <div class="upg-chip" id="upg-hp"    title="Bunker HP"><svg class="ico"><use href="#i-hp"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
-        <div class="upg-chip" id="upg-ammo"  title="Ammo storage"><svg class="ico"><use href="#i-ammo"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
-        <div class="upg-chip" id="upg-conc"  title="Concussive Shells" style="display:none"><svg class="ico"><use href="#i-conc"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
-        <div class="upg-chip" id="upg-snipe" title="Snipe" style="display:none"><svg class="ico"><use href="#i-snipe"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-dmg"   title="Infantry weapons"><img class="ico" id="upg-dmg-ico" src="assets/ui/btn-upgrade-terran-infantryweaponslevel0.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-armor" title="Armor"><img class="ico" src="assets/ui/btn-upgrade-terran-buildingarmor.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-hp"    title="Bunker HP"><img class="ico" src="assets/ui/btn-upgrade-terran-neosteelframe.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-ammo"  title="Ammo storage"><img class="ico" id="upg-ammo-ico" src="assets/ui/btn-upgrade-terran-magrailmunitions.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-conc"  title="Concussive Shells" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-explosiveshrapnelshells.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-snipe" title="Snipe" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-ui-lazertargetingsystem.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-superstim" title="Super Stimpack" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-superstimppack.png" alt=""></div>
+        <div class="upg-chip maxed" id="upg-endless" title="Endless reinforcements" style="display:none"><svg class="ico"><use href="#i-endless"/></svg><span class="uc-n" id="upg-endless-n"></span></div>
+        <div class="upg-chip" id="upg-shrike" title="Shrike turret" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-hisecautotracking.png" alt=""></div>
       </div>
     </div>
     <div class="con-sep"></div>
@@ -116,39 +109,42 @@
       <div id="con-cmd-title">COMMAND <span>hover for details</span></div>
       <div id="con-cmd-grid">
         <div class="cmd-btn" id="cmd-air" data-cmd="air" onclick="G.doAirstrike()">
-          <span class="cmd-key">R</span><svg class="ico"><use href="#i-strike"/></svg><span class="cmd-label">STRIKE</span>
+          <span class="cmd-key">R</span><img class="ico" src="assets/ui/btn-progression-hornerhan-5-fleetcalldown.png" alt=""><span class="cmd-label">STRIKE</span>
           <div class="cmd-cd" id="cmd-air-cd"></div>
         </div>
         <div class="cmd-btn disabled" id="cmd-nuke" data-cmd="nuke" onclick="G.doNuke()">
-          <span class="cmd-key">N</span><svg class="ico"><use href="#i-nuke"/></svg><span class="cmd-label">NUKE</span>
+          <span class="cmd-key">N</span><img class="ico" src="assets/ui/nukes_coop.png" alt=""><span class="cmd-label">NUKE</span>
           <div class="cmd-cd" id="cmd-nuke-cd"></div>
         </div>
         <div class="cmd-btn" id="cmd-roster" data-cmd="roster" onclick="G.toggleRoster()">
           <span class="cmd-key">B</span><svg class="ico"><use href="#i-roster"/></svg><span class="cmd-label">ROSTER</span>
         </div>
         <div class="cmd-btn" id="cmd-view" data-cmd="view" onclick="G.resetView()">
-          <span class="cmd-key">HOME</span><svg class="ico"><use href="#i-view"/></svg><span class="cmd-label">VIEW</span>
+          <span class="cmd-key">HOME</span><img class="ico" src="assets/ui/btn-status-detector.png" alt=""><span class="cmd-label">VIEW</span>
         </div>
         <div class="cmd-btn" id="cmd-menu" data-cmd="menu" onclick="G.openMenu()">
           <span class="cmd-key">M</span><svg class="ico"><use href="#i-menu"/></svg><span class="cmd-label">MENU</span>
         </div>
         <div class="cmd-btn has-cost" id="cmd-dmg" data-cmd="dmg" onclick="G.buy('dmg')">
           <span class="cmd-key">1</span><span class="cmd-pips" id="cmd-dmg-lv"><i></i><i></i><i></i></span>
-          <svg class="ico"><use href="#i-damage"/></svg><span class="cmd-label">DAMAGE</span><span class="cmd-cost" id="cmd-dmg-cost"></span>
+          <img class="ico" id="cmd-dmg-ico" src="assets/ui/btn-upgrade-terran-infantryweaponslevel0.png" alt=""><span class="cmd-label">DAMAGE</span><span class="cmd-cost" id="cmd-dmg-cost"></span>
         </div>
         <div class="cmd-btn has-cost" id="cmd-armor" data-cmd="armor" onclick="G.buy('armor')">
           <span class="cmd-key">2</span><span class="cmd-pips" id="cmd-armor-lv"><i></i><i></i><i></i></span>
-          <svg class="ico"><use href="#i-armor"/></svg><span class="cmd-label">ARMOR</span><span class="cmd-cost" id="cmd-armor-cost"></span>
+          <img class="ico" src="assets/ui/btn-upgrade-terran-buildingarmor.png" alt=""><span class="cmd-label">ARMOR</span><span class="cmd-cost" id="cmd-armor-cost"></span>
         </div>
         <div class="cmd-btn has-cost" id="cmd-hp" data-cmd="hp" onclick="G.buy('hp')">
           <span class="cmd-key">3</span><span class="cmd-pips" id="cmd-hp-lv"><i></i><i></i><i></i></span>
-          <svg class="ico"><use href="#i-hp"/></svg><span class="cmd-label">BUNKER</span><span class="cmd-cost" id="cmd-hp-cost"></span>
+          <img class="ico" src="assets/ui/btn-upgrade-terran-neosteelframe.png" alt=""><span class="cmd-label">BUNKER</span><span class="cmd-cost" id="cmd-hp-cost"></span>
         </div>
         <div class="cmd-btn has-cost" id="cmd-ammo" data-cmd="ammo" onclick="G.buy('ammo')">
           <span class="cmd-key">4</span><span class="cmd-pips" id="cmd-ammo-lv"><i></i><i></i><i></i></span>
-          <svg class="ico"><use href="#i-ammo"/></svg><span class="cmd-label">AMMO</span><span class="cmd-cost" id="cmd-ammo-cost"></span>
+          <img class="ico" id="cmd-ammo-ico" src="assets/ui/btn-upgrade-terran-magrailmunitions.png" alt=""><span class="cmd-label">AMMO</span><span class="cmd-cost" id="cmd-ammo-cost"></span>
         </div>
-        <div class="cmd-btn empty-slot" aria-hidden="true"></div>
+        <div class="cmd-btn" id="cmd-stim" data-cmd="stim" onclick="G.doStim()">
+          <span class="cmd-key">T</span><svg class="ico" id="cmd-stim-svg"><use href="#i-stim"/></svg><img class="ico" id="cmd-stim-img" src="assets/ui/btn-upgrade-terran-superstimppack.png" alt="" hidden><span class="cmd-label">STIM</span>
+          <div class="cmd-cd" id="cmd-stim-cd"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -213,6 +209,7 @@
           <kbd>CLICK</kbd><span>Fire a volley (every unit in the bunker shoots)</span>
           <kbd>R</kbd><span>Airstrike + resupply — when out of ammo</span>
           <kbd>N</kbd><span>Nuke (wave 5+)</span>
+          <kbd>T</kbd><span>Stimpack (six Marines in the bunker)</span>
           <kbd>B</kbd><span>Roster: hire units, research (pauses)</span>
           <kbd>1 2 3 4</kbd><span>Upgrade damage · armor · bunker · ammo</span>
           <kbd>WHEEL  + −</kbd><span>Zoom in on the bunker / out</span>
@@ -265,10 +262,10 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/MTLLoader.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/DDSLoader.js"></script>
 <!-- Game: classic scripts sharing globals — keep this order. Bump ?v= when a file changes. -->
-<script src="js/lib/obj-loader.js?v=1"></script>
+<script src="js/lib/obj-loader.js?v=2"></script>
 <script src="js/radial-fog.js?v=1"></script>
-<script src="js/config.js?v=1"></script>
-<script src="js/model-loader.js?v=1"></script>
-<script src="js/game.js?v=2"></script>
+<script src="js/config.js?v=11"></script>
+<script src="js/model-loader.js?v=5"></script>
+<script src="js/game.js?v=16"></script>
 </body>
 </html>

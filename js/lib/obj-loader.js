@@ -24,10 +24,13 @@ THREE.OBJLoader.prototype = {
 
     function finishMesh() {
       if (!currentGeo || positions.length === 0) return;
+      // keep the file's normals (smooth / skinned) when every corner has one;
+      // otherwise derive flat ones from the faces
+      const fileNormals = norms.length === positions.length;
       currentGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions.splice(0), 3));
       if (uvsOut.length)  currentGeo.setAttribute('uv', new THREE.Float32BufferAttribute(uvsOut.splice(0), 2));
-      if (norms.length)   currentGeo.setAttribute('normal', new THREE.Float32BufferAttribute(norms.splice(0), 3));
-      currentGeo.computeVertexNormals();
+      if (fileNormals) currentGeo.setAttribute('normal', new THREE.Float32BufferAttribute(norms.splice(0), 3));
+      else { norms.length = 0; currentGeo.computeVertexNormals(); }
       const mesh = new THREE.Mesh(currentGeo, currentMat.clone());
       mesh.name = currentName;
       object.add(mesh);

@@ -6,9 +6,13 @@ Hold a Terran bunker against waves of Zerg. Every unit inside the bunker fires w
 
 ![Title screen](docs/screenshots/title.jpg)
 
-| Battle | Shrike turret (Bunker Lv3) |
+| Battle (wave 9: winged Metabolic Boost Zerglings) | Shrike turret (Bunker Lv3) |
 |---|---|
 | ![Battle](docs/screenshots/battle.jpg) | ![Shrike turret firing](docs/screenshots/shrike.jpg) |
+| **Zerglings: base, Metabolic Boost, webby skin — and a Roach spitting acid** | **Endless armory (roster panel)** |
+| ![Zergling tiers and a Roach](docs/screenshots/zerglings.jpg) | ![Endless armory](docs/screenshots/armory.jpg) |
+
+![Console with StarCraft II button art: Infantry Weapons Lv2, Magfield Accelerator, research chips, Shrike overdrive, Super Stimpack](docs/screenshots/hud.jpg)
 
 ## Running the game
 
@@ -27,36 +31,39 @@ An internet connection is needed for three.js (loaded from a CDN). The UI fonts 
 ## How to play
 
 - **Campaign** — clear wave 15 (a bigger final assault) to win. Winning unlocks Endless for good (stored in the browser).
-- **Endless** — no wave limit. Your best wave and score are shown on the title screen.
+- **Endless** — no wave limit. Past wave 15 the swarm keeps growing, and so does the bunker: every wave adds **+5% damage, +60 max HP, +10% repair speed and +2 rounds** (the ∞ chip on the console shows the total; the damage, hull and ammo tooltips list it too). Your best wave and score are shown on the title screen.
+- **Endless armory** — in Endless the roster panel (B) also sells repeatable upgrades for the minerals and gas that pile up once everything is researched: **Hull plating** +150 max HP, **Weapon tuning** +10% damage, **Magazine** +6 rounds, **Fleet logistics** airstrike and nuke cooldowns ×0.9 (down to 40%, i.e. an 8 s airstrike and a 6 s nuke). Each purchase costs 30% more than the last of its kind; the ROSTER button pulses between waves when you can afford one.
 - **Shooting** — each click fires one volley: every unit in the bunker shoots once at the cursor (Marauders lock onto the nearest Roach while one is alive). One volley costs one round of ammo.
-- **Ammo** — when the magazine is empty, press **R**: a Viking bombs every enemy cluster and drops an ammo crate, which a Marine runs out to fetch. Ammo is also restocked after every wave.
+- **Ammo** — when the magazine is empty, press **R**: a Viking bombs every enemy cluster and drops an ammo crate, which one of your units (a Marine if one is free) runs out to fetch. Ammo is also restocked after every wave.
 - **Resources** — kills and cleared waves pay minerals ◆ and vespene gas ▲.
 
 ### Units (bunker roster, 6 slots — press B)
 
 | Unit | Slots | Cost | Strengths | Research |
 |---|---|---|---|---|
-| Marine | 1 | 50 ◆ | balanced | — |
-| Marauder | 2 | 150 ◆ 25 ▲ | ×1.2 damage, +100% vs armored (Roach); auto-aims at the nearest Roach | Concussive Shells — slows to 40% speed; tiers add an area slow (radius 1.5 / 2.2 / 3.0) |
+| Marine | 1 | 50 ◆ | balanced | A full squad of six (6/6) unlocks **Stimpack** (T): 11 s of +50% fire rate for 10 HP per Marine, paid by the bunker. **Super Stimpack** (250 ◆ 150 ▲, Nova's Marines) makes it free and repairs the bunker 6 HP/s while it lasts — on top of the Lv3 hull's self-repair, so 31 HP/s with both (the HP bar shows the current rate). With the Shrike turret, six Marines also **overdrive** it: 2.5× rate of fire, red rounds |
+| Marauder | 2 | 150 ◆ 25 ▲ | ×1.2 damage, +100% vs armored (Roach); fires punisher grenades and auto-aims at the nearest Roach | Concussive Shells — slows to 40% speed; tiers add an area slow (radius 1.5 / 2.2 / 3.0) |
 | Ghost | 2 | 200 ◆ 50 ▲ | ×1.4 damage, +150% vs light (Zergling) | Snipe — auto-snipes the biggest threat; cooldown 8 → 6 → 4 → 2.5 s |
 
-Dismissing a unit refunds 75%.
+Dismissing a unit refunds 75%. Units fight from inside the bunker; you see them (StarCraft II models, walking) when one runs out to fetch a supply crate — a Marine if you have one. Only one unit leaves at a time: if two crates drop together (airstrike and end of wave), it picks up both. The bunker's HP is the squad's health: the Stimpack is paid from it, and only the Lv3 self-repair and Super Stimpack restore it.
 
 ### Enemies
 
-- **Zergling** — light and fast, from wave 1.
-- **Roach** — armored and tough, from wave 4.
+- **Zergling** — light and fast, from wave 1; it bites the hull with its StarCraft II attack animation. From wave 8 it has **Metabolic Boost**: the winged model, 60% faster (SC2: 4.13 → 6.58); from wave 12 it wears the "webby" skin. Drawn at 0.8× its SC2 size so it reads smaller than the Roach.
+- **Roach** — armored and tough, from wave 4. A ranged attacker, as in StarCraft II: it stops at range 4 from the hull and spits acid (damage lands when the glob hits). Its skin changes as the waves get harder: brown (wave 4), grey with green glow (wave 9), black with orange glow (wave 13).
 
 ### Upgrades (command card, keys 1–4)
 
 | Key | Upgrade | Per level |
 |---|---|---|
 | 1 | Weapon damage | +60% damage |
-| 2 | Bunker armor | bite damage × 1/(1 + 0.35·level) |
-| 3 | Bunker hull | +250 HP. **Lv2** adds the Neosteel frame; **Lv3** mounts the **Shrike turret** (auto-targets, twin barrels = 2 extra marines, no ammo) and self-repair (25 HP/s) |
+| 2 | Bunker armor | damage taken (bites and acid) × 1/(1 + 0.35·level) |
+| 3 | Bunker hull | +250 HP. **Lv2** adds the Neosteel frame; **Lv3** mounts the **Shrike turret** (auto-targets, twin barrels = 2 extra marines, no ammo; overdriven by a full Marine squad) and self-repair (25 HP/s; stacks with the Super Stimpack) |
 | 4 | Ammo storage | +10 rounds |
 
-The **nuke** (N) unlocks at wave 5: two-second warning, huge blast radius, 15 s cooldown. Below 50% HP the bunker starts to burn.
+The command card and the upgrade chips use StarCraft II button art that follows the level: Infantry Weapons Level 0 → 3 for damage; Magrail Munitions (Lv0–1), Magfield Accelerator (Lv2) and Enhanced Munitions (Lv3) for ammo; Fleet Calldown for the airstrike, the co-op nuke, the Detector eye for the view. Research has its own art (Super Stimpack — which also replaces the STIM icon once researched —, Explosive Shrapnel Shells for Concussive Shells, Laser Targeting System for Snipe), and the Shrike turret shows as a Hi-Sec Auto Tracking chip that pulses red in overdrive.
+
+The **nuke** (N) unlocks at wave 5: a two-second warning while the warhead falls down the targeting laser, huge blast radius, 15 s cooldown. Below 50% HP the bunker starts to burn.
 
 ## Controls
 
@@ -65,6 +72,7 @@ The **nuke** (N) unlocks at wave 5: two-second warning, huge blast radius, 15 s 
 | Left click | Fire a volley at the cursor |
 | R | Airstrike + resupply (only when out of ammo) |
 | N | Nuke (wave 5+) |
+| T | Stimpack (six Marines in the bunker) |
 | B | Bunker roster — hire units, research (pauses the game) |
 | 1 · 2 · 3 · 4 | Upgrade damage · armor · bunker · ammo |
 | Mouse wheel, + / − | Zoom in on the bunker / back out |
@@ -108,15 +116,22 @@ Type `dotd` during play to open the cheat console. `help` prints the full list t
 ```
 index.html              page markup (top bar, console, menus) — loads the scripts below in order
 css/hud.css             all styles
-js/lib/obj-loader.js    minimal OBJ parser (THREE.OBJLoader)
+js/lib/obj-loader.js    minimal OBJ parser (THREE.OBJLoader) — for the bunker, Shrike and Viking
 js/radial-fog.js        fog measured as distance from the bunker (the night vision circle)
 js/config.js            game constants (CFG), model and texture paths (ASSETS), ranks
-js/model-loader.js      loads OBJ/GLB models and DDS/JPG textures, with procedural fallbacks
+js/model-loader.js      loads GLB/OBJ models, DDS/JPG textures and baked walk/attack animations; SC2 team colour and normal maps
 js/game.js              the game: scene, units, waves, combat, effects, HUD, menus, saving
-assets/models/terran/   models and textures loaded at runtime
-assets/models/zerg/     empty — put converted Zerg models here (see below)
+assets/models/terran/   bunker, Shrike, Viking (OBJ) · Marine, Marauder, Ghost, nuke, grenade (GLB) — models and textures
+assets/models/zerg/     Zergling (base, Metabolic Boost, webby skin) and Roach (three skins) — GLB models and textures
+assets/ui/              HUD icons (PNG, converted from SC2 DDS)
+assets/source/m3/       the original .m3 files of the converted models (and unused effect models)
 assets/source/terran/   extra model parts and a GLB that the game does not load
 tools/serve.mjs         zero-dependency local web server (npm start)
+tools/import-sc2.mjs    converts/copies the imported SC2 models, textures and icons
+tools/m3.mjs            .m3 reader (mesh, materials, skeleton, animation)
+tools/m3-to-glb.mjs     .m3 → .glb, bind pose and baked animations in one file (what the game loads); --check validates a .glb
+tools/m3-to-obj.mjs     .m3 → .obj, bind pose or a baked animation; lists a model; prints attachment points
+tools/dds-to-png.mjs    .dds → .png (DXT1, DXT5, uncompressed)
 docs/screenshots/       images used in this README
 ```
 
@@ -124,25 +139,52 @@ The scripts are plain (non-module) scripts that share globals, so their order in
 
 ## Using StarCraft II models
 
-The bunker, the Shrike turret and the Viking are StarCraft II models (`.m3` converted to `.obj` in Blender) with their textures (DDS for the bunker and the Shrike, JPG for the Viking).
+Every model in the game is a StarCraft II model with its own textures: the bunker (base textures, plus the upgrade texture on the Neosteel frame), the Shrike turret, the Marine, Marauder (Black Ops), Ghost (Black Ops body, Covert Ops texture), Roach (base, ex1a and ex3 skins), Zergling (`Zergling.m3`, and `ZerglingUpgrade.m3` for Metabolic Boost with its base and webby skins), the Viking and the falling nuke.
 
-To replace the procedural Zergling, Roach and Marine:
+Known issue: the Marine texture on hand (`marine.dds`, `marine_normal.dds`) does not match the UV layout of `Marine.m3`, which asks for `marine_diffuse_blood.dds` and `Marine_Normal_Blood.dds` — the rifle shows the backpack panel. Extract those two and point the Marine's `TEXTURES` lines in `import-sc2.mjs` at them.
 
-1. Convert the `.m3` file with a Blender m3 add-on and export it as `.obj`.
-2. Save it as `assets/models/zerg/zergling.obj`, `assets/models/zerg/roach.obj` or `assets/models/terran/marine.obj`. The game picks it up automatically; scale and rotation are set in `ASSETS` in `js/config.js`.
-3. For textures, add a `tex: { diffuse, emissive }` entry to that model in `ASSETS`. DDS textures are flipped to match Blender's OBJ UVs automatically.
+The `.m3` and `.dds` files come from the game's CASC archive (extract them with a CASC tool such as CascView). No Blender is needed: the tools in `tools/` read `.m3` directly. (The bunker, Shrike turret and Viking are older Blender conversions; their `.obj` files are kept as they are and the importer does not rebuild them.)
 
-Enemies are drawn as instances, so even a detailed model costs only a few draw calls for the whole swarm.
+The SC2 models are stored as **GLB** (binary glTF): the bind pose and every baked animation frame in one file, with the frames sharing a single set of UVs and triangles. The same models as OBJ text were 3.6× bigger, and the game took 5× longer to start:
 
-The textures each unit uses (as referenced inside its `.m3` file) live in the game's CASC archive and need a CASC tool such as CascView to extract:
+| | Model files | Gzipped | Load + parse (8 models) | Game start (every model, textures included) |
+|---|---|---|---|---|
+| OBJ | 14.1 MiB, 17 files | 3.3 MiB | 528 ms | 2.1 s |
+| GLB | 3.9 MiB, 8 files | 2.2 MiB | 49 ms | 0.43 s |
 
-| Model | Diffuse | Emissive |
-|---|---|---|
-| `Zergling.m3` | `Zergling_Diffuse.dds` | `Zergling_Emissive.dds` |
-| `Roach.m3` | `Roach_Diffuse.dds` | — |
-| `Marine.m3` | `marine_diffuse_blood.dds` | — |
-| `Marauder.m3` | `Marauder_Diffuse.dds` | `Marauder_Emissive.dds` |
-| `Ghost_BlackOps.m3` | `DOM_Ghost_diff.dds` | `BlackOps_Ghost_Emiss.dds` |
+The frame rate is the same: once loaded, both give identical geometry on the GPU (checked vertex by vertex — the largest difference, 5·10⁻⁵, is OBJ text rounding).
+
+```bash
+node tools/import-sc2.mjs D:/sc2-extract
+```
+
+`import-sc2.mjs` lists every file it imports. For each model it writes a `.glb` with the bind pose and, for units, the animations the game plays baked into frames (Walk; Roach and Zergling also Attack; 8 frames each, 32 for the Zergling's two-second walk of four gallops); it copies the textures under the names `ASSETS` expects, converts the HUD icons to PNG and keeps the `.m3` in `assets/source/m3`. To bring in a new model, add a line to its lists and an entry to `ASSETS` in `js/config.js`.
+
+The individual tools:
+
+```bash
+node tools/m3-to-obj.mjs Roach.m3 --list                 # regions, textures, animations
+node tools/m3-to-glb.mjs Roach.m3 roach.glb --anims Walk,Attack            # bind pose + 8 frames of each animation
+node tools/m3-to-glb.mjs Zergling.m3 zergling.glb --anims Walk,Attack --frames Walk:32,Attack:8
+node tools/m3-to-glb.mjs --check roach.glb               # validate a .glb
+node tools/m3-to-obj.mjs Roach.m3 roach.obj              # the same as OBJ text (textured regions only; --regions 0,2 to pick)
+node tools/m3-to-obj.mjs Roach.m3 roach_walk.obj --anim Walk --frames 8
+node tools/m3-to-obj.mjs Roach.m3 --point "Ref_Head" --anim Attack --at 420   # where the acid leaves
+node tools/dds-to-png.mjs icon-gas-terran.dds icon.png   # --size 32 to resize, --channel a to inspect a mask
+```
+
+`ASSETS` entries (see the comments in `js/config.js`):
+
+- `glb` — the model file; several entries can share one (the Roach and Zergling skins), it is parsed once. `obj` (+ `walk` / `attack` frame files) still works for OBJ models, and is the fallback if a GLB fails to load.
+- `tex: { diffuse, emissive, normal, normalY }` — DDS textures are flipped to match the model UVs automatically (GLB and OBJ store UVs the same way). `meshTex` overrides them for one mesh (the bunker's upgrade frame).
+- `unitScale: SC2_SCALE` keeps SC2 models in their real proportions to the bunker; `scale` instead sets the size of the largest dimension.
+- `teamColor` tints the team-colour mask SC2 stores in the diffuse alpha (Terran blue, Zerg red).
+- `stride` — the distance one loop of the baked walk cycle covers (SC2 movement speed × loop length), so feet keep pace with the ground; `ANIM_SPEED` (1.25) then plays every walk and attack cycle a little faster, which looks livelier at the game's slower move speeds. The frames themselves are the GLB's `Walk_k` / `Attack_k` nodes (an OBJ model names separate `walk` / `attack` frame files instead). Attack timing lives in `ROACH_ACID` (spit, mouth position) and `ZERGLING_BITE`.
+- `normalY: -1` (inside `tex` or a `meshTex` entry) — SC2 normal maps are DirectX-style (green points down), except some newer ones such as the Marauder Black Ops map, which are OpenGL-style.
+
+Enemies are drawn as instances — one instance buffer per animation frame (walk and attack), frames nobody is on are skipped — so even 120 animated Roaches take only a few draw calls.
+
+The Marauder's punisher grenade uses the mesh of `MarauderMissile.m3` (body and fireball); its texture (`Autoturret.dds`) has not been extracted, so it gets plain materials and a particle fire trail. The Roach acid (`RoachMissile.m3`, `RoachMissileImpact.m3`) is a pure particle system whose textures (`GooSplat_1.dds`, …) are missing too, so the glob and splash are drawn with the game's own particles. Not used yet, for want of their textures: the Marauder slow (`Lightning_DrkBlue.dds`), the nuke explosion (`firecloud2.dds`, `Fireball_10.dds`, `LargeSmoke2.dds`, …) and the falling nuke's smoke (`CloudSingleBlend.dds`, `Glow_Haze1.dds`). The grenade's own particle textures (`Fireball_10.dds`, `FireTail2.dds`, `ConcussiveSmoke1.dds`) are missing as well.
 
 ## Technical notes
 
@@ -151,6 +193,8 @@ The textures each unit uses (as referenced inside its `.m3` file) live in the ga
 - **Night** — the fog shader is patched to measure distance from the bunker, which gives the night mode its circle of vision.
 - **Sound** — synthesized with the Web Audio API; there are no audio files.
 - **Hologram** — the bunker portrait is a 2D-canvas projection of the model's edges and follows the bunker's upgrade stages.
+- **SC2 materials** — one shader patch (`ModelLoader.teamColor`) handles the team-colour mask and rebuilds Z for SC2's two-channel (DXT5nm) normal maps.
+- **Animation** — `tools/m3.mjs` decodes the skeleton and the bone tracks of an animation sequence; `m3-to-glb.mjs --anims` (or `m3-to-obj.mjs --anim`) skins the mesh offline into frames, so the game needs no skeletal animation at runtime: each frame is one more instance buffer.
 
 ## Credits
 

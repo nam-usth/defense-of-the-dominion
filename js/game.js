@@ -168,12 +168,15 @@ const G = (() => {
       wave:     t => { tone(t, .55, 110, 108, .07, 'sawtooth'); tone(t, .55, 165, 162, .06, 'sawtooth'); tone(t + .3, .5, 220, 218, .05, 'sawtooth'); },
       clear:    t => { [523, 659, 784, 1046].forEach((fq, i) => tone(t + i * .09, .16, fq, fq, .12, 'sine')); },
       bite:     t => { tone(t, .08, 230, 140, .1, 'triangle'); noise(t, .06, 420, 300, .14); },
+      stim:     t => { tone(t, .28, 260, 900, .07, 'sawtooth'); noise(t, .22, 1500, 4500, .1, 'highpass'); },   // Stimpack rush
+      spit:     t => { noise(t, .13, 700, 2400, .2, 'bandpass', 2.5); tone(t, .07, 320, 150, .05, 'sine'); },   // Roach acid leaves
+      acid:     t => { noise(t, .3, 5200, 2400, .15, 'highpass'); noise(t, .1, 650, 260, .12, 'lowpass'); },  // acid sizzles on the hull
       buy:      t => { tone(t, .07, 660, 660, .12, 'sine'); tone(t + .07, .09, 990, 990, .12, 'sine'); },
       deny:     t => tone(t, .14, 190, 150, .09, 'square'),
       crate:    t => tone(t, .16, 440, 880, .12, 'sine'),
       snipe:    t => { tone(t, .25, 1600, 300, .16, 'sine'); noise(t, .08, 3500, 3000, .16, 'highpass'); },
     };
-    const MIN_GAP = { hit: .045, bite: .22, marine: .03, marauder: .05, ghost: .05, shrike: .05, zdie: .035, rdie: .06, boom: .07 };
+    const MIN_GAP = { hit: .045, bite: .22, spit: .07, acid: .06, marine: .03, marauder: .05, ghost: .05, shrike: .05, zdie: .035, rdie: .06, boom: .07 };
     function play(name) {
       if (!ctx || muted || ctx.state !== 'running' || !SOUNDS[name]) return;
       const t = ctx.currentTime, gap = MIN_GAP[name];
@@ -224,14 +227,17 @@ const G = (() => {
                 attrs:['light','biological','psionic'] },
   };
   const UPGRADE_DEF = {
-    concussive: { cost:[300,75],  unit:'marauder', name:'Concussive Shell',
+    superstim:  { cost:[250,150], unit:'marine',   name:'Super Stimpack', icon:UI_ICONS.superstim,
+                  desc:"Nova's Marines: Stimpack costs no HP and repairs the bunker while it lasts (stacks with the hull's self-repair)",
+                  tiers:[] },
+    concussive: { cost:[300,75],  unit:'marauder', name:'Concussive Shell', icon:UI_ICONS.concussive,
                   desc:'Marauder hits slow the target to 40% speed for 2.5s — single target',
                   tiers:[
                     { cost:[250, 80],  desc:'AOE Lv.1 — slow blast radius 1.5' },
                     { cost:[400,130],  desc:'AOE Lv.2 — radius 2.2' },
                     { cost:[600,200],  desc:'AOE Lv.3 — radius 3.0 (MAX)' },
                   ]},
-    snipe:      { cost:[250,100], unit:'ghost',    name:'Snipe',
+    snipe:      { cost:[250,100], unit:'ghost',    name:'Snipe', icon:UI_ICONS.snipe,
                   desc:'Ghost auto-snipes highest-threat enemy (8s CD)',
                   tiers:[
                     { cost:[200, 80],  desc:'Snipe Lv.1 — CD 8s → 6s' },
@@ -247,6 +253,20 @@ const G = (() => {
   let roster = ['marine','marine'];   // start with 2 marines (2 slots used)
   let snipeReady = [];                // per ghost, in roster order: _gameT when it may snipe again
   let concussiveUnlocked = false;
+  let superStimUnlocked = false;   // Super Stimpack research (Marines)
+  // Endless armory: purchases of each kind (see CFG.armory_*)
+  let armory = { hp: 0, dmg: 0, ammo: 0, cd: 0 };
+  const ARMORY_DEF = {
+    hp:   { name: 'Hull plating',   cost: [300, 75],  icon: UI_DIR + 'btn-upgrade-terran-neosteelframe.png',
+            fx: () => `+${CFG.armory_hp} max HP`, total: n => `+${n * CFG.armory_hp} HP` },
+    dmg:  { name: 'Weapon tuning',  cost: [400, 100], icon: UI_DIR + 'btn-upgrade-terran-infantryweaponslevel3.png',
+            fx: () => `+${Math.round(CFG.armory_dmg * 100)}% damage`, total: n => `+${Math.round(n * CFG.armory_dmg * 100)}% damage` },
+    ammo: { name: 'Magazine',       cost: [250, 60],  icon: UI_DIR + 'btn-upgrade-terran-enhancedmunitions.png',
+            fx: () => `+${CFG.armory_ammo} rounds`, total: n => `+${n * CFG.armory_ammo} rounds` },
+    cd:   { name: 'Fleet logistics', cost: [350, 120], icon: UI_DIR + 'btn-progression-hornerhan-5-fleetcalldown.png',
+            fx: () => `strike & nuke cooldowns −${Math.round((1 - CFG.armory_cd) * 100)}%`, total: n => `cooldowns ×${armoryCdMult(n).toFixed(2)}`,
+            maxed: () => armoryCdMult() <= CFG.armory_cd_min },
+  };
   let snipeUnlocked = false;
   let snipeLvl = 0;       // 0-3 tier within snipe upgrade
   let concussiveLvl = 0;  // 0-3 tier within concussive upgrade
@@ -371,6 +391,7 @@ const G = (() => {
   // range, leads it, turns toward it and fires twin rounds: the firepower of
   // two extra marines, but automatic — no clicks, no ammo.
   const SHRIKE = { interval: 0.3, range: 14,
+                   overdriveInterval: 0.12, overdriveColor: 0xff2a1a,   // six Marines inside: 2.5× rate of fire, red rounds
                    omega: 20, maxTurn: 14,   // yaw spring stiffness (rad/s) and turn-speed cap (rad/s)
                    sink: -0.05 }; // raised: base rests on the frame's top plate with its collar showing (SC2 "full armor w/ Shrike")
   const SHRIKE_GOLD = 0xffb81f;           // Lv3 team colour (frame + turret), matches the hologram
@@ -425,14 +446,14 @@ const G = (() => {
     _pBuilt = false; _pBuildTried = false; // hologram rebuilds itself with the turret
   }
   // Target choice: score = distance + how far the gun must turn, with enemies
-  // biting the bunker first. The current target is kept unless another is
+  // attacking the bunker first. The current target is kept unless another is
   // clearly better — re-picking the nearest every frame made the turret flick
   // between enemies at similar range and whip around after every kill.
   function _shrikeScore(e) {
     const p = e.mesh.position, d = Math.hypot(p.x, p.z);
     if (d > SHRIKE.range) return Infinity;
-    const biting = d < (e.type === 'r' ? 2.6 : 2.0);
-    return d + Math.abs(angDiff(Math.atan2(p.x, p.z), _shrikeYaw)) * 1.2 - (biting ? 3 : 0);
+    const attacking = d < attackReach(e);
+    return d + Math.abs(angDiff(Math.atan2(p.x, p.z), _shrikeYaw)) * 1.2 - (attacking ? 3 : 0);
   }
   function _shrikePick() {
     let best = null, bestS = Infinity, curLive = false;
@@ -449,7 +470,38 @@ const G = (() => {
     }
     return best;
   }
+  // Marine overdrive: a bunker full of Marines (6/6) drives the Shrike turret
+  // much faster — the Marines' answer to the Marauder's and Ghost's abilities.
+  function shrikeOverdrive() { return hpLvl >= 3 && roster.length === 6 && roster.every(u => u === 'marine'); }
+  let _shrikeOD = false;
+
+  // Stimpack (T): a full Marine squad (6/6) can stim, as in SC2 — for 11 s the
+  // Marines fire 50% faster (an extra round every other volley, no extra ammo),
+  // at the SC2 price of 10 HP per Marine, paid by the bunker.
+  const STIM_COLOR = 0xff6a3a;
+  let stimT = 0, _stimVolley = 0;
+  function stimUnlocked() { return roster.length === 6 && roster.every(u => u === 'marine'); }
+  function stimCost() { return superStimUnlocked ? 0 : CFG.stim_hp * roster.length; }   // Super Stimpack: free
+  function doStim() {
+    if (phase !== 'playing' || isPaused()) return;
+    if (wavePhase !== 'combat') { setStatus('Stimpack only during a wave'); SFX.play('deny'); return; }
+    if (!stimUnlocked()) { setStatus('Stimpack needs a full Marine squad (6/6)'); SFX.play('deny'); return; }
+    if (stimT > 0) { setStatus('Already stimmed!'); return; }
+    const cost = stimCost();
+    if (cost && bunkerHp <= cost) { setStatus('Not enough HP to stim'); SFX.play('deny'); return; }
+    bunkerHp -= cost; stimT = CFG.stim_duration; _stimVolley = 0;
+    setStatus(superStimUnlocked
+      ? `Super Stimpack! Marines fire 50% faster, bunker repair +${Math.round(repairRate())} HP/s for ${CFG.stim_duration} s`
+      : `Stimpack! Marines fire 50% faster for ${CFG.stim_duration} s (−${cost} HP)`);
+    SFX.play('stim');
+    updateHUD();
+  }
   function updateShrike(dt) {
+    const od = shrikeOverdrive();
+    if (od !== _shrikeOD) {
+      _shrikeOD = od;
+      if (od) setStatus('Six Marines — Shrike overdrive: rate of fire ×2.5!');
+    }
     if (hpLvl < 3) { _shrikeTgt = null; return; }
     _shrikeCD = Math.max(0, _shrikeCD - dt);
     const tgt = _shrikeTgt = _shrikePick();
@@ -458,8 +510,8 @@ const G = (() => {
       const p = tgt.mesh.position;
       d = Math.max(0.01, Math.hypot(p.x, p.z));
       tx = p.x; tz = p.z;
-      // Lead moving enemies only (they walk straight at the bunker); biters stand still
-      if (d > (tgt.type === 'r' ? 2.6 : 2.0)) {
+      // Lead moving enemies only (they walk straight at the bunker); attackers stand still
+      if (d > attackReach(tgt)) {
         const v = tgt.speed * (slowedEnemies.get(tgt.mesh.uuid)?.factor ?? 1) * 60;
         const lead = v * d / (UNIT_DEF.marine.bulletSpeed * 60);
         tx -= p.x / d * lead; tz -= p.z / d * lead;
@@ -491,7 +543,7 @@ const G = (() => {
     // Fire once the target is inside the gun's line of fire (wider for close targets)
     const hitR = tgt.type === 'r' ? .75 : .5;
     if (Math.abs(angDiff(want, _shrikeYaw)) > Math.max(0.1, Math.atan2(hitR, d))) return;
-    _shrikeCD = SHRIKE.interval;
+    _shrikeCD = od ? SHRIKE.overdriveInterval : SHRIKE.interval;
     _shrikeRecoil = 1;
     // Twin barrels = 2 marine rounds. Each leaves its own muzzle and flies at the
     // same aim point (target body height): the tracers converge into a V there
@@ -502,35 +554,19 @@ const G = (() => {
       const ox = cy * tip.x + sy * tip.z, oz = -sy * tip.x + cy * tip.z, oy = _shrikeY + tip.y; // turret yaw → world
       const blt = makeBulletTyped(tx, tz, 0, 'marine', ox, oy, oz, aimY);
       blt.len = 1.8;                              // longer streaks: the V reads clearly
+      if (od) blt.color = SHRIKE.overdriveColor;
       bullets.push(blt);
-      muzzleFlash(ox, oy, oz, blt.vx / blt.speed, blt.vz / blt.speed, 0xffb030, false);
+      muzzleFlash(ox, oy, oz, blt.vx / blt.speed, blt.vz / blt.speed, od ? 0xff4020 : 0xffb030, false);
     }
     SFX.play('shrike');
   }
 
   // ── SC2-style team colour ────────────────────────────────────────────────
-  // SC2 diffuse maps carry a team-colour mask in alpha (opaque = bare steel,
-  // lower alpha = painted panel). Tint the masked panels with `hex`; returns
-  // the THREE.Color uniform so the tint can be changed later.
-  const BUNKER_TEAM_COL = 0x2f6dff;
-  function addTeamColor(mat, hex) {
-    const tc = new THREE.Color(hex);
-    mat.onBeforeCompile = shader => {
-      shader.uniforms.teamColor = { value: tc };
-      shader.fragmentShader = 'uniform vec3 teamColor;\n' + shader.fragmentShader.replace(
-        '#include <map_fragment>',
-        `#ifdef USE_MAP
-          vec4 texelColor = texture2D( map, vUv );
-          texelColor = mapTexelToLinear( texelColor );
-          float tcMask = smoothstep( 0.98, 0.55, texelColor.a );
-          // tint scaled by the panel's luminance: keeps its detail, never clips to white
-          vec3 tcCol = teamColor * ( 0.3 + 1.2 * dot( texelColor.rgb, vec3( 0.299, 0.587, 0.114 ) ) );
-          diffuseColor.rgb *= mix( texelColor.rgb, tcCol, tcMask );
-        #endif`);
-    };
-    mat.needsUpdate = true;
-    return tc;
-  }
+  // Tints the panels masked by the diffuse alpha (see ModelLoader.teamColor,
+  // which also keeps SC2 normal maps working); returns the THREE.Color uniform
+  // so the tint can be changed later.
+  const BUNKER_TEAM_COL = TEAM_COLOR.terran;
+  const addTeamColor = (mat, hex) => ModelLoader.teamColor(mat, hex);
 
   // ── Shared geometry/material caches ──────────────────────────────────────
   // Procedural entities are spawned constantly (Zerg models are procedural-only),
@@ -619,7 +655,7 @@ const G = (() => {
       im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3).setUsage(THREE.DynamicDrawUsage);
       im.frustumCulled = false;   // instances roam far from the mesh origin
       im.castShadow = p.cast;     // one shadow draw per material for the whole swarm
-      im.count = 0;
+      im.count = 0; im.visible = false;   // shown by syncEnemyPools once used
       scene.add(im);
       return im;
     });
@@ -649,7 +685,8 @@ const G = (() => {
       }
     }
     for (const pool of _pools.values()) for (const im of pool.ims) {
-      im.count = pool.n; im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true;
+      im.count = pool.n; im.visible = pool.n > 0;   // walk / attack frames nobody is on: skipped (also in the shadow pass)
+      im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true;
     }
   }
 
@@ -678,14 +715,29 @@ const G = (() => {
     gun.position.set(.27,.73,.18); g.add(gun);
     return g;
   }
-  function makeMarine(ox,oz,idx){
+  function makeMarine(ox,oz,idx,type){
     const g = new THREE.Group();
-    const model = ModelLoader.clone('marine', () => _proceduralMarine(idx));
-    if (model) g.add(model);
     g.position.set(ox,0,oz);
     g.visible = false;  // hidden while inside bunker
     scene.add(g);
-    return {mesh:g,state:'bunker',target:null,cb:null,homeX:ox,homeZ:oz,leg:Math.random()*6.28};
+    const m = {mesh:g,type:null,state:'bunker',target:null,queue:[],cb:null,homeX:ox,homeZ:oz,leg:Math.random()*6.28};
+    setUnitModel(m, type, idx);
+    return m;
+  }
+  // The figure that leaves the bunker wears its unit's SC2 model (marine,
+  // marauder, ghost), else a procedural marine. A fallback is swapped for the
+  // real model once it has loaded. With a walk cycle, one mesh steps through
+  // the frame geometries (see updateMarines).
+  function setUnitModel(m, type, idx) {
+    if (m.type === type && !(m.fallback && ModelLoader.isReady(type))) return;
+    m.mesh.clear();
+    const frames = ModelLoader.animFrames(type, 'walk');
+    const model = frames ? frames[0].clone() : ModelLoader.clone(type) || ModelLoader.clone('marine', () => _proceduralMarine(idx));
+    if (model) m.mesh.add(model);
+    m.type = type; m.fallback = !ModelLoader.isReady(type);
+    m.walk = frames && frames.map(t => t.getObjectByProperty('isMesh', true).geometry);
+    m.walkMesh = frames && model.getObjectByProperty('isMesh', true);
+    m.stride = frames ? ASSETS[type].stride : 1; m.step = 0;
   }
 
   function _proceduralZergling() {
@@ -707,15 +759,30 @@ const G = (() => {
     for(let i=0;i<4;i++){const f=new THREE.Mesh(sharedGeo('zg-fin',()=>new THREE.ConeGeometry(.06,.24,4)),lamMat(0x334433));f.position.set(0,.65,-.22+i*.16);g.add(f);}
     return g;
   }
+  // How an enemy is drawn: its SC2 skin's walk cycle (one instance pool per
+  // frame, the enemy hops between them) and attack animation, else the static
+  // model, else the procedural look (poolKey, makeProcedural).
+  function enemyLook(skin, poolKey, makeProcedural) {
+    const framePools = anim => {
+      const frames = skin && ModelLoader.animFrames(skin, anim);
+      return frames ? frames.map((t, k) => enemyPool(`${skin}:${anim}${k}`, () => t)) : null;
+    };
+    const walk = framePools('walk'), attack = framePools('attack');
+    const pool = walk ? walk[0]
+      : skin ? enemyPool(skin + ':model', () => ModelLoader.clone(skin))
+      : enemyPool(poolKey, makeProcedural);
+    return { pool, model: !!skin, walk, attack, stride: skin ? ASSETS[skin].stride : 1, step: Math.random(), atkT: Math.random() };
+  }
   function makeZergling(x,z){
     const g = new THREE.Object3D();   // transform holder — drawn by its instance pool
     g.position.set(x,0,z);
-    // Loaded model if available, else the procedural look of this wave tier
-    const pool = ModelLoader.isReady('zergling')
-      ? enemyPool('zergling:model', () => ModelLoader.clone('zergling'))
-      : enemyPool('zergling:' + (wave>=7?2:wave>=4?1:0), _proceduralZergling);
+    // Metabolic Boost (wave 8+): the winged SC2 model, its webby skin later, 60% faster.
+    // Each falls back to the previous skin, then to the procedural look of the wave tier.
+    const boost = wave >= CFG.metabolic_wave;
+    const skin = [wave>=CFG.webby_wave&&'zergling_webby', boost&&'zergling_upgrade', 'zergling'].find(k => k && ModelLoader.isReady(k));
     const hp=60+wave*28;
-    return {mesh:g,pool,type:'z',hp,maxHp:hp,dead:false,speed:0.014+wave*0.004,dmg:10+wave*3,leg:Math.random()*6.28,
+    return {mesh:g,...enemyLook(skin, 'zergling:' + (wave>=7?2:wave>=4?1:0), _proceduralZergling),
+            type:'z',hp,maxHp:hp,dead:false,speed:(0.014+wave*0.004)*(boost?CFG.metabolic_boost:1),dmg:10+wave*3,leg:Math.random()*6.28,
             attrs:['light','biological'],          // SC2: Zergling is Light
             reward:{score:10+wave*2,minerals:6+wave*2,gas:Math.floor(wave/2)}};
   }
@@ -742,13 +809,97 @@ const G = (() => {
   function makeRoach(x,z){
     const g = new THREE.Object3D();   // transform holder — drawn by its instance pool
     g.position.set(x,0,z);
-    const pool = ModelLoader.isReady('roach')
-      ? enemyPool('roach:model', () => ModelLoader.clone('roach'))
-      : enemyPool('roach', _proceduralRoach);
+    // SC2 skin of this wave tier (falls back to the base skin, then procedural)
+    const skin = [wave>=13&&'roach_ex3', wave>=9&&'roach_ex1a', 'roach'].find(k => k && ModelLoader.isReady(k));
     const hp=200+wave*70;
-    return {mesh:g,pool,type:'r',hp,maxHp:hp,dead:false,speed:0.008+wave*0.002,dmg:18+wave*5,leg:Math.random()*6.28,
+    return {mesh:g,...enemyLook(skin, 'roach', _proceduralRoach),atkT:0,mouth:roachMouth(skin),
+            type:'r',hp,maxHp:hp,dead:false,speed:0.008+wave*0.002,dmg:18+wave*5,leg:Math.random()*6.28,
             attrs:['armored','biological'],        // SC2: Roach is Armored
             reward:{score:30+wave*5,minerals:18+wave*4,gas:3+wave}};
+  }
+  // Advance an enemy's walk cycle by `dist` world units (one loop per stride,
+  // sped up by ANIM_SPEED) and draw it from that frame's instance pool.
+  function walkStep(e, dist) {
+    e.step = (e.step + dist / e.stride * ANIM_SPEED) % 1;
+    e.pool = e.walk[Math.floor(e.step * e.walk.length)];
+  }
+
+  // Distance from the bunker's centre at which an enemy stops and attacks:
+  // Zerglings bite the hull, Roaches spit acid from SC2 range.
+  function attackReach(e) { return e.type === 'r' ? ROACH_ACID.range : 2.0; }
+
+  // ── Roach acid ───────────────────────────────────────────────────────────
+  // In range, a Roach faces the bunker and plays its SC2 Attack animation; at
+  // the lunge a glob of acid leaves its mouth and arcs onto the hull facing it.
+  // Damage lands on impact (same damage per second as the old bite). Game time:
+  // globs freeze on pause and are dropped by Restart/Load.
+  let acids = [];
+  const ACID_CAP = 256;
+  const _acidIM = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(.11, 1), new THREE.MeshBasicMaterial({ color: 0x9cff3a }), ACID_CAP);
+  _acidIM.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  _acidIM.frustumCulled = false; _acidIM.count = 0;
+  scene.add(_acidIM);
+  const _acidM4 = new THREE.Matrix4(), _acidScale = new THREE.Vector3(), _acidQ = new THREE.Quaternion();
+  const _PROC_MOUTH = new THREE.Vector3(0, .6, 1.0);   // the procedural Roach's face
+  const _mouthCache = {};
+  // Ref_Head at the spit moment, in a Roach's local space (the model's normalisation applied)
+  function roachMouth(skin) {
+    if (!skin) return _PROC_MOUTH;
+    if (!_mouthCache[skin]) {
+      const t = ModelLoader.clone(skin);
+      t.updateMatrixWorld(true);
+      _mouthCache[skin] = new THREE.Vector3(...ROACH_ACID.mouth).applyMatrix4(t.getObjectByProperty('isMesh', true).matrixWorld);
+    }
+    return _mouthCache[skin];
+  }
+  function roachAttack(e, dt, ex, ez) {
+    e.mesh.rotation.y = Math.atan2(-ex, -ez);
+    e.mesh.rotation.z = 0; e.mesh.position.y = 0;
+    const A = ROACH_ACID, t0 = e.atkT, spit = A.spit / ANIM_SPEED;
+    e.atkT += dt;
+    if (t0 < spit && e.atkT >= spit) spitAcid(e);
+    if (e.atkT >= A.cooldown) e.atkT -= A.cooldown;
+    // the 1 s animation (played ANIM_SPEED× faster), then hold its last frame until the next spit
+    if (e.attack) e.pool = e.attack[Math.min(e.attack.length - 1, Math.floor(e.atkT * ANIM_SPEED / A.anim * e.attack.length))];
+    else if (!e.model) e.mesh.position.y = Math.abs(Math.sin(e.leg)) * .07;
+  }
+  function spitAcid(e) {
+    e.mesh.updateMatrix();
+    const p = e.mouth.clone().applyMatrix4(e.mesh.matrix);
+    const ex = e.mesh.position.x, ez = e.mesh.position.z, d = Math.hypot(ex, ez) || 1;
+    const tx = ex / d * 1.35, tz = ez / d * 1.35, ty = .5 + Math.random() * .4;   // the hull facing the Roach
+    const T = ROACH_ACID.flight, g = ROACH_ACID.gravity;
+    acids.push({ p, t: 0, dmg: e.dmg * ROACH_ACID.cooldown,
+                 v: new THREE.Vector3((tx - p.x) / T, (ty - p.y) / T + .5 * g * T, (tz - p.z) / T) });
+    for (let i = 0; i < 4; i++) emitParticle(_glow, p.x, p.y, p.z, (Math.random() - .5) * 2, Math.random() * 1.5, (Math.random() - .5) * 2, .25, .22, .05, .9, 0xc8ff50, 0x3a9a12, 4, 1, 0);
+    SFX.play('spit');
+  }
+  function updateAcids(dt) {
+    const g = ROACH_ACID.gravity, arm = 1 / (1 + armorLvl * .35);
+    acids = acids.filter(a => {
+      a.t += dt; a.v.y -= g * dt; a.p.addScaledVector(a.v, dt);
+      if (Math.random() < .75)                                   // dripping trail
+        emitParticle(_glow, a.p.x, a.p.y, a.p.z, (Math.random() - .5) * .6, (Math.random() - .5) * .6, (Math.random() - .5) * .6, .3, .26, .05, .85, 0xb8ff40, 0x2c8a10, 2, 0, 0);
+      if (a.t < ROACH_ACID.flight) return true;
+      bunkerHp = Math.max(0, bunkerHp - a.dmg * arm);
+      for (let i = 0; i < 9; i++)                                // splash + a puff of corrosive smoke
+        emitParticle(_glow, a.p.x, a.p.y, a.p.z, (Math.random() - .5) * 5, Math.random() * 4 + 1, (Math.random() - .5) * 5, .45 + Math.random() * .25, .24, .06, 1, 0xc8ff50, 0x3a9a12, 18, .8, 0);
+      emitParticle(_smoke, a.p.x, a.p.y, a.p.z, 0, .8, 0, 1.0, .5, 1.3, .45, 0x6a8a3a, 0x3a4a2a, -.2, .5, 1);
+      SFX.play('acid');
+      if (_dmgFlashCD <= 0) { flash('dmg-flash'); _dmgFlashCD = .6; }
+      return false;
+    });
+    syncAcids();
+  }
+  function syncAcids() {
+    let n = 0;
+    for (const a of acids) {
+      if (n >= ACID_CAP) break;
+      const w = 1 + Math.sin(a.t * 40 + n) * .15;              // wobbling glob
+      _acidM4.compose(a.p, _acidQ, _acidScale.set(w, 2 - w, w));
+      _acidM4.toArray(_acidIM.instanceMatrix.array, n++ * 16);
+    }
+    _acidIM.count = n; _acidIM.instanceMatrix.needsUpdate = true;
   }
 
   // ── Instanced bullets ────────────────────────────────────────────────────
@@ -765,24 +916,56 @@ const G = (() => {
   _bulletIM.count = 0;
   scene.add(_bulletIM);
   const _tmpCol = new THREE.Color();
+  // R = Ry(yaw)·Rx(pitch) + translation, column-major (local +Z → flight direction);
+  // L stretches the round along its flight axis
+  function _writeBulletMatrix(m, o, b, L) {
+    const sy = b.sin, cy = b.cos, sp = b.sinP, cp = b.cosP, p = b.mesh.position;
+    m[o] = cy;        m[o+1] = 0;     m[o+2] = -sy;      m[o+3] = 0;
+    m[o+4] = sy*sp;   m[o+5] = cp;    m[o+6] = cy*sp;    m[o+7] = 0;
+    m[o+8] = sy*cp*L; m[o+9] = -sp*L; m[o+10] = cy*cp*L; m[o+11] = 0;
+    m[o+12] = p.x;    m[o+13] = p.y;  m[o+14] = p.z;     m[o+15] = 1;
+  }
+  // Marauder rounds are SC2 punisher grenades (MarauderMissile.m3: body +
+  // fireball, modelled nose along +Z like the tracers). Its texture was not
+  // extracted, so the body gets plain gunmetal and the fireball an additive glow.
+  const MISSILE_CAP = 128;
+  let _missileIMs = null;
+  function _missileParts() {
+    if (_missileIMs || !ModelLoader.isReady('marauderMissile')) return _missileIMs;
+    const body = new THREE.MeshStandardMaterial({ color: 0x6b7078, metalness: .6, roughness: .35, emissive: 0x301000 });
+    const glow = new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false });
+    const t = ModelLoader.clone('marauderMissile');
+    t.position.set(0, 0, 0);                      // centred on the round, not stood on the ground
+    t.traverse(ch => { if (ch.isMesh) ch.material = ch.name === 'region_1' ? glow : body; });
+    _missileIMs = bakeTemplate(t).map(p => {
+      const im = new THREE.InstancedMesh(p.geo, p.mat, MISSILE_CAP);
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.frustumCulled = false; im.castShadow = p.mat === body; im.count = 0;
+      scene.add(im);
+      return im;
+    });
+    return _missileIMs;
+  }
   function syncBullets() {
     const m = _bulletIM.instanceMatrix.array, c = _bulletIM.instanceColor.array;
-    let n = 0;
+    const mis = _missileParts();
+    let n = 0, nm = 0;
     for (const b of bullets) {
-      if (!b.alive || n >= BULLET_CAP) continue;
-      // R = Ry(yaw)·Rx(pitch) + translation, column-major (local +Z → flight direction)
-      const o = n * 16, sy = b.sin, cy = b.cos, sp = b.sinP, cp = b.cosP, p = b.mesh.position;
-      m[o] = cy;       m[o+1] = 0;   m[o+2] = -sy;     m[o+3] = 0;
-      m[o+4] = sy*sp;  m[o+5] = cp;  m[o+6] = cy*sp;   m[o+7] = 0;
-      const L = b.len || 1;                         // tracer length multiplier along the flight axis
-      m[o+8] = sy*cp*L; m[o+9] = -sp*L; m[o+10] = cy*cp*L; m[o+11] = 0;
-      m[o+12] = p.x; m[o+13] = p.y; m[o+14] = p.z; m[o+15] = 1;
+      if (!b.alive) continue;
+      if (mis && b.unitType === 'marauder') {
+        if (nm < MISSILE_CAP) for (const im of mis) _writeBulletMatrix(im.instanceMatrix.array, nm * 16, b, 1);
+        nm++;
+        continue;
+      }
+      if (n >= BULLET_CAP) continue;
+      _writeBulletMatrix(m, n * 16, b, b.len || 1);
       _tmpCol.setHex(b.color); _tmpCol.toArray(c, n * 3);
       n++;
     }
     _bulletIM.count = n;
     _bulletIM.instanceMatrix.needsUpdate = true;
     _bulletIM.instanceColor.needsUpdate = true;
+    if (mis) for (const im of mis) { im.count = Math.min(nm, MISSILE_CAP); im.instanceMatrix.needsUpdate = true; }
   }
 
   // ── Firing ports & muzzle flashes ───────────────────────────────────────
@@ -1051,7 +1234,7 @@ const G = (() => {
     while(marines.length<count){
       const idx=marines.length;
       const [ox,oz]=MARINE_SLOTS[idx]??[.3+idx*.4,0];
-      marines.push(makeMarine(ox,oz,idx));
+      marines.push(makeMarine(ox,oz,idx,roster[idx]));
     }
     while(marines.length>count){
       // Remove an idle marine first. A marine out on a crate run carries the
@@ -1063,9 +1246,12 @@ const G = (() => {
       scene.remove(m.mesh);
       if(m.state!=='bunker'){
         if(m.target) collectCrateAt(m.target.x,m.target.z);
+        m.queue.forEach(q=>collectCrateAt(q.x,q.z)); m.queue=[];
         const cb=m.cb; m.cb=null; cb?.();
       }
     }
+    // marines[i] stands for roster[i]: a dismissal can shift the types
+    marines.forEach((m,i)=>{ if(m.state==='bunker') setUnitModel(m,roster[i],i); });
   }
   function slotsUsed(){return roster.reduce((s,u)=>s+UNIT_DEF[u].slots,0);}
   function slotsLeft(){return 6-slotsUsed();}
@@ -1076,21 +1262,40 @@ const G = (() => {
     });
   }
   function sendMarine(tx,tz,cb){
-    const idle=marines.find(m=>m.state==='bunker');
+    // Only one unit leaves the bunker: a crate dropped while one is already out
+    // (airstrike + end-of-wave resupply) joins its trip, both resupplies apply on its return
+    const out=marines.find(m=>m.state==='running');
+    if(out){
+      out.queue.push({x:tx,z:tz});
+      const prev=out.cb; out.cb=()=>{prev?.();cb?.();};
+      if(out.target.phase==='return') out.target={...out.queue.shift(),phase:'goto'};
+      return;
+    }
+    // A Marine fetches the crate when one is free, else any idle unit
+    const free=i=>marines[i]?.state==='bunker';
+    let i=roster.findIndex((u,k)=>u==='marine'&&free(k));
+    if(i<0) i=marines.findIndex((m,k)=>free(k));
     // Nobody free to fetch it — resupply instantly and don't leave the crate behind
-    if(!idle){collectCrateAt(tx,tz);cb?.();return;}
-    idle.state='running'; idle.mesh.visible=true; idle.target={x:tx,z:tz,phase:'goto'}; idle.cb=cb;
+    if(i<0){collectCrateAt(tx,tz);cb?.();return;}
+    const idle=marines[i];
+    setUnitModel(idle,roster[i],i);
+    idle.state='running'; idle.mesh.visible=true; idle.target={x:tx,z:tz,phase:'goto'}; idle.queue=[]; idle.cb=cb;
   }
   function updateMarines(dt){
     marines.forEach(m=>{
       if(m.state==='bunker')return;
-      const mp=m.mesh.position; m.leg+=dt*9; mp.y=Math.abs(Math.sin(m.leg))*.1;
+      const mp=m.mesh.position; m.leg+=dt*9;
+      if(m.walk){                                    // SC2 walk cycle at the running pace
+        m.step=(m.step+2.8*dt/m.stride*ANIM_SPEED)%1;
+        m.walkMesh.geometry=m.walk[Math.floor(m.step*m.walk.length)];
+      } else mp.y=Math.abs(Math.sin(m.leg))*.1;      // procedural marine hops
       const tgt=m.target;
       if(tgt.phase==='goto'){
         const dx=tgt.x-mp.x,dz=tgt.z-mp.z,d=Math.sqrt(dx*dx+dz*dz);
         if(d<.5){
           collectCrateAt(tgt.x,tgt.z);
-          tgt.phase='return';
+          if(m.queue.length) m.target={...m.queue.shift(),phase:'goto'};   // next crate on this trip
+          else tgt.phase='return';
         } else {mp.x+=dx/d*2.8*dt;mp.z+=dz/d*2.8*dt;m.mesh.rotation.y=Math.atan2(dx,dz);}
       } else {
         const dx=m.homeX-mp.x,dz=m.homeZ-mp.z,d=Math.sqrt(dx*dx+dz*dz);
@@ -1116,7 +1321,7 @@ const G = (() => {
       setStatus(ammo>0?'Use when ammo is empty!':'Not ready yet!');return;
     }
     if(vikingActive){setStatus('Viking already inbound!');return;}
-    airCD=CFG.airstrike_cd; waveAirs++;
+    airCD=strikeCooldown(); waveAirs++;
 
     const alive=allEnemies().filter(e=>!e.dead);
 
@@ -1155,6 +1360,9 @@ const G = (() => {
   let _nukeInFlight = false;
 
   // force = cheat launch: skips the wave unlock, cooldown and in-flight checks
+  let _nukeTargetTex = null;   // SC2 nuke reticle for the target marker, loaded at boot
+  ModelLoader.texture(DECALS.nukeTarget).then(t => { _nukeTargetTex = t; })
+    .catch(() => console.warn('Nuke target texture failed to load — using a plain ring.'));
   function doNuke(force){
     if(!force){
       if(isPaused()) return; // command card stays clickable under the roster dim
@@ -1163,7 +1371,7 @@ const G = (() => {
         return;
       }
       if(_nukeInFlight){ setStatus('Nuclear launch already in progress!'); return; }
-      nukeCD=CFG.nuke_cd;
+      nukeCD=nukeCooldown();
     }
     waveNukes++;
     _nukeInFlight = true;
@@ -1193,13 +1401,26 @@ const G = (() => {
     laser.position.set(tx, 14, tz);
     scene.add(laser);
 
-    // Blinking laser dot on ground
-    const dotGeo = new THREE.RingGeometry(0.3, 0.6, 16);
-    const dotMat = new THREE.MeshBasicMaterial({color:0xff0000, side:THREE.DoubleSide, transparent:true});
+    // Blinking target marker on the ground: the SC2 nuke reticle (red on black,
+    // drawn additively), or a plain red ring until that texture has loaded
+    const dotGeo = _nukeTargetTex ? new THREE.PlaneGeometry(2.6, 2.6) : new THREE.RingGeometry(0.3, 0.6, 16);
+    const dotMat = _nukeTargetTex
+      ? new THREE.MeshBasicMaterial({map:_nukeTargetTex, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false})
+      : new THREE.MeshBasicMaterial({color:0xff0000, side:THREE.DoubleSide, transparent:true});
     const dot = new THREE.Mesh(dotGeo, dotMat);
     dot.rotation.x = -Math.PI/2;
     dot.position.set(tx, 0.05, tz);
     scene.add(dot);
+
+    // The warhead itself falls down the laser, nose first (SC2 model, if loaded)
+    const NUKE_DROP_H = 9;                        // stays well below the overview camera (y 22)
+    const missile = ModelLoader.clone('nukeMissile');
+    const missileHalf = missile ? missile.position.y : 0;  // the template floats by half its height
+    if (missile) {
+      missile.rotation.x = Math.PI;               // modelled nose up; flips about its centre
+      missile.position.set(tx, missileHalf + NUKE_DROP_H, tz);
+      scene.add(missile);
+    }
 
     // Expanding warning ring — unit ring, animated via scale (no geometry churn)
     const warnMat = new THREE.MeshBasicMaterial({color:0xff2200, side:THREE.DoubleSide, transparent:true, opacity:0.6});
@@ -1222,6 +1443,11 @@ const G = (() => {
       // Dot blinks faster as impact nears
       dot.material.opacity = Math.sin(warnT*(6+prog*14)) > 0 ? 0.9 : 0.1;
       laser.material.opacity = 0.5 + Math.sin(warnT*8)*0.35;
+      if (missile) {                              // accelerating drop, lands at detonation
+        missile.position.y = missileHalf + NUKE_DROP_H * (1 - prog * prog);
+        missile.rotation.y += dt * 4;
+        spawnParts({x: tx, y: missile.position.y + missileHalf, z: tz}, 0xffaa55, 1);   // exhaust at the tail
+      }
       if (warnT < WARN_DUR) return true;
       detonate();
       return false;
@@ -1229,6 +1455,7 @@ const G = (() => {
       // Remove designator visuals (warnRing uses shared _ringGeo — don't dispose it).
       // Also runs when Restart/Load drops the launch mid-countdown.
       scene.remove(laser); scene.remove(dot); scene.remove(warnRing);
+      if (missile) scene.remove(missile);         // shares the template's geometry — no dispose
       laser.geometry.dispose(); dot.geometry.dispose();
       laser.material.dispose(); dot.material.dispose(); warnRing.material.dispose();
       _nukeInFlight = false;
@@ -1324,10 +1551,10 @@ const G = (() => {
   function buy(type){
     const spent0=minerals+gas;
     const s=({
-      dmg:  ()=>{if(dmgLvl>=3)return'Damage MAX!';const[m,g]=CFG.dmg_costs[dmgLvl];if(minerals<m||gas<g)return'Not enough!';minerals-=m;gas-=g;dmgLvl++;return`Damage Lv. ${dmgLvl}`;},
-      armor:()=>{if(armorLvl>=3)return'Armor MAX!';const[m,g]=CFG.armor_costs[armorLvl];if(minerals<m||gas<g)return'Not enough!';minerals-=m;gas-=g;armorLvl++;return`Armor Lv. ${armorLvl}`;},
-      hp:   ()=>{if(hpLvl>=3)return'HP MAX!';const[m,g]=CFG.hp_costs[hpLvl];if(minerals<m||gas<g)return'Not enough!';minerals-=m;gas-=g;hpLvl++;maxHp+=250;bunkerHp=Math.min(bunkerHp+250,maxHp);updateBunkerVisual();updatePortraitBunker();return hpLvl===3?'HP MAX — Shrike turret online, self-repair active!':hpLvl===2?'HP Lv. 2 — Neosteel frame installed':`HP Lv. ${hpLvl}`;},
-      ammo: ()=>{if(ammoLvl>=3)return'Ammo MAX!';const[m,g]=CFG.ammo_costs[ammoLvl];if(minerals<m||gas<g)return'Not enough!';minerals-=m;gas-=g;ammoLvl++;maxAmmo+=10;ammo=Math.min(ammo+10,maxAmmo);return ammoLvl===3?'Ammo MAX!':`Ammo Lv. ${ammoLvl} (+10)`;},
+      dmg:  ()=>{if(dmgLvl>=3)return'Damage MAX!';const[m,g]=CFG.dmg_costs[dmgLvl];if(minerals<m||gas<g)return needText(m,g);minerals-=m;gas-=g;dmgLvl++;return`Damage Lv. ${dmgLvl}`;},
+      armor:()=>{if(armorLvl>=3)return'Armor MAX!';const[m,g]=CFG.armor_costs[armorLvl];if(minerals<m||gas<g)return needText(m,g);minerals-=m;gas-=g;armorLvl++;return`Armor Lv. ${armorLvl}`;},
+      hp:   ()=>{if(hpLvl>=3)return'HP MAX!';const[m,g]=CFG.hp_costs[hpLvl];if(minerals<m||gas<g)return needText(m,g);minerals-=m;gas-=g;hpLvl++;maxHp+=250;bunkerHp=Math.min(bunkerHp+250,maxHp);updateBunkerVisual();updatePortraitBunker();return hpLvl===3?'HP MAX — Shrike turret online, self-repair active!':hpLvl===2?'HP Lv. 2 — Neosteel frame installed':`HP Lv. ${hpLvl}`;},
+      ammo: ()=>{if(ammoLvl>=3)return'Ammo MAX!';const[m,g]=CFG.ammo_costs[ammoLvl];if(minerals<m||gas<g)return needText(m,g);minerals-=m;gas-=g;ammoLvl++;maxAmmo+=10;ammo=Math.min(ammo+10,maxAmmo);return ammoLvl===3?'Ammo MAX!':`Ammo Lv. ${ammoLvl} (+10)`;},
       marine:()=>hireUnit('marine'),
     })[type]?.();
     setStatus(s??'Unknown');
@@ -1352,9 +1579,10 @@ const G = (() => {
     spawnQueue = [...Array(zc).fill('z'), ...Array(rc).fill('r')].sort(() => Math.random() - 0.5);
     spawnTimer = 0; wavePhase = 'combat'; waveKills = 0; waveNukes = 0; waveAirs = 0;
     const roachMsg = rc > 0 ? ` + ${rc} Roach${rc > 1 ? 'es' : ''}` : '';
+    const boostMsg = wave === CFG.metabolic_wave ? ' — Metabolic Boost: Zerglings run faster!' : endlessWaves() ? ` — bunker reinforced ×${endlessWaves()}` : '';
     setStatus(finalWave
       ? `FINAL WAVE ${wave}: ${zc} Zerglings${roachMsg} — hold the line!`
-      : `Wave ${wave}: ${zc} Zergling${zc > 1 ? 's' : ''}${roachMsg}`);
+      : `Wave ${wave}: ${zc} Zergling${zc > 1 ? 's' : ''}${roachMsg}${boostMsg}`);
     SFX.play('wave');
   }
 
@@ -1362,7 +1590,7 @@ const G = (() => {
     wavePhase='cleared';
     const bm=40+wave*15, bg=10+wave*5;
     minerals+=bm; gas+=bg; updateHUD();
-    setStatus(`Wave ${wave} cleared! +${bm}◆ +${bg}▲ — Resupply incoming...`);
+    setStatus(`Wave ${wave} cleared! +◆${bm} +▲${bg} — ${gameMode==='endless'?'Armory open (B) · resupply incoming...':'Resupply incoming...'}`);
     SFX.play('clear');
     // Game-time sequence: frozen while paused, dropped by Restart/Load.
     after(1.5, ()=>{
@@ -1378,6 +1606,7 @@ const G = (() => {
         after(2, ()=>setStatus('Next wave in 1...'));
         after(3, ()=>{
           wave++;
+          reinforce();                                  // Endless: the bunker is reinforced as the swarm grows
           setStatus(`Wave ${wave} — incoming!`);
           startWave();
         });
@@ -1387,6 +1616,49 @@ const G = (() => {
     // player chooses "Continue · Endless" on the victory screen.
     if (gameMode === 'campaign' && wave >= CFG.victory_wave) campaignVictory(); // writes its own checkpoint
     else autoSave();   // checkpoint: the title screen offers CONTINUE from here
+  }
+
+  // Endless reinforcements: waves fought past the campaign's last one (0 in the campaign).
+  // Damage and repair scale with it; max HP and the magazine grow by a step each wave.
+  function endlessWaves(){ return gameMode==='endless' ? Math.max(0, wave-CFG.victory_wave) : 0; }
+  // Max HP and the magazine grow by a step per Endless wave; endlessSteps counts the steps
+  // granted, so a resumed checkpoint, an old save or a wave-skipping cheat catches up
+  let endlessSteps = 0;
+  function reinforce(){
+    const n = endlessWaves() - endlessSteps;
+    if (n <= 0) return;
+    endlessSteps += n;
+    maxHp += CFG.endless_hp*n; bunkerHp += CFG.endless_hp*n; maxAmmo += CFG.endless_ammo*n; ammo += CFG.endless_ammo*n;
+    floatTexts.push({x:0,y:3.4,z:0,txt:`REINFORCED  +${CFG.endless_hp*n} HP  +${Math.round(CFG.endless_dmg*100*n)}% DMG`,life:2600,maxLife:2600,color:'#ffd24a'});
+  }
+  const repairMult = () => 1 + CFG.endless_repair * endlessWaves();
+  // Endless armory: cost of the next purchase of a kind (+30% each), the cooldown factor,
+  // and buying (Endless only, any time — the roster button pulses between waves when one is affordable)
+  function armoryCost(key){
+    const [m,g]=ARMORY_DEF[key].cost, k=CFG.armory_growth**armory[key];
+    return [Math.round(m*k/5)*5, Math.round(g*k/5)*5];
+  }
+  function armoryCdMult(n=armory.cd){ return Math.max(CFG.armory_cd_min, CFG.armory_cd**n); }
+  const strikeCooldown = () => CFG.airstrike_cd*armoryCdMult(), nukeCooldown = () => CFG.nuke_cd*armoryCdMult();
+  const armoryAffordable = () => Object.keys(ARMORY_DEF).some(k => { const [m,g]=armoryCost(k); return !ARMORY_DEF[k].maxed?.()&&minerals>=m&&gas>=g; });
+  function buyArmory(key){
+    const def=ARMORY_DEF[key];
+    if(!def||gameMode!=='endless') return;
+    if(def.maxed?.()){ setStatus(`${def.name} is maxed`); SFX.play('deny'); return; }
+    const [m,g]=armoryCost(key);
+    if(minerals<m||gas<g){ setStatus(needText(m,g)); SFX.play('deny'); return; }
+    minerals-=m; gas-=g; armory[key]++;
+    if(key==='hp'){ maxHp+=CFG.armory_hp; bunkerHp+=CFG.armory_hp; }
+    if(key==='ammo'){ maxAmmo+=CFG.armory_ammo; ammo+=CFG.armory_ammo; }
+    if(key==='cd'){ airCD=Math.min(airCD,strikeCooldown()); nukeCD=Math.min(nukeCD,nukeCooldown()); }
+    setStatus(`${def.name} ×${armory[key]}: ${def.fx()} (total ${def.total(armory[key])})`);
+    SFX.play('buy'); updateHUD();
+  }
+
+  // Bunker repair per second: the Lv3 hull's self-repair and the Super Stimpack (while
+  // stimmed) stack — 25 + 6 = 31 HP/s with both — and Endless reinforcements speed it up
+  function repairRate(){
+    return ((hpLvl>=3?CFG.repair_rate:0)+(superStimUnlocked&&stimT>0?CFG.superstim_heal:0))*repairMult();
   }
 
   // ── Shoot ────────────────────────────────────────────────────────────────
@@ -1428,6 +1700,7 @@ const G = (() => {
     if(shootCD>0||wavePhase!=='combat'||ammo<=0)return;
     ammo--; shootCD=.1;
     const n=roster.length||1;
+    const stimExtra=stimT>0&&_stimVolley++%2===0;      // stimmed: +1 round every other volley (+50%)
     roster.forEach((utype,i)=>{
       let atx=tx, atz=tz;
       // Marauder bonus vs Armored — auto-aim toward nearest Armored enemy
@@ -1448,6 +1721,10 @@ const G = (() => {
       const p=bunkerPort(Math.atan2(atz,atx)+(i-(n-1)/2)*0.2);
       const blt=makeBulletTyped(atx,atz,(i-(n-1)/2)*.006,utype,p.x,p.y,p.z);
       bullets.push(blt);
+      if(utype==='marine'&&stimT>0){
+        blt.color=STIM_COLOR;
+        if(stimExtra){ const b2=makeBulletTyped(atx,atz,(i-(n-1)/2)*.006+.02,utype,p.x,p.y+.05,p.z); b2.color=STIM_COLOR; bullets.push(b2); }
+      }
       muzzleFlash(p.x,p.y,p.z,blt.vx/blt.speed,blt.vz/blt.speed,UNIT_DEF[utype].bulletColor,utype==='marauder');
     });
     new Set(roster).forEach(u=>SFX.play(u));            // one gunshot voice per unit type
@@ -1514,6 +1791,7 @@ const G = (() => {
     if(e.key==='k'||e.key==='K') toggleMute();
     if(e.key==='r'||e.key==='R') doAirstrike();
     if(e.key==='n'||e.key==='N') doNuke();
+    if((e.key==='t'||e.key==='T')&&!_cheatBuf.endsWith('do')) doStim();   // T = Stimpack (not while typing "dotd")
     if(e.key==='b'||e.key==='B') G.openRoster();   // B = Bunker roster
     if(e.key==='q'||e.key==='Q') toggleGfx();      // Q = toggle graphics quality
     if(e.key==='m'||e.key==='M') openMenu();        // M = menu
@@ -1526,10 +1804,26 @@ const G = (() => {
 
   // ── HUD ──────────────────────────────────────────────────────────────────
   function $(id){return document.getElementById(id);}
+  // SC2 resource icons for every cost / gain / shortfall shown in HTML.
+  // Status messages are written with ◆ (minerals) and ▲ (gas); setStatus swaps in the icons.
+  const MIN_ICON = `<img class="ri" src="${UI_ICONS.mineral}" alt="minerals">`;
+  const GAS_ICON = `<img class="ri" src="${UI_ICONS.gas}" alt="gas">`;
+  // "[mineral] 250 [gas] 150"; omitZero drops a zero part (for shortfalls)
+  function resHTML(m, g, omitZero) {
+    return [m || !omitZero ? MIN_ICON + Math.ceil(m) : '', g || !omitZero ? GAS_ICON + Math.ceil(g) : ''].filter(Boolean).join(' ');
+  }
+  const shortfallHTML = (m, g) => resHTML(Math.max(0, m - minerals), Math.max(0, g - gas), true);
+  // Status text for a purchase that is short (the ◆ / ▲ markers become icons)
+  function needText(m, g) {
+    const nm = Math.max(0, Math.ceil(m - minerals)), ng = Math.max(0, Math.ceil(g - gas));
+    return 'Not enough — need ' + [nm ? '◆' + nm : '', ng ? '▲' + ng : ''].filter(Boolean).join(' ') + ' more';
+  }
   function setStatus(t){
+    const html = String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+      .replace(/◆/g, () => MIN_ICON).replace(/▲/g, () => GAS_ICON);
     const el1=$('tv-status');
-    if(el1){ el1.textContent=t; el1.classList.remove('flash'); void el1.offsetWidth; el1.classList.add('flash'); }
-    const el2=$('con-status-text'); if(el2) el2.textContent=t;
+    if(el1){ el1.innerHTML=html; el1.classList.remove('flash'); void el1.offsetWidth; el1.classList.add('flash'); }
+    const el2=$('con-status-text'); if(el2) el2.innerHTML=html;
   }
   function flash(id){
     const el=$(id);
@@ -1775,6 +2069,8 @@ const G = (() => {
       { id:'upg-ammo',  lvl:ammoLvl,       show:true },
       { id:'upg-conc',  lvl:concussiveLvl, show:concussiveUnlocked },
       { id:'upg-snipe', lvl:snipeLvl,      show:snipeUnlocked },
+      { id:'upg-superstim', lvl:3,         show:superStimUnlocked },   // single research: shown as maxed
+      { id:'upg-shrike',    lvl:3,         show:hpLvl>=3 },            // Shrike turret (hull Lv3)
     ];
     chips.forEach(c => {
       const el = document.getElementById(c.id);
@@ -1784,6 +2080,16 @@ const G = (() => {
       el.classList.toggle('maxed',  c.lvl >= 3);
       el.querySelectorAll('.upg-pip').forEach((pip, i) => pip.classList.toggle('on', i < c.lvl));
     });
+    const en = endlessWaves(), ec = $('upg-endless');
+    const bought = Object.keys(ARMORY_DEF).filter(k => armory[k]).map(k => ARMORY_DEF[k].total(armory[k]));
+    if (ec) {
+      ec.style.display = en || bought.length ? 'flex' : 'none';
+      $('upg-endless-n').textContent = en ? '+' + en : '';
+      ec.title = [en && `Endless reinforcements ×${en}: damage +${Math.round(CFG.endless_dmg * en * 100)}%, max HP +${CFG.endless_hp * en}, repair +${Math.round(CFG.endless_repair * en * 100)}%, magazine +${CFG.endless_ammo * en}`,
+                  bought.length && 'Armory: ' + bought.join(', ')].filter(Boolean).join('\n');
+    }
+    const od = shrikeOverdrive(), sh = $('upg-shrike');
+    if (sh) { sh.classList.toggle('od', od); sh.title = od ? 'Shrike overdrive — six Marines inside: rate of fire ×2.5' : 'Shrike turret — auto-fire, firepower of 2 marines'; }
   }
 
   // DOM caches: slot pips are rebuilt only when the roster changes; text and
@@ -1793,6 +2099,7 @@ const G = (() => {
   let _lastMin=0, _lastGas=0;
   function _pop(id){ const e=$(id); if(!e) return; e.classList.remove('pop'); void e.offsetWidth; e.classList.add('pop'); }
   function _setHTML(id,h){ if(_hudHTML.get(id)===h) return; _hudHTML.set(id,h); const e=$(id); if(e) e.innerHTML=h; }
+  function _setSrc(id,src){ const e=$(id); if(e&&e.getAttribute('src')!==src) e.src=src; }
   // Command card button state: disabled / ready pulse / radial cooldown sweep
   function _cmdState(id,o){
     const b=$(id); if(!b) return;
@@ -1825,7 +2132,8 @@ const G = (() => {
       hpBar.classList.toggle('mid',hpPct<=.5&&hpPct>.25); hpBar.classList.toggle('low',hpPct<=.25);
       hpBar.style.setProperty('--tick',(250/maxHp*100)+'%');
     }
-    set('con-hp-nums', Math.max(0,Math.round(bunkerHp))+' / '+Math.round(maxHp));
+    const rr=bunkerHp<maxHp?repairRate():0;   // repairing: show the stacked rate
+    set('con-hp-nums', Math.max(0,Math.round(bunkerHp))+' / '+Math.round(maxHp)+(rr>0?'  +'+Math.round(rr)+'/s':''));
     // ── Centre: ammo bar (one tick per round — no per-round DOM pips) ──
     const ammoBar=$('ammo-bar');
     if(ammoBar){
@@ -1840,7 +2148,7 @@ const G = (() => {
     // ── Centre: Slot pips (rebuild only when roster changes) ──
     const cpips=document.getElementById('con-slot-pips');
     if(cpips){
-      const sig=roster.join(',')+(hpLvl>=3?'+T':'');
+      const od=shrikeOverdrive(), sig=roster.join(',')+(hpLvl>=3?'+T':'')+(od?'!':'');
       if(sig!==_slotSig){
         _slotSig=sig;
         cpips.innerHTML='';
@@ -1858,10 +2166,11 @@ const G = (() => {
         }
         if(hpLvl>=3) for(let i=0;i<2;i++){            // Shrike turret = 2 extra (automatic) marines
           const p=document.createElement('div');
-          p.className='csp turret'; p.title='Shrike turret — auto-fire, firepower of 2 marines';
+          p.className='csp turret'+(od?' od':'');
+          p.title=od?'Shrike overdrive — six Marines inside: rate of fire ×2.5':'Shrike turret — auto-fire, firepower of 2 marines';
           cpips.appendChild(p);
         }
-        set('con-slot-count', used+'/6'+(hpLvl>=3?' +2':''));
+        set('con-slot-count', used+'/6'+(hpLvl>=3?(od?' +2 ×2.5':' +2'):''));
       }
     }
 
@@ -1886,10 +2195,20 @@ const G = (() => {
 
     // ── Command card: abilities ──
     const airBlocked=airCD>0||ammo>0||wavePhase!=='combat';
-    _cmdState('cmd-air',{disabled:airBlocked, ready:!airBlocked, cd:airCD>0?airCD/CFG.airstrike_cd:0, cdText:airCD>0?Math.ceil(airCD):''});
+    _cmdState('cmd-air',{disabled:airBlocked, ready:!airBlocked, cd:airCD>0?airCD/strikeCooldown():0, cdText:airCD>0?Math.ceil(airCD):''});
     const nukeLocked=wave<CFG.nuke_wave, nukeReady=!nukeLocked&&nukeCD===0&&!_nukeInFlight;
+    const stimOn=stimT>0, stimReady=stimUnlocked()&&!stimOn&&(!stimCost()||bunkerHp>stimCost())&&wavePhase==='combat';
+    _cmdState('cmd-stim',{disabled:!stimReady&&!stimOn, ready:stimReady,
+      cd:stimOn?stimT/CFG.stim_duration:!stimUnlocked()?1:0, cdText:stimOn?Math.ceil(stimT):!stimUnlocked()?'6M':''});
+    $('cmd-stim')?.classList.toggle('stim-on',stimOn);
+    $('cmd-roster')?.classList.toggle('ready',gameMode==='endless'&&wavePhase!=='combat'&&phase==='playing'&&armoryAffordable());   // Endless: shop before the next wave
     _cmdState('cmd-nuke',{disabled:!nukeReady, ready:nukeReady,
-      cd:nukeLocked?1:nukeCD>0?nukeCD/CFG.nuke_cd:0, cdText:nukeLocked?'W'+CFG.nuke_wave:nukeCD>0?Math.ceil(nukeCD):''});
+      cd:nukeLocked?1:nukeCD>0?nukeCD/nukeCooldown():0, cdText:nukeLocked?'W'+CFG.nuke_wave:nukeCD>0?Math.ceil(nukeCD):''});
+
+    // ── SC2 button art that follows the level: Infantry Weapons 0-3, ammo storage tiers, Super Stimpack ──
+    _setSrc('cmd-dmg-ico', UI_ICONS.dmg[dmgLvl]); _setSrc('upg-dmg-ico', UI_ICONS.dmg[dmgLvl]);
+    _setSrc('cmd-ammo-ico', UI_ICONS.ammo[ammoLvl]); _setSrc('upg-ammo-ico', UI_ICONS.ammo[ammoLvl]);
+    const ss=$('cmd-stim-img'); if(ss&&ss.hidden===superStimUnlocked){ ss.hidden=!superStimUnlocked; $('cmd-stim-svg').style.display=superStimUnlocked?'none':''; }
 
     // ── Command card: upgrades (level pips + cost, red where short) ──
     [['dmg',dmgLvl,CFG.dmg_costs],['armor',armorLvl,CFG.armor_costs],['hp',hpLvl,CFG.hp_costs],['ammo',ammoLvl,CFG.ammo_costs]].forEach(([k,lvl,costs])=>{
@@ -1912,15 +2231,16 @@ const G = (() => {
   // ── Command card tooltips (live: cost, level, why it is disabled) ─────────
   const CMD_INFO = {
     air:    { t:'AIRSTRIKE', k:'R', d:'A Viking bombs every enemy cluster and drops an ammo crate by the bunker — your reload once the magazine is empty.' },
+    stim:   { t:'STIMPACK', k:'T', d:'Unlocked by a full Marine squad (6/6). For 11 s the Marines fire 50% faster (an extra round every other volley, no extra ammo). Costs 10 HP per Marine, paid by the bunker — free and repairing with the Super Stimpack research.' },
     nuke:   { t:'NUKE', k:'N', d:'Tactical nuke on the centre of the swarm after a 2-second warning. Wipes out everything in a huge radius.' },
-    roster: { t:'BUNKER ROSTER', k:'B', d:'Hire Marines, Marauders and Ghosts (6 slots) and research their upgrades. The game pauses while it is open.' },
+    roster: { t:'BUNKER ROSTER', k:'B', d:'Hire Marines, Marauders and Ghosts (6 slots) and research their upgrades. In Endless its armory sells more HP, damage, ammo and shorter strike / nuke cooldowns. The game pauses while it is open.' },
     view:   { t:'RESET VIEW', k:'HOME', d:'Back to the overview. Mouse wheel or + / − zooms in on the bunker; Insert / Delete rotate the view 90°.' },
     menu:   { t:'MENU', k:'M', d:'Graphics, sound, save / load, controls, main menu.' },
     dmg:    { t:'WEAPON DAMAGE', k:'1', d:'Every round from every unit hits harder.',
-              fx: l => `Damage ×${(1+l*.6).toFixed(1)}${l<3?` → ×${(1+(l+1)*.6).toFixed(1)}`:''}` },
-    armor:  { t:'BUNKER ARMOR', k:'2', d:'Reduces the damage Zerg deal while biting the bunker.',
-              fx: l => `Bite damage ×${(1/(1+l*.35)).toFixed(2)}${l<3?` → ×${(1/(1+(l+1)*.35)).toFixed(2)}`:''}` },
-    hp:     { t:'BUNKER HULL', k:'3', d:'+250 max HP per level. Lv2 adds the Neosteel frame; Lv3 mounts the Shrike auto-turret (= 2 marines, no ammo) and self-repair.',
+              fx: l => `Damage ×${(1+l*.6).toFixed(1)}${l<3?` → ×${(1+(l+1)*.6).toFixed(1)}`:''}` },   // before Endless reinforcements
+    armor:  { t:'BUNKER ARMOR', k:'2', d:'Reduces the damage Zerg deal to the bunker (bites and acid).',
+              fx: l => `Damage taken ×${(1/(1+l*.35)).toFixed(2)}${l<3?` → ×${(1/(1+(l+1)*.35)).toFixed(2)}`:''}` },
+    hp:     { t:'BUNKER HULL', k:'3', d:'+250 max HP per level. Lv2 adds the Neosteel frame; Lv3 mounts the Shrike auto-turret (= 2 marines, no ammo) and self-repair (25 HP/s, stacks with the Super Stimpack). Six Marines inside overdrive the turret: ×2.5 rate of fire.',
               fx: l => ['Next: +250 HP','Next: +250 HP · Neosteel frame','Next: +250 HP · Shrike turret · self-repair',''][l] },
     ammo:   { t:'AMMO STORAGE', k:'4', d:'+10 rounds per level. One round = one volley from every unit in the bunker.',
               fx: l => l<3 ? `${maxAmmo} → ${maxAmmo+10} rounds` : '' },
@@ -1933,18 +2253,29 @@ const G = (() => {
     const up={dmg:[dmgLvl,CFG.dmg_costs],armor:[armorLvl,CFG.armor_costs],hp:[hpLvl,CFG.hp_costs],ammo:[ammoLvl,CFG.ammo_costs]}[_tipCmd];
     if(up){
       const [l,costs]=up; lv='Lv '+l+'/3'; fx=info.fx?info.fx(l):'';
+      const en=endlessWaves(), extra=en&&{dmg:`+${Math.round(CFG.endless_dmg*en*100)}% damage`,hp:`+${CFG.endless_hp*en} max HP, repair +${Math.round(CFG.endless_repair*en*100)}%`,ammo:`+${CFG.endless_ammo*en} rounds`}[_tipCmd];
+      if(extra) fx+=(fx?'<br>':'')+'Endless reinforcements: '+extra;
+      const ak={dmg:'dmg',hp:'hp',ammo:'ammo'}[_tipCmd];
+      if(ak&&armory[ak]) fx+=(fx?'<br>':'')+'Armory: '+ARMORY_DEF[ak].total(armory[ak]);
       if(l>=3) warn='FULLY UPGRADED';
       else {
         const [m,g]=costs[l];
-        cost=`<div class="tip-c"><span class="m${minerals<m?' no':''}">${m} ◆</span><span class="g${gas<g?' no':''}">${g} ▲</span></div>`;
-        const nm=Math.max(0,Math.ceil(m-minerals)), ng=Math.max(0,Math.ceil(g-gas));
-        if(nm||ng) warn='Need '+[nm?nm+' more ◆':'',ng?ng+' more ▲':''].filter(Boolean).join(' · ');
+        cost=`<div class="tip-c"><span class="m${minerals<m?' no':''}">${MIN_ICON}${m}</span><span class="g${gas<g?' no':''}">${GAS_ICON}${g}</span></div>`;
+        if(minerals<m||gas<g) warn='Need '+shortfallHTML(m,g)+' more';
       }
     }
     if(_tipCmd==='air'){
       if(airCD>0) warn='Recharging — '+Math.ceil(airCD)+' s';
       else if(wavePhase!=='combat') warn='Only during a wave';
       else if(ammo>0) warn='Only when out of ammo ('+ammo+' left)';
+      else { warn='READY'; ok=true; }
+    }
+    if(_tipCmd==='stim'){
+      if(!stimUnlocked()) warn='Needs 6 Marines in the bunker ('+roster.filter(u=>u==='marine').length+'/6)';
+      else if(stimT>0) warn='Stimmed — '+Math.ceil(stimT)+' s left';
+      else if(stimCost()&&bunkerHp<=stimCost()) warn='Not enough HP ('+stimCost()+' needed)';
+      else if(superStimUnlocked&&wavePhase==='combat') { warn='READY — Super Stimpack: no HP cost, repairs the bunker'+(hpLvl>=3?' (stacks with self-repair)':''); ok=true; }
+      else if(wavePhase!=='combat') warn='Only during a wave';
       else { warn='READY'; ok=true; }
     }
     if(_tipCmd==='nuke'){
@@ -2276,6 +2607,13 @@ const G = (() => {
 
     shootCD=Math.max(0,shootCD-dt);
     airCD=Math.max(0,airCD-dt);
+    if(stimT>0){
+      stimT=Math.max(0,stimT-dt);
+      if(superStimUnlocked){                            // Super Stimpack: the squad patches the bunker up (repairRate)
+        if(Math.random()<dt*14){ const a=Math.random()*6.28, r=1.1+Math.random()*.4;
+          emitParticle(_glow,Math.cos(a)*r,.3+Math.random()*.6,Math.sin(a)*r,0,1.4,0,.7,.22,.05,.9,0x6aff8a,0x1a9a3a,0,0,0); }
+      }
+    }
     if(nukeCD>0) nukeCD=Math.max(0,nukeCD-dt);
 
     // Scheduled game events (wave countdown, Viking, bombs, nuke)
@@ -2325,31 +2663,53 @@ const G = (() => {
       } else {
         e.mesh.visible = true;
       }
-      if(d<(e.type==='r'?2.6:2.0)){
-        bunkerHp=Math.max(0,bunkerHp-e.dmg*dt*arm); // HUD refresh handled by throttled tick
-        e.biteT=(e.biteT??Math.random()*.4)-dt;
-        if(e.biteT<=0){                                // sparks where it bites the hull
-          e.biteT=.45+Math.random()*.35;
-          const k=1.45/Math.max(.01,d);
-          spawnParts({x:ex*k,y:.45+Math.random()*.4,z:ez*k},0xffcc66,3);
-          SFX.play('bite');
+      if(d<attackReach(e)){
+        if(e.type==='r') roachAttack(e,dt,ex,ez);       // ranged: acid (damage lands on impact)
+        else {                                          // melee: bites the hull
+          bunkerHp=Math.max(0,bunkerHp-e.dmg*dt*arm); // HUD refresh handled by throttled tick
+          let bite;
+          if(e.attack){                                  // SC2 Attack animation on a loop; bites as the jaws close
+            const t0=e.atkT; e.atkT+=dt*ANIM_SPEED/ZERGLING_BITE.anim;
+            bite=t0<ZERGLING_BITE.bite&&e.atkT>=ZERGLING_BITE.bite;
+            e.atkT%=1;
+            e.pool=e.attack[Math.floor(e.atkT*e.attack.length)];
+            e.mesh.rotation.y=Math.atan2(-ex,-ez); e.mesh.position.y=0;
+          } else {
+            e.biteT=(e.biteT??Math.random()*.4)-dt;
+            if((bite=e.biteT<=0)) e.biteT=.45+Math.random()*.35;
+            if(e.walk) walkStep(e, dt*.5);              // claws at the hull: tread on the spot
+            else e.mesh.position.y=Math.abs(Math.sin(e.leg))*.07;
+          }
+          if(bite){                                      // sparks where it bites the hull
+            const k=1.45/Math.max(.01,d);
+            spawnParts({x:ex*k,y:.45+Math.random()*.4,z:ez*k},0xffcc66,3);
+            SFX.play('bite');
+          }
+          if(_dmgFlashCD<=0){flash('dmg-flash');_dmgFlashCD=0.6;} // hit feedback vignette
+          if(bunkerHp<=0){gameOver();return;}
         }
-        if(_dmgFlashCD<=0){flash('dmg-flash');_dmgFlashCD=0.6;} // hit feedback vignette
-        e.mesh.position.y=Math.abs(Math.sin(e.leg))*.07;
-        if(bunkerHp<=0){gameOver();return;}
       } else {
         const slowF=slowedEnemies.has(e.mesh.uuid)?slowedEnemies.get(e.mesh.uuid).factor:1;
-        e.mesh.position.x-=ex/d*e.speed*slowF*60*dt;
-        e.mesh.position.z-=ez/d*e.speed*slowF*60*dt;
-        e.mesh.position.y=Math.abs(Math.sin(e.leg))*(e.type==='r'?.1:.13);
+        const move=e.speed*slowF*60*dt;
+        e.mesh.position.x-=ex/d*move;
+        e.mesh.position.z-=ez/d*move;
+        // SC2 walk cycle paced by the distance covered; procedural blocks hop;
+        // a model without a walk cycle bobs and sways
+        if(e.walk) walkStep(e, move);
+        else {
+          e.mesh.position.y=Math.abs(Math.sin(e.leg))*(e.model?.035:e.type==='r'?.1:.13);
+          if(e.model) e.mesh.rotation.z=Math.sin(e.leg)*.05;
+        }
         e.mesh.rotation.y=Math.atan2(-ex,-ez);
       }
     });
     zerglings=zerglings.filter(z=>!z.dead);
     roaches=roaches.filter(r=>!r.dead);
+    updateAcids(dt);                                    // acid in flight (keeps going if its Roach died)
+    if(bunkerHp<=0){gameOver();return;}
 
     // Bullets
-    const baseDmg=10*(1+dmgLvl*.6);
+    const baseDmg=10*(1+dmgLvl*.6)*(1+CFG.endless_dmg*endlessWaves())*(1+CFG.armory_dmg*armory.dmg);
     // Tick slow debuff expiry (game time — slows don't run out while paused)
     slowedEnemies.forEach((v,uuid)=>{if(_gameT>v.until)slowedEnemies.delete(uuid);});
     const _fs=dt*60; // frame scale: movement tuned at 60fps, now Hz-independent
@@ -2364,6 +2724,11 @@ const G = (() => {
       if(b.vy){
         b.mesh.position.y+=b.vy*_fs;
         if(b.mesh.position.y<0.12){ b.mesh.position.y=0.12; b.vy=0; _orientBullet(b); } // past the aim point: skim the ground
+      }
+      if(b.unitType==='marauder'&&_missileIMs){        // punisher grenade: fire trail from its tail
+        const p=b.mesh.position, k=.35/(Math.hypot(b.vx,b.vy,b.vz)||1);
+        emitParticle(_glow,p.x-b.vx*k,p.y-b.vy*k,p.z-b.vz*k,(Math.random()-.5)*.4,Math.random()*.3,(Math.random()-.5)*.4,.16,.28,.08,.95,0xffa040,0xc02000,0,1,0);
+        emitParticle(_smoke,p.x-b.vx*k*1.5,p.y-b.vy*k*1.5,p.z-b.vz*k*1.5,(Math.random()-.5)*.3,.35,(Math.random()-.5)*.3,.55,.16,.5,.5,0x9a9488,0x55524c,-.1,.6,1);
       }
       let e=null, tBest=2;
       for(const c of _enemyList){
@@ -2420,17 +2785,17 @@ const G = (() => {
     // Particles (GPU points, 2 draw calls)
     updateParticles(_glow,dt); updateParticles(_smoke,dt);
 
-    // Self-repair (25 HP/s at lv3) — HUD refresh handled by throttled tick
-    if(hpLvl>=3&&bunkerHp<maxHp){
-      bunkerHp=Math.min(maxHp,bunkerHp+CFG.repair_rate*dt);
-    }
+    // Repair: Lv3 self-repair + Super Stimpack, stacked — HUD refresh handled by throttled tick
+    const rr=repairRate();
+    if(rr>0&&bunkerHp<maxHp) bunkerHp=Math.min(maxHp,bunkerHp+rr*dt);
 
     // Bunker fire particles
     updateBunkerFire(dt);
 
 
     // Wave clear check
-    if(wavePhase==='combat'&&spawnQueue.length===0&&zerglings.length===0&&roaches.length===0){
+    // (acid still in the air lands first: its damage belongs to this wave and its checkpoint)
+    if(wavePhase==='combat'&&spawnQueue.length===0&&zerglings.length===0&&roaches.length===0&&acids.length===0){
       wavePhase='clearing'; waveCleared();
     }
 
@@ -2458,12 +2823,13 @@ const G = (() => {
     clearParticles(); _fireAccum.length=0;
     beams.forEach(_removeBeam);
     _shrikeTgt=null; _shrikeVel=0; _shrikeRecoil=0; _shrikeCD=0; // no target survives into the next game
+    stimT=0; _stimVolley=0; _shrikeOD=false;
     [...zerglings,...roaches].forEach(e=>{ e.dead=true; });
     [...zerglings,...roaches,...crates,...marines].forEach(e=>{
       if(e.mesh) scene.remove(e.mesh);
     });
-    zerglings=[];roaches=[];bullets=[];beams=[];crates=[];marines=[];spawnQueue=[];corpses=[];
-    syncBullets(); syncEnemyPools();
+    zerglings=[];roaches=[];bullets=[];beams=[];crates=[];marines=[];spawnQueue=[];corpses=[];acids=[];
+    syncBullets(); syncEnemyPools(); syncAcids();
   }
 
   // ── Victory / defeat ──────────────────────────────────────────────────────
@@ -2570,6 +2936,7 @@ const G = (() => {
     ammo=CFG.base_ammo;maxAmmo=CFG.base_ammo;
     bunkerHp=750;maxHp=750;
     dmgLvl=0;armorLvl=0;hpLvl=0;ammoLvl=0;
+    armory={hp:0,dmg:0,ammo:0,cd:0}; endlessSteps=0;
     // IMPORTANT: do NOT null bunkerModelRoot here. The bunker model is built once
     // in buildScene() and persists across games. Nulling it (when the .obj had
     // already finished loading) was the cause of the "upgrade hologram sometimes
@@ -2593,6 +2960,10 @@ const G = (() => {
   // Kick off model loading in background — game starts with procedural
   // meshes instantly and swaps to OBJ models as they load.
   ModelLoader.preloadAll();
+  // An SC2 skin needs one instance pool per walk / attack frame (up to 40): bake them as
+  // soon as the model has loaded, so the first spawn of a skin does not stall a frame
+  ['zergling','zergling_upgrade','zergling_webby','roach','roach_ex1a','roach_ex3']
+    .forEach(k => ModelLoader.load(k).then(() => enemyLook(k)).catch(() => {}));
   buildScene();
   initPortrait(); // hologram builds itself as soon as the bunker model is cached
   loop();
@@ -2604,7 +2975,7 @@ const G = (() => {
     if (!def) return 'Unknown unit';
     if (slotsLeft() < def.slots) return `Need ${def.slots} slots (only ${slotsLeft()} free)`;
     const [m, g] = def.cost;
-    if (minerals < m || gas < g) return 'Not enough resources!';
+    if (minerals < m || gas < g) return needText(m, g);
     minerals -= m; gas -= g;
     roster.push(type);
     if (type === 'ghost') snipeReady.push(0); // new ghost (last in roster order) may snipe at once
@@ -2628,7 +2999,7 @@ const G = (() => {
     gas      += refundG;
     roster.splice(idx, 1);
     syncMarines(); updateHUD();
-    setStatus(`${def.name} dismissed — refunded ${refundM}◆ ${refundG}▲`);
+    setStatus(`${def.name} dismissed — refunded ◆${refundM} ▲${refundG}`);
   }
 
   function researchUpgrade(key, tier) {
@@ -2639,17 +3010,18 @@ const G = (() => {
     if (tier === undefined) {
       // Base unlock
       const [m, g] = def.cost;
-      if (minerals < m || gas < g) { setStatus('Not enough resources!'); return; }
+      if (minerals < m || gas < g) { setStatus(needText(m, g)); return; }
       minerals -= m; gas -= g;
       if (key === 'concussive') concussiveUnlocked = true;
       if (key === 'snipe')      snipeUnlocked      = true;
+      if (key === 'superstim')  superStimUnlocked  = true;
       setStatus(`${def.name} researched!`);
     } else {
       // Tier upgrade
       const td = def.tiers[tier];
       if (!td) return;
       const [m, g] = td.cost;
-      if (minerals < m || gas < g) { setStatus('Not enough resources!'); return; }
+      if (minerals < m || gas < g) { setStatus(needText(m, g)); return; }
       minerals -= m; gas -= g;
       if (key === 'concussive') concussiveLvl = tier + 1;
       if (key === 'snipe')      snipeLvl      = tier + 1;
@@ -2768,9 +3140,9 @@ const G = (() => {
         <div class="ushop-name ${type}">${def.name}</div>
         <div class="ushop-slot">${def.slots} slot${def.slots>1?'s':''}</div>
         <div class="ushop-desc">${bonusNote}</div>
-        <div class="ushop-cost">${mc}◆ <span class="g">${gc2}▲</span></div>
+        <div class="ushop-cost">${MIN_ICON}${mc} <span class="g">${GAS_ICON}${gc2}</span></div>
         <button class="ushop-btn" ${(!canAfford||!canFit)?'disabled':''}>
-          ${!canFit ? 'NO SLOTS' : !canAfford ? 'NEED RESOURCES' : 'HIRE'}
+          ${!canFit ? 'NO SLOTS' : !canAfford ? `NEED ${shortfallHTML(mc, gc2)}` : 'HIRE'}
         </button>`;
       el.querySelector('button').addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2784,8 +3156,7 @@ const G = (() => {
     const upgRow = document.getElementById('upgrade-row');
     upgRow.innerHTML = '';
     Object.entries(UPGRADE_DEF).forEach(([key, def]) => {
-      const unlocked   = key==='concussive' ? concussiveUnlocked : snipeUnlocked;
-      const curTierLvl = key==='concussive' ? concussiveLvl      : snipeLvl;
+      const [unlocked, curTierLvl] = { concussive: [concussiveUnlocked, concussiveLvl], snipe: [snipeUnlocked, snipeLvl], superstim: [superStimUnlocked, 0] }[key];
       const hasUnit    = roster.includes(def.unit);
       const el = document.createElement('div');
       el.className = `upgrow ${def.unit} ${!hasUnit&&!unlocked?'locked':''}`;
@@ -2795,6 +3166,7 @@ const G = (() => {
       if (unlocked) {
         if (key === 'snipe')      statusLine = `CD: ${(SNIPE_CD[snipeLvl]/1000).toFixed(1)}s | tier ${snipeLvl}/3`;
         if (key === 'concussive') statusLine = concussiveLvl===0 ? 'Single target' : `AOE radius ${CONC_RADIUS[concussiveLvl].toFixed(1)} | tier ${concussiveLvl}/3`;
+        if (key === 'superstim')  statusLine = `Stim: no HP cost, +${CFG.superstim_heal} HP/s to the bunker for ${CFG.stim_duration} s (stacks with self-repair)`;
       }
 
       // Determine next action
@@ -2802,14 +3174,14 @@ const G = (() => {
       if (!unlocked) {
         const [mc,gc2] = def.cost;
         const canAfford = minerals >= mc && gas >= gc2;
-        btnLabel = !hasUnit ? 'LOCKED' : !canAfford ? `${mc}◆ ${gc2}▲ — NEED MORE` : `RESEARCH  ${mc}◆ ${gc2}▲`;
+        btnLabel = !hasUnit ? 'LOCKED' : !canAfford ? `${resHTML(mc, gc2)} — NEED ${shortfallHTML(mc, gc2)}` : `RESEARCH  ${resHTML(mc, gc2)}`;
         btnDisabled = !hasUnit || !canAfford;
         btnHandler = () => researchUpgrade(key);
       } else if (curTierLvl < def.tiers.length) {
         const td = def.tiers[curTierLvl];
         const [mc,gc2] = td.cost;
         const canAfford = minerals >= mc && gas >= gc2;
-        btnLabel = !canAfford ? `LV.${curTierLvl+1}: ${mc}◆ ${gc2}▲ — NEED MORE` : `UPGRADE LV.${curTierLvl+1}  ${mc}◆ ${gc2}▲`;
+        btnLabel = !canAfford ? `LV.${curTierLvl+1}: ${resHTML(mc, gc2)} — NEED ${shortfallHTML(mc, gc2)}` : `UPGRADE LV.${curTierLvl+1}  ${resHTML(mc, gc2)}`;
         btnDisabled = !canAfford;
         btnHandler = () => researchUpgrade(key, curTierLvl);
       } else {
@@ -2819,12 +3191,37 @@ const G = (() => {
       }
 
       el.innerHTML = `
-        <div class="upgrow-name ${def.unit}">${def.name}${unlocked?' ✓':''}</div>
-        <div class="upgrow-desc">${statusLine}${!hasUnit&&!unlocked?' — need '+def.unit:''}</div>
+        <div class="upgrow-head"><img class="upgrow-ico" src="${def.icon}" alt=""><div>
+          <div class="upgrow-name ${def.unit}">${def.name}${unlocked?' ✓':''}</div>
+          <div class="upgrow-desc">${statusLine}${!hasUnit&&!unlocked?' — need '+def.unit:''}</div></div></div>
         <button class="upgrow-btn" ${btnDisabled?'disabled':''}>${btnLabel}</button>`;
       if (btnHandler && !btnDisabled) el.querySelector('button').addEventListener('click', btnHandler);
       upgRow.appendChild(el);
     });
+
+    // ── Endless armory ──
+    if (gameMode === 'endless') {
+      const head = document.createElement('div');
+      head.className = 'armory-head';
+      head.innerHTML = 'ENDLESS ARMORY <span>spend the surplus — each purchase costs 30% more</span>';
+      upgRow.appendChild(head);
+      const grid = document.createElement('div');
+      grid.className = 'armory-grid';
+      upgRow.appendChild(grid);
+      Object.entries(ARMORY_DEF).forEach(([key, def]) => {
+        const n = armory[key], maxed = def.maxed?.(), [mc, gc2] = armoryCost(key), canAfford = minerals >= mc && gas >= gc2;
+        const el = document.createElement('div');
+        el.className = 'upgrow armory';
+        el.innerHTML = `
+          <div class="upgrow-head"><img class="upgrow-ico" src="${def.icon}" alt=""><div>
+            <div class="upgrow-name armory">${def.name}${n ? ` ×${n}` : ''}</div>
+            <div class="upgrow-desc">${def.fx()}${n ? `<br>now ${def.total(n)}` : ''}</div></div></div>
+          ${!maxed && !canAfford ? `<div class="upgrow-need">need ${shortfallHTML(mc, gc2)} more</div>` : ''}
+          <button class="upgrow-btn" ${maxed || !canAfford ? 'disabled' : ''}>${maxed ? '★ MAXED' : (canAfford ? 'BUY ' : '') + resHTML(mc, gc2)}</button>`;
+        if (!maxed && canAfford) el.querySelector('button').addEventListener('click', () => buyArmory(key));
+        grid.appendChild(el);
+      });
+    }
   }
 
   // ── Hover detection: show roster panel when mouse near bunker ────────────
@@ -2919,6 +3316,7 @@ const G = (() => {
     roster = ['marine','marine'];
     concussiveUnlocked = false;
     snipeUnlocked = false;
+    superStimUnlocked = false;
     snipeLvl = 0;
     concussiveLvl = 0;
     slowedEnemies.clear();
@@ -2939,8 +3337,8 @@ const G = (() => {
     'fu': {
       desc: '⬆️ All bunker upgrades maxed — self-repair online!',
       fn: () => {
-        dmgLvl=3; armorLvl=3; hpLvl=3;
-        maxHp=750+3*250; bunkerHp=maxHp;
+        maxHp+=Math.max(0,3-hpLvl)*250;   // keeps Endless / armory HP
+        dmgLvl=3; armorLvl=3; hpLvl=3; bunkerHp=maxHp;
         updateBunkerVisual(); // upgrade plates + hologram follow hpLvl
         updateHUD();
       }
@@ -2976,8 +3374,8 @@ const G = (() => {
     'bunker': {
       desc: '🏰 HP maxed + Armor maxed instantly',
       fn: () => {
-        armorLvl=3; hpLvl=3;
-        maxHp=750+3*250; bunkerHp=maxHp;
+        maxHp+=Math.max(0,3-hpLvl)*250;   // keeps Endless / armory HP
+        armorLvl=3; hpLvl=3; bunkerHp=maxHp;
         updateBunkerVisual(); // upgrade plates + hologram follow hpLvl
         updateHUD();
       }
@@ -2991,7 +3389,7 @@ const G = (() => {
         wave=Math.max(wave,Math.min(wave+5,cap)); // campaign: stop at the final wave (it must still be fought)
         // Between waves the pending countdown starts the next one — starting it
         // here too used to run two waves on top of each other.
-        if(wavePhase==='combat') startWave();
+        if(wavePhase==='combat'){ reinforce(); startWave(); }   // between waves the pending wave++ catches up
         updateHUD();
       }
     },
@@ -3192,13 +3590,15 @@ const G = (() => {
       bunkerHp, maxHp, ammo, maxAmmo,
       dmgLvl, armorLvl, hpLvl, ammoLvl,
       roster: [...roster],
-      concussiveUnlocked, snipeUnlocked, concussiveLvl, snipeLvl,
+      concussiveUnlocked, snipeUnlocked, concussiveLvl, snipeLvl, superStimUnlocked,
+      armory: { ...armory }, endlessSteps,
       gfxQuality,
       wavePhase, gameT: _gameT, victoryAchieved, gameMode,
       // An airstrike's crate run / a nuke countdown can't be saved; loading would
       // keep the cooldown but lose the effect (e.g. 0 ammo with R blocked for 20 s).
       airCD: (vikingActive || marines.some(m => m.cb)) ? 0 : airCD,
       nukeCD: _nukeInFlight ? 0 : nukeCD,
+      stimT, stimVolley: _stimVolley,   // the bunker HP already paid for this stim
       ts: Date.now()
     };
   }
@@ -3250,14 +3650,16 @@ const G = (() => {
       ammo = d.ammo; maxAmmo = d.maxAmmo;
       dmgLvl = d.dmgLvl || 0; armorLvl = d.armorLvl || 0; hpLvl = d.hpLvl || 0; ammoLvl = d.ammoLvl || 0;
       roster = [...d.roster];
-      concussiveUnlocked = !!d.concussiveUnlocked; snipeUnlocked = !!d.snipeUnlocked;
+      concussiveUnlocked = !!d.concussiveUnlocked; snipeUnlocked = !!d.snipeUnlocked; superStimUnlocked = !!d.superStimUnlocked;
       concussiveLvl = d.concussiveLvl || 0; snipeLvl = d.snipeLvl || 0;
+      armory = { hp: 0, dmg: 0, ammo: 0, cd: 0, ...(d.armory || {}) };   // HP / ammo purchases are already in maxHp / maxAmmo
       snipeReady = roster.filter(u => u === 'ghost').map(() => 0);
       // Survival clock, victory and cooldowns (absent in older saves → defaults)
       _gameT = d.gameT || 0; victoryAchieved = !!d.victoryAchieved;
       gameMode = d.gameMode || (victoryAchieved ? 'endless' : 'campaign'); // older saves have no mode
       if (gameMode === 'endless' && !endlessUnlocked()) _store.set(ENDLESS_KEY, '1'); // an Endless save means the campaign was won
       airCD = d.airCD || 0; nukeCD = d.nukeCD || 0;
+      stimT = d.stimT || 0; _stimVolley = d.stimVolley || 0;   // a stim paid for keeps running
       syncMarines(); // marine meshes must match the restored roster
       if (d.gfxQuality) applyGfx(d.gfxQuality);
       updateBunkerVisual();
@@ -3265,9 +3667,13 @@ const G = (() => {
       // taken between waves already holds that wave's clear bonus, so resume
       // at the next wave (with the resupply it would have received).
       if (d.wavePhase === 'cleared' || d.wavePhase === 'clearing') { wave = d.wave + 1; ammo = maxAmmo; }
+      // steps already in maxHp / maxAmmo (older saves have none) — then the resumed wave's own step
+      endlessSteps = typeof d.endlessSteps === 'number' ? d.endlessSteps : 0;
+      reinforce();
       _slotSig = null;
       startWave();
       updateHUD();
+      _shrikeOD = shrikeOverdrive();   // a restored overdrive is not news: keep the "Loaded" message
       setStatus(`Loaded — ${gameMode === 'endless' ? 'Endless' : 'Campaign'} wave ${wave} (saved ${_ago(d.ts)})`);
       closeMenu();
     } catch (e) {
@@ -3278,6 +3684,6 @@ const G = (() => {
 
   _syncSoundUI();
   showTitle();
-  return {start, buy, doAirstrike, doNuke, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
+  return {start, buy, buyArmory, doAirstrike, doNuke, doStim, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
           saveGame, loadGame, toggleDayNight, setVolume, setMuted, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode};
 })();
