@@ -201,4 +201,8 @@ The Marauder's punisher grenade uses the mesh of `MarauderMissile.m3` (body and 
 
 ## Credits
 
-Fan project — non-commercial, not affiliated with or endorsed by Blizzard Entertainment. StarCraft® and the models and textures in `assets/` are © Blizzard Entertainment, Inc. Keep this repository private, or remove `assets/`, before publishing it.
+Non-commercial fan project — not affiliated with or endorsed by Blizzard Entertainment.
+
+StarCraft® is a trademark or registered trademark of Blizzard Entertainment, Inc. The models, textures and icons in `assets/` (and the `.m3` sources in `assets/source/`) are © Blizzard Entertainment, Inc., all rights reserved, extracted from StarCraft II for this fan project. The game shows the same notice on its title screen. They will be taken down at Blizzard's request.
+
+The code (`index.html`, `css/`, `js/`, `tools/`) was written for this project. three.js is © the three.js authors (MIT).

@@ -120,6 +120,9 @@ const UI_ICONS = {
   snipe:      UI_DIR + 'btn-upgrade-terran-ui-lazertargetingsystem.png',
 };
 
+// Shown on the title screen (the models, textures and icons are Blizzard's)
+const BLIZZARD_NOTICE = 'StarCraft® and its models, textures and icons are © Blizzard Entertainment, Inc. Non-commercial fan project — not affiliated with or endorsed by Blizzard Entertainment.';
+
 const RANKS = [
   {name:'PRIVATE',   kills:0,  color:'#aaaaaa'}, // 6-digit: badge border appends '66' alpha
   {name:'CORPORAL',  kills:10, color:'#cd7f32'},

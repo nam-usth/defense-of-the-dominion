@@ -2906,7 +2906,7 @@ const G = (() => {
           <span><span class="ob-t">CONTINUE</span><span class="ob-d">Autosave — ${_esc(_saveLabel(auto))}</span></span></button>`:''}
         ${_validSave(manual)?`<button class="ov-btn" onclick="G.loadGame()"><svg class="ico"><use href="#i-load"/></svg>
           <span><span class="ob-t">LOAD GAME</span><span class="ob-d">Saved game — ${_esc(_saveLabel(manual))}</span></span></button>`:''}
-      </div>${_KEYS_HTML}`);
+      </div>${_KEYS_HTML}<div class="ov-legal">${BLIZZARD_NOTICE}</div>`);
   }
   function showResults(victory,newlyUnlocked,newRecord){
     const rk=getRank(kills), t=Math.floor(_gameT), camp=gameMode==='campaign';
