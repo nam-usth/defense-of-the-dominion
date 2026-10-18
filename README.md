@@ -16,7 +16,9 @@ Hold a Terran bunker against waves of Zerg. Every unit inside the bunker fires w
 
 ## Running the game
 
-You need a desktop browser with WebGL 2 (Chrome, Edge or Firefox) and, for the local server, Node.js 18 or newer.
+**Play online:** <https://nam-usth.github.io/defense-of-the-dominion/> — published by GitHub Pages on every push to `main` (`.github/workflows/pages.yml`; only `index.html`, `css/`, `js/`, `assets/models/` and `assets/ui/` go online). The repository settings must have **Pages → Source: GitHub Actions**.
+
+To run it locally you need a desktop browser with WebGL 2 (Chrome, Edge or Firefox) and, for the local server, Node.js 18 or newer.
 
 ```bash
 npm start
@@ -127,6 +129,7 @@ assets/ui/              HUD icons (PNG, converted from SC2 DDS)
 assets/source/m3/       the original .m3 files of the converted models (and unused effect models)
 assets/source/terran/   extra model parts and a GLB that the game does not load
 tools/serve.mjs         zero-dependency local web server (npm start)
+.github/workflows/pages.yml   publishes the game to GitHub Pages
 tools/import-sc2.mjs    converts/copies the imported SC2 models, textures and icons
 tools/m3.mjs            .m3 reader (mesh, materials, skeleton, animation)
 tools/m3-to-glb.mjs     .m3 → .glb, bind pose and baked animations in one file (what the game loads); --check validates a .glb
