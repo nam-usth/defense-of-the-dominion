@@ -116,13 +116,44 @@ const ModelLoader = (() => {
     if (!_gltfLoader) return Promise.reject(new Error('THREE.GLTFLoader is not loaded'));
     return _glbCache[path] || (_glbCache[path] = _track(path, new Promise((res, rej) => _gltfLoader.load(path, res, null, rej))));
   }
+  // A GLB node's geometry in model coordinates, float32. m3-to-glb packs it with
+  // KHR_mesh_quantization — positions int16 inside the node's box (its
+  // translation + scale), normals int8 — so it is expanded once per node (skins
+  // share it): the game swaps frame geometries and bakes them into instance
+  // pools without the node's transform. Float GLBs pass through unchanged.
+  const _floatGeo = new WeakMap();   // glTF mesh node → geometry
+  const _NORM = { Int8Array: 127, Uint8Array: 255, Int16Array: 32767, Uint16Array: 65535 };
+  const _arrayOf = a => (a.isInterleavedBufferAttribute ? a.data.array : a.array);
+  function _nodeGeometry(node) {
+    if (_floatGeo.has(node)) return _floatGeo.get(node);
+    const src = node.geometry, packed = n => src.attributes[n] && !(_arrayOf(src.attributes[n]) instanceof Float32Array);
+    let geo = src;
+    if (packed('position') || packed('normal')) {
+      geo = new THREE.BufferGeometry();
+      geo.setIndex(src.index);
+      for (const [name, a] of Object.entries(src.attributes)) {
+        if (!['position', 'normal'].includes(name) || !packed(name)) { geo.setAttribute(name, a); continue; }
+        const k = a.normalized ? 1 / _NORM[_arrayOf(a).constructor.name] : 1, out = new Float32Array(a.count * 3);
+        for (let i = 0; i < a.count; i++) {
+          let x = a.getX(i) * k, y = a.getY(i) * k, z = a.getZ(i) * k;
+          if (a.normalized) { x = Math.max(-1, x); y = Math.max(-1, y); z = Math.max(-1, z); }
+          if (name === 'position') { x = x * node.scale.x + node.position.x; y = y * node.scale.y + node.position.y; z = z * node.scale.z + node.position.z; }
+          else { const l = Math.hypot(x, y, z) || 1; x /= l; y /= l; z /= l; }
+          out[i * 3] = x; out[i * 3 + 1] = y; out[i * 3 + 2] = z;
+        }
+        geo.setAttribute(name, new THREE.BufferAttribute(out, 3));
+      }
+    }
+    _floatGeo.set(node, geo);
+    return geo;
+  }
   // The bind pose of a parsed GLB as OBJLoader would return it: a Group of
   // meshes named "region_N", each with OBJLoader's default material
   function _glbModel(gltf, path) {
     const root = new THREE.Group();
     for (const node of gltf.scene.children) {
       if (!node.isMesh || !/^region_\d+$/.test(node.name)) continue;
-      const mesh = new THREE.Mesh(node.geometry, new THREE.MeshLambertMaterial({ color: 0x888888 }));
+      const mesh = new THREE.Mesh(_nodeGeometry(node), new THREE.MeshLambertMaterial({ color: 0x888888 }));
       mesh.name = node.name;
       root.add(mesh);
     }
@@ -284,11 +315,11 @@ const ModelLoader = (() => {
       return t;
     };
     const frameNo = m => +m.name.match(/_(\d+)$/)[1];
-    const inOrder = meshes => meshes.sort((a, b) => frameNo(a) - frameNo(b)).map(m => template(m.geometry));
+    const inOrder = (meshes, geometry = m => m.geometry) => meshes.sort((a, b) => frameNo(a) - frameNo(b)).map(m => template(geometry(m)));
     _frames[key] = {};
     return Promise.all(ANIMS.map(anim => {
       const nodes = gltf ? gltf.scene.children.filter(c => c.isMesh && new RegExp(`^${anim}_[0-9]+$`, 'i').test(c.name)) : [];
-      if (nodes.length) { _frames[key][anim] = inOrder(nodes); return null; }
+      if (nodes.length) { _frames[key][anim] = inOrder(nodes, _nodeGeometry); return null; }
       if (!def[anim]) return null;
       const parsed = _objCache[def[anim]] || (_objCache[def[anim]] = _track(def[anim], new Promise((res, rej) => _objLoader.load(def[anim], res, null, rej))));
       return parsed.then(obj => { _frames[key][anim] = inOrder(obj.children.filter(c => c.isMesh && /_\d+$/.test(c.name))); })

@@ -18,7 +18,7 @@ Hold a Terran bunker against waves of Zerg. Every unit inside the bunker fires w
 
 **Play online:** <https://nam-usth.github.io/defense-of-the-dominion/> — published by GitHub Pages on every push to `main` (`.github/workflows/pages.yml`; only `index.html`, `css/`, `js/`, `assets/models/` and `assets/ui/` go online). The repository settings must have **Pages → Source: GitHub Actions**.
 
-On the web the StarCraft II assets (5.9 MiB gzipped) load in priority order — the bunker, then the Zerglings and the Marine, then the Roach, Viking and nuke, then the rest (`LOAD_STAGES` in `js/config.js`). The title screen shows the progress, and its start buttons wait for the first two stages (or *start now* skips the wait); everything else streams in while you play.
+On the web the StarCraft II assets (4.8 MiB gzipped) load in priority order — the bunker, then the Zerglings and the Marine, then the Roach, Viking and nuke, then the rest (`LOAD_STAGES` in `js/config.js`). The title screen shows the progress, and its start buttons wait for the first two stages (or *start now* skips the wait); everything else streams in while you play.
 
 To run it locally you need a desktop browser with WebGL 2 (Chrome, Edge or Firefox) and, for the local server, Node.js 18 or newer.
 
@@ -151,14 +151,15 @@ Known issue: the Marine texture on hand (`marine.dds`, `marine_normal.dds`) does
 
 The `.m3` and `.dds` files come from the game's CASC archive (extract them with a CASC tool such as CascView). No Blender is needed: the tools in `tools/` read `.m3` directly. (The bunker, Shrike turret and Viking are older Blender conversions; their `.obj` files are kept as they are and the importer does not rebuild them.)
 
-The SC2 models are stored as **GLB** (binary glTF): the bind pose and every baked animation frame in one file, with the frames sharing a single set of UVs and triangles. The same models as OBJ text were 3.6× bigger, and the game took 5× longer to start:
+The SC2 models are stored as **GLB** (binary glTF): the bind pose and every baked animation frame in one file, with the frames sharing a single set of UVs and triangles. Positions and normals are packed with the standard `KHR_mesh_quantization` extension — positions as 16-bit integers inside the model's box (a step of about 2·10⁻⁵ model units), normals as 8-bit (under 0.3°) — and the game expands them to float32 when it loads them (`--float` on `m3-to-glb.mjs` writes plain float32 instead).
 
-| | Model files | Gzipped | Load + parse (8 models) | Game start (every model, textures included) |
-|---|---|---|---|---|
-| OBJ | 14.1 MiB, 17 files | 3.3 MiB | 528 ms | 2.1 s |
-| GLB | 3.9 MiB, 8 files | 2.2 MiB | 49 ms | 0.43 s |
+| The 8 SC2 models as | Files | Gzipped | Load + parse |
+|---|---|---|---|
+| OBJ text | 14.1 MiB, 17 files | 3.3 MiB | 528 ms |
+| GLB, float32 | 3.9 MiB, 8 files | 2.2 MiB | 49 ms |
+| GLB, quantized (used) | 2.1 MiB, 8 files | 1.1 MiB | about the same |
 
-The frame rate is the same: once loaded, both give identical geometry on the GPU (checked vertex by vertex — the largest difference, 5·10⁻⁵, is OBJ text rounding).
+The frame rate does not depend on the format: once loaded, every version gives the same geometry on the GPU (checked vertex by vertex — the largest differences, 5·10⁻⁵ for OBJ text and 1.7·10⁻⁵ for the quantized GLB, are rounding). With the textures cut to 512² the whole site is 4.8 MiB gzipped (it was 11.2); on a connection throttled to 200 KB/s the bunker is ready after 14 s, the game can start after 25 s and everything has loaded after 61 s.
 
 ```bash
 node tools/import-sc2.mjs D:/sc2-extract

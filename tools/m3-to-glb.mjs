@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Convert a StarCraft II .m3 model to binary glTF 2.0 (.glb):
-//   node tools/m3-to-glb.mjs <model.m3> <out.glb> [--regions 0,2] [--anims Walk,Attack] [--frames 8 | Walk:32,Attack:8]
+//   node tools/m3-to-glb.mjs <model.m3> <out.glb> [--regions 0,2] [--anims Walk,Attack] [--frames 8 | Walk:32,Attack:8] [--float]
 //   node tools/m3-to-glb.mjs --check <file.glb>
 //
 // One self-contained file with the geometry tools/m3-to-obj.mjs writes, in
@@ -16,13 +16,18 @@
 //   - no materials or textures (the game textures models from ASSETS.tex)
 //   - asset.extras: source, regions, anims { loopMs, moveSpeed (SC2 units/s), frames };
 //     node.extras: region, material and textures / anim, frame, timeMs
-// Indexed triangles (uint16 when the vertex count allows), float32 attributes.
+// Indexed triangles (uint16 when the vertex count allows). Positions and
+// normals are packed with KHR_mesh_quantization: positions int16 inside one box
+// for the whole file (every mesh node's translation + scale undoes it — a step
+// of about 2e-5 model units), normals int8 (half a degree). That halves the file
+// and its gzip size; --float keeps float32 instead. UVs stay float32.
 // The written file is read back and checked (--check runs the same checks).
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseM3, skinMatrices, skinRegion, pickRegions } from './m3.mjs';
 
-const FLOAT = 5126, U16 = 5123, U32 = 5125, ARRAY_BUFFER = 34962, ELEMENT_ARRAY_BUFFER = 34963;   // glTF component types, view targets
+const BYTE = 5120, SHORT = 5122, FLOAT = 5126, U16 = 5123, U32 = 5125, ARRAY_BUFFER = 34962, ELEMENT_ARRAY_BUFFER = 34963;   // glTF component types, view targets
+const QUANTIZATION = 'KHR_mesh_quantization';
 
 const args = process.argv.slice(2);
 const flag = name => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] ?? '' : null; };
@@ -35,10 +40,11 @@ if (checkOnly !== null) {
   process.exit(r.ok ? 0 : 1);
 }
 const only = flag('--regions'), animNames = flag('--anims'), framesArg = flag('--frames');
+const floatOnly = args.includes('--float'); if (floatOnly) args.splice(args.indexOf('--float'), 1);
 const [input, output] = args;
 if (!input || !output) {
   console.error([
-    'usage: node tools/m3-to-glb.mjs <model.m3> <out.glb> [--regions 0,2] [--anims Walk,Attack] [--frames 8 | Walk:32,Attack:8]',
+    'usage: node tools/m3-to-glb.mjs <model.m3> <out.glb> [--regions 0,2] [--anims Walk,Attack] [--frames 8 | Walk:32,Attack:8] [--float]',
     '       node tools/m3-to-glb.mjs --check <file.glb>'].join('\n'));
   process.exit(1);
 }
@@ -86,6 +92,31 @@ function addFloats(view, data, size, first, count, bounds) {
   }
   return accessors.push(a) - 1;
 }
+// POSITION / NORMAL data → a view: float32, or quantized (positions int16 in the
+// box qCenter ± qHalf, normals int8), one element per 8 / 4 bytes so every vertex
+// stays 4-byte aligned as glTF requires
+function addVec3View(data, isPosition) {
+  if (floatOnly) return { view: addView(data, ARRAY_BUFFER), q: null };
+  const n = data.length / 3, q = isPosition ? new Int16Array(n * 4) : new Int8Array(n * 4);
+  for (let v = 0; v < n; v++) for (let c = 0; c < 3; c++) {
+    const x = data[v * 3 + c];
+    q[v * 4 + c] = isPosition ? Math.round((x - qCenter[c]) / qHalf[c] * 32767) : Math.round(Math.max(-1, Math.min(1, x)) * 127);
+  }
+  const view = addView(q, ARRAY_BUFFER);
+  bufferViews[view].byteStride = isPosition ? 8 : 4;
+  return { view, q };
+}
+// VEC3 accessor over `count` items from item `first` of such a view (POSITION: with min/max)
+function addVec3(vi, data, first, count, bounds) {
+  if (!vi.q) return addFloats(vi.view, data, 3, first, count, bounds);
+  const short = vi.q instanceof Int16Array;
+  const a = { bufferView: vi.view, byteOffset: first * (short ? 8 : 4), componentType: short ? SHORT : BYTE, normalized: true, count, type: 'VEC3' };
+  if (bounds) {
+    a.min = [Infinity, Infinity, Infinity]; a.max = [-Infinity, -Infinity, -Infinity];
+    for (let v = first; v < first + count; v++) for (let c = 0; c < 3; c++) { a.min[c] = Math.min(a.min[c], vi.q[v * 4 + c]); a.max[c] = Math.max(a.max[c], vi.q[v * 4 + c]); }
+  }
+  return accessors.push(a) - 1;
+}
 function addIndices(view, data, first, count) {
   return accessors.push({ bufferView: view, byteOffset: first * data.BYTES_PER_ELEMENT, componentType: data.BYTES_PER_ELEMENT === 2 ? U16 : U32, count, type: 'SCALAR' }) - 1;
 }
@@ -109,7 +140,31 @@ const bindIdx = indexArray(corners, Math.max(...picked.map(r => r.vertexCount)))
     for (let f = r.firstFace; f < r.firstFace + r.faceIndexCount; f++) bindIdx[c++] = m3.faces[f];   // region-relative
   }
 }
-const posView = addView(bindPos, ARRAY_BUFFER), nrmView = addView(bindNrm, ARRAY_BUFFER);
+// ── Baked frames, posed before anything is written: their positions widen the box ──
+const frameData = anims.map(seq => {
+  const frameCount = framesOf(seq);
+  const pos = new Float32Array(frameCount * total * 3), nrm = new Float32Array(frameCount * total * 3);
+  for (let k = 0; k < frameCount; k++) {
+    const mats = skinMatrices(m3, seq, (k / frameCount) * seq.length);
+    let o = k * total * 3;
+    for (const r of picked) {
+      const { positions, normals } = skinRegion(m3, r, mats);
+      positions.forEach(([x, y, z], i) => { pos.set([x, z, -y], o + i * 3); const [nx, ny, nz] = normals[i]; nrm.set([nx, nz, -ny], o + i * 3); });
+      o += r.vertexCount * 3;
+    }
+  }
+  return { seq, frameCount, pos, nrm };
+});
+// one quantization box for the bind pose and every frame
+let qCenter = [0, 0, 0], qHalf = [1, 1, 1];
+if (!floatOnly) {
+  const mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+  for (const arr of [bindPos, ...frameData.map(d => d.pos)]) for (let i = 0; i < arr.length; i++) { const c = i % 3; mn[c] = Math.min(mn[c], arr[i]); mx[c] = Math.max(mx[c], arr[i]); }
+  qCenter = mn.map((m, c) => (m + mx[c]) / 2);
+  qHalf = mn.map((m, c) => Math.max((mx[c] - m) / 2, 1e-6));
+}
+const qNode = floatOnly ? {} : { translation: qCenter, scale: qHalf };   // on every mesh node: undoes the quantization
+const posView = addVec3View(bindPos, true), nrmView = addVec3View(bindNrm, false);
 const uvView = addView(uvs, ARRAY_BUFFER), idxView = addView(bindIdx, ELEMENT_ARRAY_BUFFER);
 const meshes = [], nodes = [];
 {
@@ -119,8 +174,8 @@ const meshes = [], nodes = [];
     const textures = Object.fromEntries(Object.entries(r.material?.layers || {}).filter(([k]) => ['diffuse', 'emissive', 'normal'].includes(k)));
     r.uvAccessor = addFloats(uvView, uvs, 2, v, r.vertexCount);
     r.idxAccessor = addIndices(idxView, bindIdx, c, r.faceIndexCount);
-    meshes.push({ name, primitives: [{ attributes: { POSITION: addFloats(posView, bindPos, 3, v, r.vertexCount, true), NORMAL: addFloats(nrmView, bindNrm, 3, v, r.vertexCount), TEXCOORD_0: r.uvAccessor }, indices: r.idxAccessor, mode: 4 }] });
-    nodes.push({ name, mesh: meshes.length - 1, extras: { region: r.index, material: r.material?.name ?? null, textures } });
+    meshes.push({ name, primitives: [{ attributes: { POSITION: addVec3(posView, bindPos, v, r.vertexCount, true), NORMAL: addVec3(nrmView, bindNrm, v, r.vertexCount), TEXCOORD_0: r.uvAccessor }, indices: r.idxAccessor, mode: 4 }] });
+    nodes.push({ name, mesh: meshes.length - 1, ...qNode, extras: { region: r.index, material: r.material?.name ?? null, textures } });
     v += r.vertexCount; c += r.faceIndexCount;
   }
 }
@@ -140,31 +195,22 @@ if (anims.length) {
     frameUv = addFloats(uvView, uvs, 2, 0, total);
     frameIdx = addIndices(addView(merged, ELEMENT_ARRAY_BUFFER), merged, 0, corners);
   }
-  for (const seq of anims) {
-    const frameCount = framesOf(seq);
-    const pos = new Float32Array(frameCount * total * 3), nrm = new Float32Array(frameCount * total * 3);
-    for (let k = 0; k < frameCount; k++) {
-      const mats = skinMatrices(m3, seq, (k / frameCount) * seq.length);
-      let o = k * total * 3;
-      for (const r of picked) {
-        const { positions, normals } = skinRegion(m3, r, mats);
-        positions.forEach(([x, y, z], i) => { pos.set([x, z, -y], o + i * 3); const [nx, ny, nz] = normals[i]; nrm.set([nx, nz, -ny], o + i * 3); });
-        o += r.vertexCount * 3;
-      }
-    }
-    const pv = addView(pos, ARRAY_BUFFER), nv = addView(nrm, ARRAY_BUFFER);
+  for (const { seq, frameCount, pos, nrm } of frameData) {
+    const pv = addVec3View(pos, true), nv = addVec3View(nrm, false);
     animInfo[seq.name] = { loopMs: seq.length, moveSpeed: seq.speed / 100, frames: frameCount };
     for (let k = 0; k < frameCount; k++) {
       const name = `${seq.name}_${k}`;
-      meshes.push({ name, primitives: [{ attributes: { POSITION: addFloats(pv, pos, 3, k * total, total, true), NORMAL: addFloats(nv, nrm, 3, k * total, total), TEXCOORD_0: frameUv }, indices: frameIdx, mode: 4 }] });
-      nodes.push({ name, mesh: meshes.length - 1, extras: { anim: seq.name, frame: k, timeMs: (k / frameCount) * seq.length, loopMs: seq.length, moveSpeed: seq.speed / 100 } });
+      meshes.push({ name, primitives: [{ attributes: { POSITION: addVec3(pv, pos, k * total, total, true), NORMAL: addVec3(nv, nrm, k * total, total), TEXCOORD_0: frameUv }, indices: frameIdx, mode: 4 }] });
+      nodes.push({ name, mesh: meshes.length - 1, ...qNode, extras: { anim: seq.name, frame: k, timeMs: (k / frameCount) * seq.length, loopMs: seq.length, moveSpeed: seq.speed / 100 } });
     }
   }
 }
 
 // ── GLB container: 12-byte header, JSON chunk (space padded), BIN chunk (zero padded) ──
 const gltf = {
-  asset: { version: '2.0', generator: 'tools/m3-to-glb.mjs', extras: { source: path.basename(input), regions: picked.map(r => r.index), anims: animInfo } },
+  asset: { version: '2.0', generator: 'tools/m3-to-glb.mjs', extras: { source: path.basename(input), regions: picked.map(r => r.index), anims: animInfo,
+    ...(floatOnly ? {} : { quantization: { position: 'int16', normal: 'int8', center: qCenter, half: qHalf } }) } },
+  ...(floatOnly ? {} : { extensionsUsed: [QUANTIZATION], extensionsRequired: [QUANTIZATION] }),
   scene: 0, scenes: [{ name: m3.name || path.basename(input, '.m3'), nodes: nodes.map((_, i) => i) }],
   nodes, meshes, accessors, bufferViews, buffers: [{ byteLength: binLength }],
 };
@@ -183,7 +229,7 @@ for (const e of check.errors) console.error('  error: ' + e);
 for (const w of check.warnings) console.error('  warning: ' + w);
 if (!check.ok) process.exit(1);
 
-// ── Structure check of a .glb as this tool writes it (no extensions, no strides) ──
+// ── Structure check of a .glb as this tool writes it (KHR_mesh_quantization is the only extension) ──
 function validateGlb(buf) {
   const errors = [], warnings = [], err = m => errors.push(m);
   const done = summary => ({ ok: !errors.length, errors, warnings, summary });
@@ -204,7 +250,9 @@ function validateGlb(buf) {
   try { g = JSON.parse(buf.toString('utf8', 20, binAt)); } catch (e) { err('JSON chunk: ' + e.message); return done('-'); }
   const binData = buf.subarray(binAt + 8, binAt + 8 + binLen);
   if (g.asset?.version !== '2.0') err(`asset.version ${g.asset?.version}`);
-  if (g.extensionsUsed?.length || g.extensionsRequired?.length) err('extensions are not expected');
+  const exts = new Set([...(g.extensionsUsed || []), ...(g.extensionsRequired || [])]);
+  for (const e of exts) if (e !== QUANTIZATION) err(`unexpected extension ${e}`);
+  const quantized = (g.extensionsRequired || []).includes(QUANTIZATION);
   if (g.buffers?.length !== 1 || g.buffers[0].uri !== undefined) err('expected exactly one buffer: the BIN chunk');
   const bufLen = g.buffers?.[0]?.byteLength ?? 0;
   if (bufLen > binLen || binLen - bufLen > 3) err(`buffer byteLength ${bufLen} vs BIN chunk ${binLen}`);
@@ -212,21 +260,24 @@ function validateGlb(buf) {
     if (v.buffer !== 0) err(`bufferView ${i}: buffer ${v.buffer}`);
     if ((v.byteOffset || 0) % 4) err(`bufferView ${i}: byteOffset ${v.byteOffset} not 4-aligned`);
     if ((v.byteOffset || 0) + v.byteLength > bufLen) err(`bufferView ${i}: ends at ${(v.byteOffset || 0) + v.byteLength} > buffer ${bufLen}`);
-    if (v.byteStride !== undefined) err(`bufferView ${i}: byteStride not expected`);
+    if (v.byteStride !== undefined && (v.byteStride % 4 || v.byteStride < 4 || v.byteStride > 252)) err(`bufferView ${i}: byteStride ${v.byteStride}`);
   });
   const SIZE = { 5120: 1, 5121: 1, 5122: 2, 5123: 2, 5125: 4, 5126: 4 }, COMPONENTS = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
-  const READ = { 5123: (o) => binData.readUInt16LE(o), 5125: (o) => binData.readUInt32LE(o), 5126: (o) => binData.readFloatLE(o) };
+  const READ = { 5120: (o) => binData.readInt8(o), 5122: (o) => binData.readInt16LE(o), 5123: (o) => binData.readUInt16LE(o), 5125: (o) => binData.readUInt32LE(o), 5126: (o) => binData.readFloatLE(o) };
   // accessor i → its values (plain numbers), after the bounds checks
   const values = (g.accessors || []).map((a, i) => {
     const v = g.bufferViews?.[a.bufferView], size = SIZE[a.componentType], n = COMPONENTS[a.type];
     if (!v || !size || !n || !READ[a.componentType]) { err(`accessor ${i}: bad bufferView / componentType / type`); return null; }
     const off = a.byteOffset || 0;
     if (off % size || ((v.byteOffset || 0) + off) % size) err(`accessor ${i}: offset ${off} not aligned to its ${size}-byte components`);
-    if (a.type !== 'SCALAR' && (size * n) % 4) err(`accessor ${i}: ${a.type} of ${size}-byte components is not 4-byte aligned per element`);
+    const stride = v.byteStride || size * n;
+    if (a.type !== 'SCALAR' && stride % 4) err(`accessor ${i}: ${a.type} of ${size}-byte components is not 4-byte aligned per element`);
+    if (stride < size * n) err(`accessor ${i}: byteStride ${stride} < element size ${size * n}`);
     if (!(a.count > 0)) err(`accessor ${i}: count ${a.count}`);
-    if (off + a.count * size * n > v.byteLength) { err(`accessor ${i}: ends at ${off + a.count * size * n} > bufferView ${a.bufferView} (${v.byteLength} bytes)`); return null; }
+    const end = off + (a.count - 1) * stride + size * n;
+    if (end > v.byteLength) { err(`accessor ${i}: ends at ${end} > bufferView ${a.bufferView} (${v.byteLength} bytes)`); return null; }
     const out = new Float64Array(a.count * n), at = (v.byteOffset || 0) + off;
-    for (let k = 0; k < out.length; k++) out[k] = READ[a.componentType](at + k * size);
+    for (let e = 0; e < a.count; e++) for (let c = 0; c < n; c++) out[e * n + c] = READ[a.componentType](at + e * stride + c * size);
     if (out.some(x => !Number.isFinite(x))) err(`accessor ${i}: NaN or infinite values`);
     if (a.min || a.max) {
       for (let c = 0; c < n; c++) {
@@ -243,13 +294,16 @@ function validateGlb(buf) {
     if ((p.mode ?? 4) !== 4) err(`${where}: mode ${p.mode}, expected triangles`);
     for (const name of ['POSITION', 'NORMAL', 'TEXCOORD_0']) if (g.accessors?.[at[name]] === undefined) err(`${where}: no ${name}`);
     const pos = g.accessors?.[at.POSITION], count = pos?.count;
-    if (pos && (pos.type !== 'VEC3' || pos.componentType !== FLOAT || !pos.min || !pos.max)) err(`${where}: POSITION must be float VEC3 with min/max`);
+    const posTypes = quantized ? [FLOAT, SHORT, BYTE] : [FLOAT];
+    if (pos && (pos.type !== 'VEC3' || !posTypes.includes(pos.componentType) || !pos.min || !pos.max)) err(`${where}: POSITION must be ${quantized ? 'float / int16 / int8' : 'float'} VEC3 with min/max`);
+    const nrmA = g.accessors?.[at.NORMAL];
+    if (nrmA && nrmA.componentType !== FLOAT && !(quantized && nrmA.normalized && [BYTE, SHORT].includes(nrmA.componentType))) err(`${where}: NORMAL must be float or normalized int8 / int16`);
     for (const [name, a] of Object.entries(at)) {
       if (g.accessors?.[a]?.count !== count) err(`${where}: ${name} count ${g.accessors?.[a]?.count} ≠ POSITION count ${count}`);
       if (g.bufferViews?.[g.accessors?.[a]?.bufferView]?.target !== ARRAY_BUFFER) err(`${where}: ${name} view is not an ARRAY_BUFFER`);
     }
-    const nrm = values[at.NORMAL];
-    if (nrm) for (let k = 0; k < nrm.length; k += 3) if (Math.abs(Math.hypot(nrm[k], nrm[k + 1], nrm[k + 2]) - 1) > 1e-4) nonUnit++;
+    const nrm = values[at.NORMAL], nk = { [BYTE]: 1 / 127, [SHORT]: 1 / 32767 }[nrmA?.componentType] || 1, tol = nk === 1 ? 1e-4 : 3 * nk;
+    if (nrm) for (let k = 0; k < nrm.length; k += 3) if (Math.abs(Math.hypot(nrm[k], nrm[k + 1], nrm[k + 2]) * nk - 1) > tol) nonUnit++;
     const ia = g.accessors?.[p.indices], idx = values[p.indices];
     if (!ia || ia.type !== 'SCALAR' || ![U16, U32].includes(ia.componentType)) { err(`${where}: indices missing or not uint16/uint32`); return; }
     if (g.bufferViews?.[ia.bufferView]?.target !== ELEMENT_ARRAY_BUFFER) err(`${where}: index view is not an ELEMENT_ARRAY_BUFFER`);
