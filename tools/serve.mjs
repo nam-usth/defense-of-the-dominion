@@ -13,7 +13,7 @@ const TYPES = {
   '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml', '.obj': 'text/plain; charset=utf-8', '.mtl': 'text/plain; charset=utf-8',
-  '.glb': 'model/gltf-binary', '.dds': 'application/octet-stream', '.ico': 'image/x-icon',
+  '.glb': 'model/gltf-binary', '.aac': 'audio/aac', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.dds': 'application/octet-stream', '.ico': 'image/x-icon',
 };
 
 http.createServer((req, res) => {

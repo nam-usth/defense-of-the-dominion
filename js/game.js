@@ -188,12 +188,60 @@ const G = (() => {
     function save() { try { localStorage.setItem('dotd_volume', String(volume)); localStorage.setItem('dotd_muted', muted ? '1' : '0'); } catch (e) {} }
     return {
       ensure, play,
+      get context() { return ctx; }, get output() { return master; },
       setVolume(v) { volume = Math.max(0, Math.min(1, v)); if (volume > 0) muted = false; apply(); save(); },
       setMuted(m) { muted = !!m; apply(); save(); },
       get muted() { return muted; },
       get volume() { return volume; },
     };
   })();
+  // ── Music ─────────────────────────────────────────────────────────────────
+  // The StarCraft soundtrack (MUSIC in config.js), streamed by an <audio>
+  // element: preload 'none', so nothing downloads before a track plays and it
+  // never competes with the models. It runs through the effects' master gain
+  // (volume, mute); the menu's MUSIC switch turns it off. Browsers allow sound
+  // only after the first click or key, so the title music starts then.
+  const Music = (() => {
+    const el = new Audio();
+    el.preload = 'none';
+    let src = null, list = [], idx = 0, loop = false, scene = null, on = true;
+    try { on = localStorage.getItem('dotd_music') !== '0'; } catch (e) {}
+    const url = name => AUDIO_DIR + name + '.aac';
+    function start() {
+      if (!on || !list.length || !SFX.context || document.hidden) return;
+      if (!src) {                                    // once: element → music gain → master
+        src = SFX.context.createMediaElementSource(el);
+        const g = SFX.context.createGain(); g.gain.value = MUSIC.level;
+        src.connect(g); g.connect(SFX.output);
+      }
+      el.play().catch(() => {});
+    }
+    el.addEventListener('ended', () => {
+      if (idx + 1 < list.length) idx++; else if (loop) idx = 0; else { list = []; return; }
+      el.src = url(list[idx]); start();
+    });
+    // scene: 'title' | 'battle' | 'victory' | 'defeat' — a scene already playing keeps going
+    function play(name) {
+      if (scene === name && list.length) { start(); return; }
+      scene = name; list = MUSIC[name] || []; idx = 0; loop = name === 'title' || name === 'battle';
+      el.loop = loop && list.length === 1;
+      el.pause();
+      if (list.length) { el.src = url(list[0]); start(); }
+    }
+    function setOn(v) {
+      on = !!v;
+      try { localStorage.setItem('dotd_music', on ? '1' : '0'); } catch (e) {}
+      if (on) start(); else el.pause();
+    }
+    document.addEventListener('visibilitychange', () => { if (document.hidden) el.pause(); else start(); });
+    return { play, start, setOn, get on() { return on; }, get scene() { return scene; }, get track() { return list[idx] || null; },
+             get playing() { return !el.paused; }, get element() { return el; } };
+  })();
+  // first click or key anywhere: unlock Web Audio and start whatever music is due
+  const _unlockAudio = () => { SFX.ensure(); Music.start(); };
+  addEventListener('pointerdown', _unlockAudio, { once: true });
+  addEventListener('keydown', _unlockAudio, { once: true });
+
   let minerals=150, gas=50;
   let ammo=CFG.base_ammo, maxAmmo=CFG.base_ammo;
   let bunkerHp=750, maxHp=750;
@@ -2875,6 +2923,7 @@ const G = (() => {
     $('overlay').style.display='none';
     phase='playing';
     setStatus('ENDLESS MODE — the swarm never stops. Resupply incoming...');
+    Music.play('battle');
     updateHUD();
   }
 
@@ -2888,6 +2937,7 @@ const G = (() => {
       <kbd>WHEEL</kbd><span>Zoom on the bunker</span><kbd>INS / DEL</kbd><span>Rotate view 90°</span>
     </div>`;
   function showTitle(){
+    Music.play('title');
     clearEntities();
     closeRoster(); closeMenu(); closeCheat();
     phase='menu'; wavePhase='idle';
@@ -2928,6 +2978,7 @@ const G = (() => {
   }
   function skipAssetWait(){ _skipWait = true; _assetGate(); }
   function showResults(victory,newlyUnlocked,newRecord){
+    Music.play(victory ? 'victory' : 'defeat');
     const rk=getRank(kills), t=Math.floor(_gameT), camp=gameMode==='campaign';
     const stats=[['WAVE',wave+(camp?' / '+CFG.victory_wave:'')],['TIME',Math.floor(t/60)+':'+String(t%60).padStart(2,'0')],['KILLS',kills],
                  ['SCORE',score],['RANK',`<span style="color:${rk.color}">${rk.name}</span>`],['MODE',camp?'CAMPAIGN':'ENDLESS']];
@@ -2950,6 +3001,7 @@ const G = (() => {
     if(mode==='endless'&&gameMode!=='endless'&&!endlessUnlocked()) return; // replaying Endless never needs the flag
     if(mode==='campaign'||mode==='endless') gameMode=mode;
     SFX.ensure();             // start() always runs from a click — unlocks Web Audio
+    Music.play('battle');
     clearEntities();
     score=0;wave=1;kills=0;minerals=150;gas=50;
     ammo=CFG.base_ammo;maxAmmo=CFG.base_ammo;
@@ -3584,6 +3636,7 @@ const G = (() => {
   function _syncSoundUI() {
     const cb = document.getElementById('menu-mute-cb'), vol = document.getElementById('menu-vol'), val = document.getElementById('menu-vol-val');
     if (cb) cb.checked = SFX.muted;
+    const mc = document.getElementById('menu-music-cb'); if (mc) mc.checked = Music.on;
     if (vol) vol.value = Math.round(SFX.volume * 100);
     if (val) val.textContent = SFX.muted ? 'OFF' : Math.round(SFX.volume * 100) + '%';
     const sb = document.getElementById('tv-snd');
@@ -3592,6 +3645,7 @@ const G = (() => {
   function toggleMute() { SFX.ensure(); SFX.setMuted(!SFX.muted); _syncSoundUI(); }
   function setVolume(v) { SFX.ensure(); SFX.setVolume(v); _syncSoundUI(); SFX.play('buy'); }
   function setMuted(m) { SFX.ensure(); SFX.setMuted(m); _syncSoundUI(); }
+  function setMusic(on) { SFX.ensure(); Music.setOn(on); _syncSoundUI(); }
   function closeMenu() {
     _menuOpen = false;
     const ov = document.getElementById('menu-overlay');
@@ -3705,5 +3759,5 @@ const G = (() => {
   _syncSoundUI();
   showTitle();
   return {start, buy, buyArmory, skipAssetWait, doAirstrike, doNuke, doStim, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
-          saveGame, loadGame, toggleDayNight, setVolume, setMuted, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode};
+          saveGame, loadGame, toggleDayNight, setVolume, setMuted, setMusic, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode};
 })();

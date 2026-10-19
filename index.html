@@ -191,6 +191,7 @@
         <div class="menu-label">SOUND</div>
         <div class="menu-row">
           <label class="menu-check"><input type="checkbox" id="menu-mute-cb" onchange="G.setMuted(this.checked)">MUTE</label>
+          <label class="menu-check"><input type="checkbox" id="menu-music-cb" onchange="G.setMusic(this.checked)">MUSIC</label>
           <input type="range" id="menu-vol" min="0" max="100" step="1" oninput="G.setVolume(this.value/100)" aria-label="Volume">
           <span id="menu-vol-val"></span>
         </div>
@@ -264,8 +265,8 @@
 <!-- Game: classic scripts sharing globals — keep this order. Bump ?v= when a file changes. -->
 <script src="js/lib/obj-loader.js?v=2"></script>
 <script src="js/radial-fog.js?v=1"></script>
-<script src="js/config.js?v=14"></script>
+<script src="js/config.js?v=15"></script>
 <script src="js/model-loader.js?v=8"></script>
-<script src="js/game.js?v=18"></script>
+<script src="js/game.js?v=19"></script>
 </body>
 </html>

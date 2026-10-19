@@ -1,6 +1,6 @@
 # Publish the game to GitHub Pages — https://nam-usth.github.io/defense-of-the-dominion/
 # — on every push to main (or by hand from the Actions tab). Only what the game
-# loads goes online: index.html, css/, js/, assets/models/, assets/ui/. The .m3
+# loads goes online: index.html, css/, js/, assets/models/, assets/ui/, assets/audio/. The .m3
 # sources, tools/ and docs/ stay in the repository.
 name: Deploy to GitHub Pages
 
@@ -30,7 +30,7 @@ jobs:
         run: |
           mkdir -p _site/assets
           cp -r index.html css js _site/
-          cp -r assets/models assets/ui _site/assets/
+          cp -r assets/models assets/ui assets/audio _site/assets/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4
         with:

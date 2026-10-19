@@ -131,8 +131,18 @@ const UI_ICONS = {
   snipe:      UI_DIR + 'btn-upgrade-terran-ui-lazertargetingsystem.png',
 };
 
-// Shown on the title screen (the models, textures and icons are Blizzard's)
-const BLIZZARD_NOTICE = 'StarCraft® and its models, textures and icons are © Blizzard Entertainment, Inc. Non-commercial fan project — not affiliated with or endorsed by Blizzard Entertainment.';
+// Music: the StarCraft soundtrack (Glenn Stafford), AAC 96 kbps made with
+// tools/encode-music.mjs. Lists play in turn; title and battle loop.
+const AUDIO_DIR = 'assets/audio/';
+const MUSIC = {
+  level: 0.4,                                        // under the effects, before the master volume
+  title:   ['main_title'],
+  battle:  ['terran_one', 'terran_two', 'terran_three'],
+  victory: ['terran_victory'],
+  defeat:  ['terran_defeat'],
+};
+// Shown on the title screen (the models, textures, icons and music are Blizzard's)
+const BLIZZARD_NOTICE = 'StarCraft® and its models, textures, icons and music are © Blizzard Entertainment, Inc. Non-commercial fan project — not affiliated with or endorsed by Blizzard Entertainment.';
 
 const RANKS = [
   {name:'PRIVATE',   kills:0,  color:'#aaaaaa'}, // 6-digit: badge border appends '66' alpha

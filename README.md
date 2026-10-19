@@ -16,7 +16,7 @@ Hold a Terran bunker against waves of Zerg. Every unit inside the bunker fires w
 
 ## Running the game
 
-**Play online:** <https://nam-usth.github.io/defense-of-the-dominion/> — published by GitHub Pages on every push to `main` (`.github/workflows/pages.yml`; only `index.html`, `css/`, `js/`, `assets/models/` and `assets/ui/` go online). The repository settings must have **Pages → Source: GitHub Actions**.
+**Play online:** <https://nam-usth.github.io/defense-of-the-dominion/> — published by GitHub Pages on every push to `main` (`.github/workflows/pages.yml`; only `index.html`, `css/`, `js/`, `assets/models/`, `assets/ui/` and `assets/audio/` go online). The repository settings must have **Pages → Source: GitHub Actions**.
 
 On the web the StarCraft II assets (4.8 MiB gzipped) load in priority order — the bunker, then the Zerglings and the Marine, then the Roach, Viking and nuke, then the rest (`LOAD_STAGES` in `js/config.js`). The title screen shows the progress, and its start buttons wait for the first two stages (or *start now* skips the wait); everything else streams in while you play.
 
@@ -128,6 +128,7 @@ js/game.js              the game: scene, units, waves, combat, effects, HUD, men
 assets/models/terran/   bunker, Shrike, Viking (OBJ) · Marine, Marauder, Ghost, nuke, grenade (GLB) — models and textures
 assets/models/zerg/     Zergling (base, Metabolic Boost, webby skin) and Roach (three skins) — GLB models and textures
 assets/ui/              HUD icons (PNG, converted from SC2 DDS)
+assets/audio/           music: the StarCraft soundtrack, AAC
 assets/source/m3/       the original .m3 files of the converted models (and unused effect models)
 assets/source/terran/   extra model parts and a GLB that the game does not load
 tools/serve.mjs         zero-dependency local web server (npm start)
@@ -138,6 +139,7 @@ tools/m3-to-glb.mjs     .m3 → .glb, bind pose and baked animations in one file
 tools/m3-to-obj.mjs     .m3 → .obj, bind pose or a baked animation; lists a model; prints attachment points
 tools/dds-to-png.mjs    .dds → .png (DXT1, DXT5, uncompressed)
 tools/dds-resize.mjs    shrinks a .dds by dropping its largest mip levels (1024² → 512²)
+tools/encode-music.mjs  any audio Chrome can play (FLAC, WAV, MP3…) → AAC .aac, with Chrome's own encoder
 docs/screenshots/       images used in this README
 ```
 
@@ -198,7 +200,7 @@ The Marauder's punisher grenade uses the mesh of `MarauderMissile.m3` (body and 
 - **Rendering** — three.js r128 from a CDN, no build tools. Enemies and bullets are `InstancedMesh`es and all particles live in two `THREE.Points` buffers, so a 140-enemy late-game fight takes about 20 draw calls.
 - **Timing** — gameplay runs on a game clock with its own scheduler: pausing freezes everything, and restarting or loading drops pending events (wave countdowns, airstrikes, nukes).
 - **Night** — the fog shader is patched to measure distance from the bunker, which gives the night mode its circle of vision.
-- **Sound** — synthesized with the Web Audio API; there are no audio files.
+- **Sound** — the effects are synthesized with the Web Audio API (no audio files). The music is the StarCraft soundtrack by Glenn Stafford (`MUSIC` in `js/config.js`): *StarCraft Main Title* on the title screen, *Terran One*, *Two* and *Three* in turn during a game, *Terran Victory* / *Terran Defeat* on the results screen. The tracks are AAC 96 kbps (12 MiB in all), streamed by an `<audio>` element that only downloads the track it plays, through the same master volume and mute as the effects; the menu's MUSIC switch turns it off. Browsers allow sound only after the first click or key, so the title music starts then. To change a track: `node tools/encode-music.mjs "Terran One.flac" assets/audio/terran_one.aac` (or `ffmpeg -i in.flac -c:a aac -b:a 96k out.aac`).
 - **Hologram** — the bunker portrait is a 2D-canvas projection of the model's edges and follows the bunker's upgrade stages.
 - **SC2 materials** — one shader patch (`ModelLoader.teamColor`) handles the team-colour mask and rebuilds Z for SC2's two-channel (DXT5nm) normal maps.
 - **Animation** — `tools/m3.mjs` decodes the skeleton and the bone tracks of an animation sequence; `m3-to-glb.mjs --anims` (or `m3-to-obj.mjs --anim`) skins the mesh offline into frames, so the game needs no skeletal animation at runtime: each frame is one more instance buffer.
@@ -207,6 +209,6 @@ The Marauder's punisher grenade uses the mesh of `MarauderMissile.m3` (body and 
 
 Non-commercial fan project — not affiliated with or endorsed by Blizzard Entertainment.
 
-StarCraft® is a trademark or registered trademark of Blizzard Entertainment, Inc. The models, textures and icons in `assets/` (and the `.m3` sources in `assets/source/`) are © Blizzard Entertainment, Inc., all rights reserved, extracted from StarCraft II for this fan project. The game shows the same notice on its title screen. They will be taken down at Blizzard's request.
+StarCraft® is a trademark or registered trademark of Blizzard Entertainment, Inc. The models, textures and icons in `assets/` (and the `.m3` sources in `assets/source/`) are © Blizzard Entertainment, Inc., all rights reserved, extracted from StarCraft II for this fan project. The music in `assets/audio/` is from the StarCraft soundtrack by Glenn Stafford, © Blizzard Entertainment, Inc. The game shows the same notice on its title screen. They will be taken down at Blizzard's request.
 
 The code (`index.html`, `css/`, `js/`, `tools/`) was written for this project. three.js is © the three.js authors (MIT).

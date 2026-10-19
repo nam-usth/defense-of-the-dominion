@@ -6,5 +6,6 @@
 *.m3 binary
 *.jpg binary
 *.png binary
+*.aac binary
 *.obj text eol=lf -diff
 *.mtl text eol=lf
