@@ -1863,10 +1863,21 @@ const G = (() => {
     // When menu open, only ESC/M closes it
     if(_menuOpen){
       if(e.key==='Escape'||e.key==='m'||e.key==='M') closeMenu();
+      // ↑ ↓ switch tabs (not while the volume slider has the keys)
+      else if((e.key==='ArrowUp'||e.key==='ArrowDown')&&!(e.target.matches&&e.target.matches('input[type=range]'))){
+        e.preventDefault();
+        menuTab(MENU_TABS[(MENU_TABS.indexOf(_menuTab)+(e.key==='ArrowDown'?1:MENU_TABS.length-1))%MENU_TABS.length]);
+      }
       return;
     }
-    // Tutorial hint open: Enter / Space / Esc close it; a key it names (R, B, N, T,
-    // 1-4, M) closes it and does its job; other keys wait
+    // HUD tour: Enter / Space / → next, ← back, Esc ends it. Hint: Enter / Space /
+    // Esc close it; a key it names (R, B, N, T, 1-4, M) closes it and does its job
+    if(_tutStep&&_tourI>=0){                   // other keys (F5, F11, Tab...) keep their browser meaning
+      if(e.key==='Enter'||e.key===' '||e.key==='ArrowRight'){ e.preventDefault(); tutNext(); }
+      else if(e.key==='ArrowLeft'){ e.preventDefault(); tutBack(); }
+      else if(e.key==='Escape'){ e.preventDefault(); tutDismiss(); }
+      return;
+    }
     if(_tutStep){
       if(e.key==='Enter'||e.key===' '||e.key==='Escape'){ e.preventDefault(); tutDismiss(); return; }
       if(!(_tutStep.keys||[]).includes(e.key.toLowerCase())) return;
@@ -2330,12 +2341,12 @@ const G = (() => {
     nuke:   { t:'NUKE', k:'N', d:'Tactical nuke on the centre of the swarm after a 2-second warning. Wipes out everything in a huge radius.' },
     roster: { t:'BUNKER ROSTER', k:'B', d:'Hire Marines, Marauders and Ghosts (6 slots) and research their upgrades. In Endless its armory sells more HP, damage, ammo and shorter strike / nuke cooldowns. The game pauses while it is open.' },
     view:   { t:'RESET VIEW', k:'HOME', d:'Back to the overview. Mouse wheel or + / − zooms in on the bunker; Insert / Delete rotate the view 90°.' },
-    menu:   { t:'MENU', k:'M', d:'Graphics, sound, save / load, controls, main menu.' },
+    menu:   { t:'MENU', k:'M', d:'Save / load, graphics and sound, the controls, the tutorial, the main menu. The game pauses while it is open.' },
     dmg:    { t:'WEAPON DAMAGE', k:'1', d:'Every round from every unit hits harder.',
               fx: l => `Damage ×${(1+l*.6).toFixed(1)}${l<3?` → ×${(1+(l+1)*.6).toFixed(1)}`:''}` },   // before Endless reinforcements
     armor:  { t:'BUNKER ARMOR', k:'2', d:'Reduces the damage Zerg deal to the bunker (bites and acid).',
               fx: l => `Damage taken ×${(1/(1+l*.35)).toFixed(2)}${l<3?` → ×${(1/(1+(l+1)*.35)).toFixed(2)}`:''}` },
-    hp:     { t:'BUNKER HULL', k:'3', d:'+250 max HP per level. Lv2 adds the Neosteel frame; Lv3 mounts the Shrike auto-turret (= 2 marines, no ammo) and self-repair (25 HP/s, stacks with the Super Stimpack). Six Marines inside overdrive the turret: ×2.5 rate of fire.',
+    hp:     { t:'BUNKER HULL', k:'3', d:'+250 max HP per level. Lv2 adds the Neosteel frame; Lv3 mounts the Shrike auto-turret (= 2 Marines, no ammo) and self-repair (25 HP/s, stacks with the Super Stimpack). Six Marines inside overdrive the turret: ×2.5 rate of fire.',
               fx: l => ['Next: +250 HP','Next: +250 HP · Neosteel frame','Next: +250 HP · Shrike turret · self-repair',''][l] },
     ammo:   { t:'AMMO STORAGE', k:'4', d:'+10 rounds per level. One round = one volley from every unit in the bunker.',
               fx: l => l<3 ? `${maxAmmo} → ${maxAmmo+10} rounds` : '' },
@@ -2979,30 +2990,56 @@ const G = (() => {
     updateHUD();
   }
 
-  // ── Tutorial: hints for new players ───────────────────────────────────────
-  // The first time a mechanic matters, the game pauses on a short hint, with a
-  // ring around the HUD control it is about, until GOT IT, Enter / Space / Esc,
-  // a key it names or a click anywhere else (which then does its job). Each
-  // hint shows once; MENU → TUTORIAL turns them off, REPLAY shows them again.
+  // ── Tutorial: HUD tour + hints for new players ────────────────────────────
+  // The first game opens with a HUD tour: the console and each command-card
+  // button in turn, spotlit (the rest of the screen dimmed), BACK / NEXT, and
+  // OK, LET'S ROLL at the end. After it, the first time a mechanic matters the
+  // game pauses on a short hint, spotlighting the control it is about, until
+  // GOT IT, Enter / Space / Esc, a key it names or a click anywhere else (which
+  // then does its job). Each shows once; MENU → TUTORIAL turns the hints off,
+  // replays them or runs the tour again (so does HOW TO PLAY on the title).
   const TUT_KEY = 'dotd_tutorial', TUT_GAP = 3;   // game seconds between two hints
   const TUT_GRACE = 800;   // ms after a hint opens in which clicks are swallowed: mid-fight clicks must not close it unread
   const _canUpgrade = () => [[dmgLvl,CFG.dmg_costs],[armorLvl,CFG.armor_costs],[hpLvl,CFG.hp_costs],[ammoLvl,CFG.ammo_costs]]
     .some(([l,c]) => l < 3 && minerals >= c[l][0] && gas >= c[l][1]);
-  // In priority order; `after` = shown only once that hint has been seen; `keys` = the
+  // The tour: welcome, the console, the ten command-card buttons (in card order,
+  // with their tooltip text from CMD_INFO), ready
+  const TOUR = [
+    { title:'WELCOME, COMMANDER', text:'The Zerg attack the bunker from every side, wave after wave. <b>Click on the ground</b> to fire: every unit inside the bunker shoots one volley at that spot. <b>Hold the button</b> for full auto. First, a look at your console.' },
+    { focus:['#hp-bar'], title:'BUNKER HP', text:'The squad\'s life. Below half the bunker burns; at zero it falls and the game is lost.' },
+    { focus:['#ammo-bar'], title:'AMMO', text:'One round per volley — full auto empties it fast. The magazine is refilled after every wave.' },
+    { focus:['#res-min','#res-gas'], title:'MINERALS &amp; GAS', text:'Paid for every kill and every cleared wave. Spend them on the command card and in the roster.' },
+    { focus:['#con-cmd-grid'], title:'COMMAND CARD', text:'Your orders and upgrades. The hotkey is in the corner of each button, the cost in minerals and gas under it; in game, hover a button for its details.' },
+    ...['air','nuke','roster','view','menu','dmg','armor','hp','ammo','stim'].map(k => ({ focus:['#cmd-'+k], cmd:k })),
+    { focus:['#con-cmd-grid'], title:'READY', last:true },
+  ];
+  // The tour's own words for each button: shorter than the hover tooltips (CMD_INFO),
+  // which name things a new player has not met yet
+  const TOUR_TEXT = {
+    air:    'When the magazine is empty: a Viking bombs every Zerg group and drops an ammo crate by the bunker.',
+    nuke:   `From wave ${CFG.nuke_wave} (the button shows W${CFG.nuke_wave} until then): a nuke on the middle of the swarm wipes out everything in a huge radius. It recharges after each launch.`,
+    roster: 'Hire Marines, Marauders and Ghosts into the bunker\'s 6 slots and research their upgrades. Every unit inside fires with each volley. The game pauses while it is open.',
+    view:   'Back to the overview. The mouse wheel zooms in on the bunker; INSERT / DELETE rotate the view.',
+    menu:   'Save and load, settings, the controls and this tutorial. The game pauses while it is open.',
+    dmg:    'Every round from every unit hits harder. Three levels.',
+    armor:  'The bunker takes less damage from bites and acid. Three levels.',
+    hp:     '+250 max HP per level. Level 3 adds a Shrike auto-turret and self-repair.',
+    ammo:   '+10 rounds in the magazine per level.',
+    stim:   `With six Marines in the bunker: ${CFG.stim_duration} s of 50% faster fire, paid with a little bunker HP.`,
+  };
+  const _tutLeft = () => _tut.on && TUT_STEPS.some(s => !s.tour && !_tut.seen.has(s.id));
+  // In priority order; `after` = shown only once that one has been seen; `keys` = the
   // keys the hint names, which close it and do their job
   const TUT_STEPS = [
-    { id:'fire', when:()=>_gameT>0.8, title:'HOLD THE BUNKER',
-      text:'The Zerg attack from every side. <b>Click on the ground</b> near them: every unit inside the bunker fires one volley at that spot. <b>Hold the button</b> for full auto.' },
-    { id:'ammo', after:'fire', when:()=>wavePhase==='combat'&&ammo<=maxAmmo-4&&!_hold, focus:['#ammo-bar'], title:'AMMO',
-      text:'Each volley uses one round. Full auto empties the magazine fast. The magazine is refilled at the end of every wave.' },
+    { id:'tour', when:()=>true, tour:true },
     { id:'strike', when:()=>wavePhase==='combat'&&ammo<=0&&airCD<=0&&!vikingActive, focus:['#cmd-air'], keys:['r'], title:'OUT OF AMMO',
       text:'Call an airstrike: press <kbd>R</kbd> or click STRIKE. A Viking bombs every Zerg group and drops an ammo crate by the bunker — that crate is also this wave\'s resupply.' },
     { id:'cleared', when:()=>wavePhase==='cleared', focus:['#res-min','#res-gas'], title:'WAVE CLEARED',
       text:'Kills and cleared waves pay minerals and vespene gas. A Marine runs out for the wave\'s supply crate (unless the Viking\'s crate already came in), the magazine is refilled, then the next wave comes. The game autosaves after every wave.' },
     { id:'upgrade', after:'cleared', when:_canUpgrade, focus:['#cmd-dmg','#cmd-ammo'], keys:['1','2','3','4'], title:'UPGRADES',
-      text:'Spend minerals and gas on the command card: <kbd>1</kbd> damage, <kbd>2</kbd> armor, <kbd>3</kbd> bunker hull, <kbd>4</kbd> ammo storage. Hover a button for details.' },
+      text:'You can afford an upgrade: press <kbd>1</kbd>–<kbd>4</kbd> or click a lit button — damage, armor, bunker hull, ammo storage.' },
     { id:'roster', after:'cleared', when:()=>wave>=2&&wavePhase!=='combat', focus:['#cmd-roster'], keys:['b'], title:'BUNKER ROSTER',
-      text:'Press <kbd>B</kbd> to open the roster (the game pauses): hire Marines, Marauders and Ghosts into the bunker\'s 6 slots and research their upgrades. More units, heavier volleys.' },
+      text:'Between waves is a good moment to press <kbd>B</kbd>: hire more units into the bunker\'s free slots — every one of them fires with each volley.' },
     { id:'roach', when:()=>roaches.some(r=>!r.dead), title:'ROACHES',
       text:'Roaches are <b>Armored</b> and spit acid from range. Marauders lock onto the nearest Armored enemy and deal it double damage; armor (<kbd>2</kbd>) cuts the damage the bunker takes.' },
     { id:'nuke', when:()=>wave>=CFG.nuke_wave&&wavePhase==='combat'&&nukeCD<=0&&!_nukeInFlight, focus:['#cmd-nuke'], keys:['n'], title:'NUKE READY',
@@ -3011,65 +3048,121 @@ const G = (() => {
       text:'Below half HP the bunker burns — if it falls, the game is lost. Armor reduces the damage; bunker hull level 3 mounts a Shrike turret and repairs itself.' },
     { id:'stim', when:()=>wavePhase==='combat'&&stimUnlocked()&&stimT<=0, focus:['#cmd-stim'], keys:['t'], title:'STIMPACK',
       text:`Six Marines can stim: press <kbd>T</kbd> or click STIM. For ${CFG.stim_duration} s they fire 50% faster, for ${CFG.stim_hp} HP per Marine from the bunker (free with the Super Stimpack research).` },
-    { id:'view', after:'roster', when:()=>wave>=3&&wavePhase!=='combat', focus:['#cmd-view'], keys:['m'], title:'VIEW',
-      text:'The mouse wheel (or <kbd>+</kbd> <kbd>−</kbd>) zooms in on the bunker, <kbd>INSERT</kbd> / <kbd>DELETE</kbd> rotate the view, <kbd>HOME</kbd> resets it. <kbd>M</kbd> or <kbd>ESC</kbd> opens the menu: settings, save and load.' },
   ];
   const _tut = (() => {
-    try { const d = JSON.parse(_store.get(TUT_KEY) || 'null'); if (d && Array.isArray(d.seen)) return { on: d.on !== false, seen: new Set(d.seen) }; } catch (e) {}
+    try { const d = JSON.parse(_store.get(TUT_KEY) || 'null'); if (d && Array.isArray(d.seen)) return { on: d.on !== false, seen: new Set(d.seen.filter(id => TUT_STEPS.some(s => s.id === id))) }; } catch (e) {}   // ids of removed hints drop out
     return { on: true, seen: new Set() };       // a new player: hints on
   })();
   let _tutNext = 0;                             // no new hint before this _gameT
   let _tutShownAt = 0, _tutSwallow = false;     // performance.now() when it opened; a swallowed press's click is swallowed too
+  let _tourI = -1, _tourOverlay = false;        // tour page shown (-1 = none); the title / results card it hid
   function _tutSave() { _store.set(TUT_KEY, JSON.stringify({ on: _tut.on, seen: [..._tut.seen] })); }
   function tutorialTick() {                     // live frames only (paused / title: never)
     // phase: the frame that wins the campaign still runs to the end — a hint
     // raised there would hide under the victory card
     if (phase !== 'playing' || !_tut.on || _tutStep || _gameT < _tutNext) return;
     const st = TUT_STEPS.find(s => !_tut.seen.has(s.id) && (!s.after || _tut.seen.has(s.after)) && s.when());
-    if (st) _tutShow(st);
+    if (!st) return;
+    if (st.tour) { startTour(); return; }
+    _tut.seen.add(st.id); _tutSave();
+    _tutOpen(st);
   }
-  function _tutShow(st) {
-    _tutStep = st; _tut.seen.add(st.id); _tutSave();
-    $('tut-n').textContent = `${_tut.seen.size} / ${TUT_STEPS.length}`;
-    $('tut-title').textContent = st.title;
+  // One box for both: a hint (GOT IT) or a tour page (BACK / NEXT / OK, LET'S ROLL)
+  function _tutOpen(st) {
+    _tutStep = st;
+    const tour = _tourI >= 0, last = tour && _tourI === TOUR.length - 1;
+    $('tut-kind').textContent = tour ? 'HUD TOUR' : 'TUTORIAL';
+    $('tut-n').textContent = tour ? `${_tourI + 1} / ${TOUR.length}` : `${_tut.seen.size} / ${TUT_STEPS.length}`;
+    $('tut-title').innerHTML = st.title;
     $('tut-text').innerHTML = st.text;
-    $('tut-box').classList.add('open');
+    $('tut-skip').textContent = tour ? 'Skip the tour' : 'Skip the tutorial';
+    $('tut-back').hidden = !tour || _tourI === 0;
+    $('tut-ok-t').textContent = !tour ? 'GOT IT' : last ? 'OK, LET\'S ROLL' : 'NEXT';
+    const box = $('tut-box');
+    box.classList.add('open'); box.classList.toggle('tour', tour); box.classList.toggle('nogame', phase !== 'playing');
     $('gw').classList.add('tut-open');        // hides the command-card tooltip, which covered the hint on narrow screens
     _tutShownAt = performance.now();
-    _tutPlaceRing();
+    _tutPlace();
+  }
+  function _tourPage(i) {
+    _tourI = i;
+    const p = TOUR[i], c = p.cmd && CMD_INFO[p.cmd];
+    _tutOpen({ id: 'tour', focus: p.focus,
+      title: c ? `${c.t} <kbd>${c.k}</kbd>` : p.title,
+      text: c ? TOUR_TEXT[p.cmd] : p.last ? 'Those are your controls. ' + (_tutLeft() ? 'A hint will pause the game the first time something new happens — read it, then carry on.' : 'In game, hover any button for its cost and details.') : p.text });
+  }
+  // From the title / results (HOW TO PLAY, the menu) the card is hidden for the
+  // tour, so the console shows, and comes back after it
+  function startTour() {
+    tutDismiss();
+    if (rosterPaused) closeRoster();            // it covered the console the tour lights up
+    if (phase === 'menu') { newGameState(); updateHUD(); }   // title: nothing to keep, show a new game's console
+    if (phase !== 'playing' && $('overlay').style.display !== 'none') { _tourOverlay = true; $('overlay').style.display = 'none'; }
+    _tut.seen.add('tour'); _tutSave(); _syncTutUI();
+    _tourPage(0);
+  }
+  // A page whose control is off-screen (a narrow window cuts the command card)
+  // is skipped: the screen would dim with nothing lit. The last page always shows.
+  const _tourShown = i => i === 0 || i === TOUR.length - 1 || !!_focusRect(TOUR[i].focus);
+  function tutNext() {                          // GOT IT / NEXT / OK, LET'S ROLL
+    if (_tourI < 0 || _tourI === TOUR.length - 1) { tutDismiss(); return; }
+    let i = _tourI + 1; while (!_tourShown(i)) i++;
+    _tourPage(i);
+  }
+  function tutBack() {
+    if (_tourI <= 0) return;
+    let i = _tourI - 1; while (!_tourShown(i)) i--;
+    _tourPage(i);
   }
   function tutDismiss() {
     if (!_tutStep) return;
-    _tutStep = null; _tutNext = _gameT + TUT_GAP;
-    $('tut-box').classList.remove('open');
+    _tutStep = null; _tourI = -1; _tutNext = _gameT + TUT_GAP;
+    $('tut-box').classList.remove('open', 'tour');
     $('gw').classList.remove('tut-open');
     $('tut-ring').style.display = 'none';
+    if (_tourOverlay) { _tourOverlay = false; if (phase !== 'playing') $('overlay').style.display = 'flex'; }
   }
-  // Ring around the union of the hint's HUD controls (a ring element, not an
-  // outline: the command buttons are clipped polygons)
-  function _tutPlaceRing() {
-    const ring = $('tut-ring'), els = (_tutStep?.focus || []).map(s => document.querySelector(s)).filter(Boolean);
-    if (!els.length) { ring.style.display = 'none'; return; }
-    const g = $('gw').getBoundingClientRect();
+  // Spotlight on the union of the step's controls (a ring element whose huge
+  // shadow dims the rest — the command buttons are clipped polygons, an outline
+  // would be clipped too) and the box just above it, centred on it as far as the
+  // screen allows. No control: no dimming, the box centred above the console.
+  // Union rect of a step's controls, or null when there are none or it is off-screen
+  function _focusRect(focus) {
+    const els = (focus || []).map(s => document.querySelector(s)).filter(el => el && el.offsetParent !== null);
+    if (!els.length) return null;
     let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
     els.forEach(el => { const q = el.getBoundingClientRect(); l = Math.min(l, q.left); t = Math.min(t, q.top); r = Math.max(r, q.right); b = Math.max(b, q.bottom); });
-    Object.assign(ring.style, { display: 'block', left: (l - g.left - 4) + 'px', top: (t - g.top - 4) + 'px', width: (r - l + 8) + 'px', height: (b - t + 8) + 'px' });
+    const g = $('gw').getBoundingClientRect();
+    return r - l > 0 && b - t > 0 && l >= g.left - 1 && r <= g.right + 1 && t >= g.top - 1 && b <= g.bottom + 1 ? { l, t, r, b } : null;
   }
-  addEventListener('resize', () => { if (_tutStep) _tutPlaceRing(); });
-  // A press anywhere outside the hint (and the menu) dismisses it first — the
+  function _tutPlace() {
+    const ring = $('tut-ring'), box = $('tut-box'), q = _focusRect(_tutStep?.focus);
+    Object.assign(box.style, { left: '', bottom: '', transform: '' });
+    if (!q) { ring.style.display = 'none'; return; }
+    const g = $('gw').getBoundingClientRect(), { l, t, r, b } = q;
+    Object.assign(ring.style, { display: 'block', left: (l - g.left - 4) + 'px', top: (t - g.top - 4) + 'px', width: (r - l + 8) + 'px', height: (b - t + 8) + 'px' });
+    const w = box.offsetWidth, x = Math.max(12, Math.min(g.width - w - 12, (l + r) / 2 - g.left - w / 2));
+    Object.assign(box.style, { left: x + 'px', bottom: (g.bottom - t + 14) + 'px', transform: 'none' });
+  }
+  addEventListener('resize', () => { if (_tutStep) _tutPlace(); });
+  // A press anywhere outside the box (and the menu) closes a hint first — the
   // click then does what it would have done (fire, open the roster, ...). In the
   // first TUT_GRACE ms the press and its click are swallowed instead: a player
   // clicking away mid-fight would otherwise close the hint before reading it.
+  // The tour only moves with its own buttons and keys.
   document.addEventListener('pointerdown', e => {
     _tutSwallow = false;
     if (!_tutStep || (e.target.closest && e.target.closest('#tut-box, #menu-overlay'))) return;
-    if (performance.now() - _tutShownAt < TUT_GRACE) { _tutSwallow = true; e.stopPropagation(); e.preventDefault(); return; }
+    if (_tourI >= 0 || performance.now() - _tutShownAt < TUT_GRACE) { _tutSwallow = true; e.stopPropagation(); e.preventDefault(); return; }
     tutDismiss();
   }, true);
   document.addEventListener('click', e => { if (_tutSwallow) { _tutSwallow = false; e.stopPropagation(); e.preventDefault(); } }, true);
-  function setTutorial(on) { _tut.on = !!on; if (!_tut.on) tutDismiss(); _tutSave(); _syncTutUI(); }
+  function setTutorial(on) { _tut.on = !!on; if (!_tut.on && _tourI < 0) tutDismiss(); _tutSave(); _syncTutUI(); }
   function replayTutorial() { _tut.seen.clear(); _tut.on = true; _tutNext = 0; _tutSave(); _syncTutUI(); }
-  function tutSkip() { setTutorial(false); setStatus('Tutorial hints off — MENU → TUTORIAL turns them back on'); }
+  function tutSkip() {
+    if (_tourI >= 0) { tutDismiss(); return; }  // the tour only: the hints stay on
+    setTutorial(false); setStatus('Tutorial hints off — MENU → TUTORIAL turns them back on');
+  }
   function _syncTutUI() {
     ['menu-tut-cb', 'ov-tut-cb'].forEach(id => { const cb = $(id); if (cb) cb.checked = _tut.on; });
     const n = $('menu-tut-note'); if (n) n.textContent = `${_tut.seen.size} / ${TUT_STEPS.length} seen`;
@@ -3127,7 +3220,8 @@ const G = (() => {
       </div>
       ${_KEYS_HTML}
       <label class="menu-check ov-tut"><input type="checkbox" id="ov-tut-cb" ${_tut.on ? 'checked' : ''} onchange="G.setTutorial(this.checked)">TUTORIAL HINTS IN GAME — pause on each new mechanic</label>
-      <div class="ov-row"><button class="ov-btn" onclick="G.showTitle()"><svg class="ico"><use href="#i-home"/></svg><span class="ob-t">BACK</span></button></div>`);
+      <div class="ov-row"><button class="ov-btn gold" onclick="G.startTour()"><svg class="ico"><use href="#i-help"/></svg><span class="ob-t">HUD TOUR</span></button>
+        <button class="ov-btn" onclick="G.showTitle()"><svg class="ico"><use href="#i-home"/></svg><span class="ob-t">BACK</span></button></div>`);
   }
   // Title screen: asset loading progress. The start buttons wait until the first
   // two LOAD_STAGES (bunker, first waves' units) have loaded or failed — later
@@ -3171,6 +3265,16 @@ const G = (() => {
     SFX.ensure();             // start() always runs from a click — unlocks Web Audio
     Music.play('battle');
     clearEntities();
+    newGameState();
+    tutDismiss(); _tutNext=0;       // a hint left open (Restart / Load from the menu) goes with the old game
+    $('overlay').style.display='none';
+    phase='playing';
+    updateHUD();
+    startWave();
+  }
+  // A new game's bunker, squad, resources and cooldowns — start(), and the HUD
+  // tour on the title, which shows the console as a new game has it
+  function newGameState(){
     score=0;wave=1;kills=0;minerals=150;gas=50;
     ammo=CFG.base_ammo;maxAmmo=CFG.base_ammo;
     bunkerHp=750;maxHp=750;
@@ -3189,12 +3293,7 @@ const G = (() => {
     resetRoster();
     airCD=0;nukeCD=0;shootCD=0;wavePhase='idle';
     _gameT=0;_hudTick=0;_dmgFlashCD=0;
-    tutDismiss(); _tutNext=0;       // a hint left open (Restart / Load from the menu) goes with the old game
     _slotSig=null;_slotBarSig=null; // force pip rebuild on fresh state
-    $('overlay').style.display='none';
-    phase='playing';
-    updateHUD();
-    startWave();
   }
 
   // Kick off model loading in the background, in LOAD_STAGES order. The title
@@ -3791,10 +3890,20 @@ const G = (() => {
 
   // ── Menu ────────────────────────────────────────────────────────────────────
   // (_menuOpen is declared with the game state — opening the menu pauses gameplay)
+  // Tabs: the last one chosen opens again (GAME first)
+  const MENU_TABS = ['game', 'settings', 'controls', 'tutorial', 'cheats'];
+  let _menuTab = 'game';
+  function menuTab(t) {
+    if (!MENU_TABS.includes(t)) return;
+    _menuTab = t;
+    document.querySelectorAll('.menu-tab').forEach(b => { const on = b.dataset.tab === t; b.classList.toggle('active', on); b.setAttribute('aria-selected', on); });
+    document.querySelectorAll('.menu-page').forEach(p => p.classList.toggle('active', p.dataset.page === t));
+  }
   function openMenu() {
     _menuOpen = true;
     const ov = document.getElementById('menu-overlay');
     if (ov) { ov.style.display = 'flex'; }
+    menuTab(_menuTab);
     _syncGfxUI(); // sync button active states
     _syncSoundUI();
     _syncSaveUI();
@@ -3930,5 +4039,5 @@ const G = (() => {
   showTitle();
   return {start, buy, buyArmory, skipAssetWait, doAirstrike, doNuke, doStim, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
           saveGame, loadGame, toggleDayNight, setVolume, setMuted, setMusic, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode,
-          showHowTo, tutDismiss, tutSkip, setTutorial, replayTutorial};
+          showHowTo, tutDismiss, tutNext, tutBack, tutSkip, startTour, setTutorial, replayTutorial, menuTab};
 })();

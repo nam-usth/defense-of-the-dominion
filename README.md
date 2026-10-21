@@ -34,7 +34,7 @@ An internet connection is needed for three.js (loaded from a CDN). The UI fonts 
 
 ## How to play
 
-New players get a **tutorial**: the first time a mechanic matters (firing, ammo, the airstrike, the end of a wave, upgrades, the roster, Roaches, the nuke, a damaged bunker, the Stimpack, the view), the game pauses on a short hint with a ring around the control it is about. Each hint shows once; **Menu → TUTORIAL** turns them off or replays them. **HOW TO PLAY** on the title screen has all the rules on one card.
+New players get a **tutorial**. The first game opens with a **HUD tour**: the HP and ammo bars, minerals and gas, then each command-card button in turn are spotlit (the rest of the screen dims) with what they do — BACK / NEXT, and **OK, LET'S ROLL** on the last page. After that, the first time something new happens (out of ammo, a cleared wave, an upgrade you can afford, room in the roster, the first Roach, the nuke, a damaged bunker, the Stimpack) the game pauses on a short hint that spotlights the control it is about. On a narrow screen the tour skips buttons that do not fit. Each shows once; **Menu → TUTORIAL** turns the hints off, starts them over or runs the tour again. **HOW TO PLAY** on the title screen has all the rules on one card, and its HUD TOUR button.
 
 - **Campaign** — clear wave 15 (a bigger final assault) to win. Winning unlocks Endless for good (stored in the browser).
 - **Endless** — no wave limit. Past wave 15 the swarm keeps growing, and so does the bunker: every wave adds **+5% damage, +60 max HP, +10% repair speed and +2 rounds** (the ∞ chip on the console shows the total; the damage, hull and ammo tooltips list it too). Your best wave and score are shown on the title screen.
@@ -85,11 +85,12 @@ The **nuke** (N) unlocks at wave 5: a two-second warning while the warhead falls
 | Mouse wheel, + / − | Zoom in on the bunker / back out |
 | Insert / Delete | Rotate the view 90° left / right (the view stays on the bunker) |
 | Home | Reset the view |
-| M or Esc | Menu (pauses): graphics, sound, save / load, tutorial, controls |
+| M or Esc | Menu (pauses), in tabs: GAME (save / load), SETTINGS (graphics, sound, day/night), CONTROLS, TUTORIAL, CHEATS — ↑ ↓ switch tabs |
 | Q | Graphics quality HIGH / LOW |
 | Y | Day/night cycle (experimental): a 3-minute cycle — day 78 s, dusk 24 s, night 54 s, dawn 24 s |
 | K | Sound on / off |
 | Enter, Space or Esc | Close a tutorial hint (a key the hint names, such as R or B, closes it and acts) |
+| Enter / Space / →, ←, Esc | HUD tour: next page, previous page, end the tour |
 
 Hover a command-card button for a tooltip with its cost, effect, and why it is disabled.
 
