@@ -17,7 +17,7 @@
 body{background:var(--bg);color:var(--text);font-family:var(--ui);overflow:hidden;height:100vh;width:100vw}
 button{font-family:inherit}
 #gw{position:relative;width:100%;height:100vh;overflow:hidden}
-#gc{width:100%;height:calc(100% - 180px);margin-top:32px;display:block;cursor:crosshair}
+#gc{width:100%;height:calc(100% - 180px);margin-top:32px;display:block;cursor:crosshair;touch-action:none}   /* a held touch fires full auto, not a pan */
 #crosshair-canvas{position:absolute;left:0;right:0;top:32px;height:calc(100% - 180px);width:100%;pointer-events:none;z-index:5}
 .num{font-family:var(--num);font-variant-numeric:tabular-nums}
 .ico{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
@@ -324,6 +324,12 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 #menu-save-info{margin-top:8px;font-size:13px;font-weight:600;color:var(--muted);min-height:18px}
 #menu-save-info.ok{color:var(--ok)} #menu-save-info.err{color:var(--danger)}
 .menu-action-btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.menu-help{position:relative}   /* tutorial switch, count and REPLAY on the CONTROLS line, at the right */
+.menu-tut{position:absolute;top:7px;right:0;display:flex;align-items:center;gap:10px}
+.menu-tut .menu-check{font-size:13px}
+.menu-tut .menu-note{margin:0;font-family:var(--num)}
+.menu-link{padding:0;border:none;background:none;color:#7fc0ff;font:inherit;font-size:12px;font-weight:700;letter-spacing:1.5px;text-decoration:underline;cursor:pointer}
+.menu-link:hover{color:#bfe0ff}
 .menu-foot{font-size:11px;font-weight:600;letter-spacing:1px;color:var(--dim);text-align:center;margin-top:9px}
 
 /* ── Cheat console ───────────────────────────────────────────────────────── */
@@ -380,3 +386,32 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .ol-skip{margin-left:8px;padding:0;border:none;background:none;color:var(--dim);font:inherit;text-decoration:underline;cursor:pointer}
 .ov-legal{margin-top:12px;font-size:11px;line-height:1.35;color:var(--dim)}   /* Blizzard notice */
 .ov-keys kbd{font-family:var(--num);font-size:11px;color:#ffd27a;border:1px solid #4a3c1c;background:rgba(40,30,8,.5);padding:0 5px;white-space:nowrap;justify-self:start}
+.ov-title-sm{font-size:30px;letter-spacing:5px}
+/* HOW TO PLAY card: topic → rule rows */
+.ov-howto{display:grid;grid-template-columns:auto 1fr;gap:7px 12px;margin:2px 0 12px;text-align:left;font-size:14px;font-weight:500;line-height:1.35;color:#c4d8ee}
+.ov-howto b{font-size:12px;font-weight:700;letter-spacing:2px;color:#9fd2ff;padding-top:2px}
+.ov-howto kbd,#tut-text kbd,#tut-ok kbd{font-family:var(--num);font-size:11px;color:#ffd27a;border:1px solid #4a3c1c;background:rgba(40,30,8,.5);padding:0 4px;white-space:nowrap}
+.ov-tut{justify-content:center;margin:12px 0 10px;font-size:13px}
+
+/* ── Tutorial hint (pauses the game) ──────────────────────────────────────── */
+#tut-box{display:none;position:absolute;left:50%;bottom:160px;transform:translateX(-50%);z-index:26;width:min(480px,calc(100% - 24px));padding:11px 16px 12px;
+  background:linear-gradient(180deg,rgba(16,32,54,.97),rgba(6,13,24,.97));border:1px solid var(--gold);box-shadow:0 0 26px rgba(255,200,60,.22),0 10px 30px rgba(0,0,0,.65);
+  clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px)}
+#tut-box.open{display:block;animation:tutIn .18s ease-out}
+@keyframes tutIn{from{opacity:0;transform:translate(-50%,8px)}}
+.tut-head{display:flex;align-items:center;gap:10px;font-size:11px;font-weight:700;letter-spacing:3px;color:var(--gold)}
+#tut-n{font-family:var(--num);letter-spacing:1px;color:var(--muted)}
+.tut-p{margin-left:auto;letter-spacing:2px;color:var(--muted)}
+#tut-title{margin:3px 0 4px;font-size:20px;font-weight:700;letter-spacing:3px;color:#e8f4ff}
+#tut-text{font-size:15px;font-weight:500;line-height:1.38;color:#c4d8ee}
+#tut-text b{color:#fff}
+.tut-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px}
+#tut-skip{padding:0;border:none;background:none;color:var(--dim);font:inherit;font-size:13px;text-decoration:underline;cursor:pointer}
+#tut-skip:hover{color:var(--muted)}
+#tut-ok{display:flex;align-items:center;gap:8px;padding:5px 16px;cursor:pointer;color:var(--gold);font-size:15px;font-weight:700;letter-spacing:2px;
+  background:linear-gradient(180deg,#3a2e0e,#211a08);border:1px solid #8a6a10;clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)}
+#tut-ok:hover{border-color:var(--gold);box-shadow:0 0 12px rgba(255,200,60,.45)}
+#tut-ring{display:none;position:absolute;z-index:27;pointer-events:none;border:2px solid var(--gold);
+  box-shadow:0 0 14px rgba(255,210,74,.8),inset 0 0 10px rgba(255,210,74,.3);animation:tutRing 1s ease-in-out infinite}
+@keyframes tutRing{50%{opacity:.35}}
+.tut-open #cmd-tip{display:none}   /* on narrow screens the tooltip column covered the hint */

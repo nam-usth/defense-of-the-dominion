@@ -34,11 +34,13 @@ An internet connection is needed for three.js (loaded from a CDN). The UI fonts 
 
 ## How to play
 
+New players get a **tutorial**: the first time a mechanic matters (firing, ammo, the airstrike, the end of a wave, upgrades, the roster, Roaches, the nuke, a damaged bunker, the Stimpack, the view), the game pauses on a short hint with a ring around the control it is about. Each hint shows once; **Menu → TUTORIAL** turns them off or replays them. **HOW TO PLAY** on the title screen has all the rules on one card.
+
 - **Campaign** — clear wave 15 (a bigger final assault) to win. Winning unlocks Endless for good (stored in the browser).
 - **Endless** — no wave limit. Past wave 15 the swarm keeps growing, and so does the bunker: every wave adds **+5% damage, +60 max HP, +10% repair speed and +2 rounds** (the ∞ chip on the console shows the total; the damage, hull and ammo tooltips list it too). Your best wave and score are shown on the title screen.
 - **Endless armory** — in Endless the roster panel (B) also sells repeatable upgrades for the minerals and gas that pile up once everything is researched: **Hull plating** +150 max HP, **Weapon tuning** +10% damage, **Magazine** +6 rounds, **Fleet logistics** airstrike and nuke cooldowns ×0.9 (down to 40%, i.e. an 8 s airstrike and a 6 s nuke). Each purchase costs 30% more than the last of its kind; the ROSTER button pulses between waves when you can afford one.
-- **Shooting** — each click fires one volley: every unit in the bunker shoots once at the cursor (Marauders lock onto the nearest Roach while one is alive). One volley costs one round of ammo.
-- **Ammo** — when the magazine is empty, press **R**: a Viking bombs every enemy cluster and drops an ammo crate, which one of your units (a Marine if one is free) runs out to fetch. Ammo is also restocked after every wave.
+- **Shooting** — each click fires one volley: every unit in the bunker shoots once at the cursor (Marauders lock onto the nearest Roach while one is alive). One volley costs one round of ammo. **Hold** the button for full auto: after 0.25 s it fires a volley every 0.1 s wherever the cursor is, until you let go or the magazine is empty.
+- **Ammo** — when the magazine is empty, press **R**: a Viking bombs every enemy cluster and drops an ammo crate, which one of your units (a Marine if one is free) runs out to fetch. Ammo is also restocked after every wave by a supply crate — **one crate per wave**: if the Viking's crate is still on its way when the wave ends (its bombs killed the last Zerg), the next wave waits for that crate instead of a second one, and if it already came in this wave, the magazine is refilled on the spot.
 - **Resources** — kills and cleared waves pay minerals ◆ and vespene gas ▲.
 
 ### Units (bunker roster, 6 slots — press B)
@@ -49,7 +51,7 @@ An internet connection is needed for three.js (loaded from a CDN). The UI fonts 
 | Marauder | 2 | 150 ◆ 25 ▲ | ×1.2 damage, +100% vs armored (Roach); fires punisher grenades and auto-aims at the nearest Roach | Concussive Shells — slows to 40% speed; tiers add an area slow (radius 1.5 / 2.2 / 3.0) |
 | Ghost | 2 | 200 ◆ 50 ▲ | ×1.4 damage, +150% vs light (Zergling) | Snipe — auto-snipes the biggest threat; cooldown 8 → 6 → 4 → 2.5 s |
 
-Dismissing a unit refunds 75%. Units fight from inside the bunker; you see them (StarCraft II models, walking) when one runs out to fetch a supply crate — a Marine if you have one. Only one unit leaves at a time: if two crates drop together (airstrike and end of wave), it picks up both. The bunker's HP is the squad's health: the Stimpack is paid from it, and only the Lv3 self-repair and Super Stimpack restore it.
+Dismissing a unit refunds 75%. Units fight from inside the bunker; you see them (StarCraft II models, walking) when one runs out to fetch a supply crate — a Marine if you have one. Only one unit leaves at a time, for one crate per wave. The bunker's HP is the squad's health: the Stimpack is paid from it, and only the Lv3 self-repair and Super Stimpack restore it.
 
 ### Enemies
 
@@ -74,6 +76,7 @@ The **nuke** (N) unlocks at wave 5: a two-second warning while the warhead falls
 | Input | Action |
 |---|---|
 | Left click | Fire a volley at the cursor |
+| Hold left button | Full auto: a volley every 0.1 s (empties the magazine fast) |
 | R | Airstrike + resupply (only when out of ammo) |
 | N | Nuke (wave 5+) |
 | T | Stimpack (six Marines in the bunker) |
@@ -82,10 +85,11 @@ The **nuke** (N) unlocks at wave 5: a two-second warning while the warhead falls
 | Mouse wheel, + / − | Zoom in on the bunker / back out |
 | Insert / Delete | Rotate the view 90° left / right (the view stays on the bunker) |
 | Home | Reset the view |
-| M or Esc | Menu (pauses): graphics, sound, save / load, controls |
+| M or Esc | Menu (pauses): graphics, sound, save / load, tutorial, controls |
 | Q | Graphics quality HIGH / LOW |
-| Y | Day/night cycle (experimental) |
+| Y | Day/night cycle (experimental): a 3-minute cycle — day 78 s, dusk 24 s, night 54 s, dawn 24 s |
 | K | Sound on / off |
+| Enter, Space or Esc | Close a tutorial hint (a key the hint names, such as R or B, closes it and acts) |
 
 Hover a command-card button for a tooltip with its cost, effect, and why it is disabled.
 
@@ -94,7 +98,7 @@ Hover a command-card button for a tooltip with its cost, effect, and why it is d
 - **Menu → SAVE / LOAD** — one manual save slot.
 - **Autosave** after every cleared wave — **CONTINUE** on the title screen (also a checkpoint after the bunker falls).
 - A save made during a wave restarts that wave; a save made between waves resumes at the next one.
-- Everything is stored in the browser's `localStorage`: `dotd_save_v1`, `dotd_autosave_v1`, `dotd_endless_unlocked`, `dotd_endless_best`, `dotd_volume`, `dotd_muted`.
+- Everything is stored in the browser's `localStorage`: `dotd_save_v1`, `dotd_autosave_v1`, `dotd_endless_unlocked`, `dotd_endless_best`, `dotd_volume`, `dotd_muted`, `dotd_music`, `dotd_tutorial` (hints on / off and which ones were seen).
 
 ## Cheat codes
 
@@ -199,7 +203,7 @@ The Marauder's punisher grenade uses the mesh of `MarauderMissile.m3` (body and 
 
 - **Rendering** — three.js r128 from a CDN, no build tools. Enemies and bullets are `InstancedMesh`es and all particles live in two `THREE.Points` buffers, so a 140-enemy late-game fight takes about 20 draw calls.
 - **Timing** — gameplay runs on a game clock with its own scheduler: pausing freezes everything, and restarting or loading drops pending events (wave countdowns, airstrikes, nukes).
-- **Night** — the fog shader is patched to measure distance from the bunker, which gives the night mode its circle of vision.
+- **Night** — the fog shader is patched to measure distance from the bunker, which gives the night mode its circle of vision. Dusk and dawn ease the night level in and out (smootherstep, no jump in the level or its rate); the fog radius shrinks by the same ratio every second (a geometric blend, 90 → 9 units) and the sun turns orange on the way, so the night closes in evenly instead of all at the end. Switching the cycle on or off blends over at most 2.5 s.
 - **Sound** — the effects are synthesized with the Web Audio API (no audio files). The music is the StarCraft soundtrack by Glenn Stafford (`MUSIC` in `js/config.js`): *StarCraft Main Title* on the title screen, *Terran One*, *Two* and *Three* in turn during a game, *Terran Victory* / *Terran Defeat* on the results screen. The tracks are AAC 96 kbps (12 MiB in all), streamed by an `<audio>` element that only downloads the track it plays, through the same master volume and mute as the effects; the menu's MUSIC switch turns it off. Browsers allow sound only after the first click or key, so the title music starts then. To change a track: `node tools/encode-music.mjs "Terran One.flac" assets/audio/terran_one.aac` (or `ffmpeg -i in.flac -c:a aac -b:a 96k out.aac`).
 - **Hologram** — the bunker portrait is a 2D-canvas projection of the model's edges and follows the bunker's upgrade stages.
 - **SC2 materials** — one shader patch (`ModelLoader.teamColor`) handles the team-colour mask and rebuilds Z for SC2's two-channel (DXT5nm) normal maps.

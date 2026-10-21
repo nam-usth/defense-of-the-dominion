@@ -14,8 +14,10 @@ const G = (() => {
   let dnEnabled = false;     // opt-in toggle
   let _dnTime   = 0;         // seconds into current cycle (0..DN_CYCLE)
   let _dnFactor = 0;         // 0=full day, 1=full night (smooth blend)
-  const DN_CYCLE   = 180;    // full cycle length in seconds (3 min)
-  const DN_DAY     = 0.55;   // fraction of cycle that is day
+  // One cycle (3 min): day 78 s → dusk 24 s → night 54 s → dawn 24 s
+  const DN_DAY = 78, DN_FADE = 24, DN_NIGHT = 54;
+  const DN_CYCLE = DN_DAY + DN_FADE + DN_NIGHT + DN_FADE;
+  const DN_SLEW = 2.5;       // turning the cycle on / off blends over at most this many seconds
   const DN_NIGHT_FOG_NEAR = 2.5;
   const DN_NIGHT_FOG_FAR  = 9.0;
   const DN_DAY_FOG_NEAR   = 45;
@@ -324,7 +326,8 @@ const G = (() => {
   let rosterPaused = false;  // game pauses while roster is open
   let _menuOpen = false;     // game pauses while menu is open
   let _cheatOpen = false;    // game pauses while cheat console is open
-  function isPaused(){ return rosterPaused||_menuOpen||_cheatOpen; }
+  let _tutStep = null;       // game pauses while a tutorial hint is open (the step shown)
+  function isPaused(){ return rosterPaused||_menuOpen||_cheatOpen||!!_tutStep; }
   let _hudTick = 0;         // throttle for HUD DOM refresh
   let _dmgFlashCD = 0;       // throttle for damage vignette flash
   let zerglings=[], roaches=[], bullets=[], crates=[], beams=[], marines=[];
@@ -1246,14 +1249,12 @@ const G = (() => {
       });
     });
 
-    // Drop crate near the bunker as the Viking exits (~2.7 s in)
+    // Drop crate near the bunker as the Viking exits (~2.7 s in). The crate is
+    // promised from launch on: a wave cleared by these bombs waits for it (resupply)
+    awaitCrate(() => setStatus('Ammo restocked! Good hunting, Commander.'));
     after((22 - START_X) / SPEED * 0.85, () => {
-      makeCrate(cratePos[0], cratePos[1]);
       setStatus('Crate deployed! Marine incoming...');
-      sendMarine(cratePos[0], cratePos[1], () => {
-        ammo = maxAmmo; updateHUD(); SFX.play('crate');
-        setStatus('Ammo restocked! Good hunting, Commander.');
-      });
+      deliverCrate(cratePos[0], cratePos[1]);
     });
 
     // Cleanup after the Viking leaves the screen
@@ -1308,9 +1309,24 @@ const G = (() => {
       return true;
     });
   }
+  // ── Resupply: one crate per wave ──────────────────────────────────────────
+  // The Viking's crate (airstrike) and the end-of-wave crate both refill the
+  // magazine. The end-of-wave resupply rides on a Viking crate still on its way
+  // (about to drop, on the ground or being carried in) and skips its own crate
+  // when one already came in this wave: a Marine picks up one crate, not two.
+  let _crateCbs=null;          // callbacks waiting for the crate on its way (null = none)
+  let waveCrates=0;            // crates carried in this wave (startWave resets it)
+  function awaitCrate(cb){ (_crateCbs||(_crateCbs=[])).push(cb); }
+  function deliverCrate(x,z){ makeCrate(x,z); sendMarine(x,z,_crateIn); }
+  function _crateIn(){
+    const cbs=_crateCbs||[]; _crateCbs=null; waveCrates++;
+    ammo=maxAmmo; updateHUD(); SFX.play('crate');
+    cbs.forEach(f=>f());
+  }
   function sendMarine(tx,tz,cb){
     // Only one unit leaves the bunker: a crate dropped while one is already out
-    // (airstrike + end-of-wave resupply) joins its trip, both resupplies apply on its return
+    // joins its trip, both resupplies apply on its return (a safety net — the
+    // resupply above keeps to one crate at a time)
     const out=marines.find(m=>m.state==='running');
     if(out){
       out.queue.push({x:tx,z:tz});
@@ -1624,7 +1640,7 @@ const G = (() => {
     // Spawn interval: starts slow (1.4s), gets faster as waves progress (min 0.4s)
     spawnInterval = Math.max(0.4, 1.4 - wave * 0.08);
     spawnQueue = [...Array(zc).fill('z'), ...Array(rc).fill('r')].sort(() => Math.random() - 0.5);
-    spawnTimer = 0; wavePhase = 'combat'; waveKills = 0; waveNukes = 0; waveAirs = 0;
+    spawnTimer = 0; wavePhase = 'combat'; waveKills = 0; waveNukes = 0; waveAirs = 0; waveCrates = 0;
     const roachMsg = rc > 0 ? ` + ${rc} Roach${rc > 1 ? 'es' : ''}` : '';
     const boostMsg = wave === CFG.metabolic_wave ? ' — Metabolic Boost: Zerglings run faster!' : endlessWaves() ? ` — bunker reinforced ×${endlessWaves()}` : '';
     setStatus(finalWave
@@ -1641,13 +1657,8 @@ const G = (() => {
     SFX.play('clear');
     // Game-time sequence: frozen while paused, dropped by Restart/Load.
     after(1.5, ()=>{
-      const[tx,tz]=randPos();
-      makeBeam(tx,tz,0xff8800);
-      spawnParts(new THREE.Vector3(tx,.5,tz),0xff8800,14);
-      makeCrate(tx,tz);
-      sendMarine(tx,tz,()=>{
-        ammo=maxAmmo; updateHUD(); SFX.play('crate');
-        // Countdown: 3... 2... 1...
+      // Countdown: 3... 2... 1... once the magazine is full again
+      const countdown=()=>{
         setStatus('Next wave in 3...');
         after(1, ()=>setStatus('Next wave in 2...'));
         after(2, ()=>setStatus('Next wave in 1...'));
@@ -1657,7 +1668,16 @@ const G = (() => {
           setStatus(`Wave ${wave} — incoming!`);
           startWave();
         });
-      });
+      };
+      // One crate per wave (see resupply): the Viking's crate is still on its way,
+      // or already came in — no second crate run
+      if(_crateCbs){ awaitCrate(countdown); setStatus('Resupply: the Viking\'s crate restocks the bunker'); return; }
+      if(waveCrates>0){ ammo=maxAmmo; updateHUD(); SFX.play('crate'); countdown(); return; }
+      const[tx,tz]=randPos();
+      makeBeam(tx,tz,0xff8800);
+      spawnParts(new THREE.Vector3(tx,.5,tz),0xff8800,14);
+      awaitCrate(countdown);
+      deliverCrate(tx,tz);
     });
     // Campaign won: the resupply above waits (scheduler is frozen) until the
     // player chooses "Continue · Endless" on the victory screen.
@@ -1793,14 +1813,35 @@ const G = (() => {
     zoomView(-Math.max(-300,Math.min(300,e.deltaY))*0.0012); // ~8 wheel notches overview → close-up
   },{passive:false});
   canvas.addEventListener('mousemove',e=>{const r=canvas.getBoundingClientRect();mx=(e.clientX-r.left)/r.width;my=(e.clientY-r.top)/r.height;});
-  canvas.addEventListener('click',e=>{
-    if(phase!=='playing'||isPaused())return;
+  // Fire: a press fires one volley; held past HOLD_DELAY the button keeps firing
+  // at the gun's rate (shootCD) where the pointer is — full auto, which empties
+  // the magazine fast. The pointer is captured, so a release off the canvas ends it.
+  const HOLD_DELAY=.25;
+  let _hold=null;                                   // {id, x, y, t} while the fire button is down
+  canvas.addEventListener('pointerdown',e=>{
+    if(e.button!==0||!e.isPrimary||phase!=='playing'||isPaused())return;
+    _hold={id:e.pointerId,x:e.clientX,y:e.clientY,t:0};
+    try{ canvas.setPointerCapture(e.pointerId); }catch(err){}
     // Ghost snipe check first (click on enemy)
     if(snipeUnlocked && trySnipe(e.clientX, e.clientY)) return;
     const pt=groundPt(e.clientX,e.clientY); if(!pt)return;
     if(ammo>0) shoot(pt.x,pt.z);
     else setStatus('No ammo — R: Airstrike  N: Nuke');
   });
+  canvas.addEventListener('pointermove',e=>{
+    if(!_hold||e.pointerId!==_hold.id) return;
+    // Releasing the left button while another is still down sends no pointerup
+    if(!(e.buttons&1)){ _hold=null; return; }
+    _hold.x=e.clientX; _hold.y=e.clientY;
+  });
+  ['pointerup','pointercancel','lostpointercapture'].forEach(t=>canvas.addEventListener(t,e=>{ if(_hold&&e.pointerId===_hold.id) _hold=null; }));
+  addEventListener('blur',()=>{ _hold=null; });
+  function holdFire(dt){                            // live frames only: frozen while paused
+    if(!_hold) return;
+    _hold.t+=dt;
+    if(_hold.t<HOLD_DELAY||shootCD>0||ammo<=0) return;
+    const pt=groundPt(_hold.x,_hold.y); if(pt) shoot(pt.x,pt.z);
+  }
   // Secret cheat sequence: type 'dotd' (D-O-T-D) at any time during gameplay
   let _cheatBuf = '';
   document.addEventListener('keydown',e=>{
@@ -1823,6 +1864,13 @@ const G = (() => {
     if(_menuOpen){
       if(e.key==='Escape'||e.key==='m'||e.key==='M') closeMenu();
       return;
+    }
+    // Tutorial hint open: Enter / Space / Esc close it; a key it names (R, B, N, T,
+    // 1-4, M) closes it and does its job; other keys wait
+    if(_tutStep){
+      if(e.key==='Enter'||e.key===' '||e.key==='Escape'){ e.preventDefault(); tutDismiss(); return; }
+      if(!(_tutStep.keys||[]).includes(e.key.toLowerCase())) return;
+      tutDismiss();
     }
     // Title / game-over screen: only the menu (for Load and settings)
     if(phase!=='playing'){
@@ -2377,14 +2425,18 @@ const G = (() => {
     const ctx = chCtx;
     const cW = _logW, cH = _logH;
     // Night fog culling: hide HP bars beyond fog.far (enemy is invisible in fog)
-    const fogRange = (dnEnabled && _dnFactor > 0.1) ? scene.fog.far : Infinity;
+    // and fade them with the fog in front of it, as the radial fog fades the enemy
+    const fogRange = _dnFactor > 0.1 ? scene.fog.far : Infinity, fogNear = scene.fog.near;
 
     allEnemies().forEach(e => {
       if(e.dead) return;
+      ctx.globalAlpha = 1;
       // Cull if enemy is beyond night fog range
       if (fogRange < Infinity) {
-        const ex = e.mesh.position.x, ez = e.mesh.position.z;
-        if (Math.sqrt(ex*ex + ez*ez) > fogRange) return;
+        const ex = e.mesh.position.x, ez = e.mesh.position.z, d = Math.sqrt(ex*ex + ez*ez);
+        if (d > fogRange) return;
+        const k = Math.max(0, Math.min(1, (d - fogNear) / (fogRange - fogNear)));
+        ctx.globalAlpha = 1 - k * k * (3 - 2 * k);
       }
       const pct = Math.max(0, e.hp / e.maxHp);
 
@@ -2440,6 +2492,7 @@ const G = (() => {
         ctx.fillText(Math.ceil(e.hp), sx, by - 2);
       }
     });
+    ctx.globalAlpha = 1;
   }
 
   function drawCH(){
@@ -2532,34 +2585,25 @@ const G = (() => {
   }
 
   // ── Day/Night cycle update ───────────────────────────────────────────────
+  // Night factor at time t of the cycle: 0 through the day, eased up through dusk,
+  // 1 through the night, eased down through dawn (smootherstep: no jump in the
+  // level, its rate or its acceleration). The old curve snapped from full night
+  // back to day at the end of dusk, then faded in again.
+  function _dnCycleFactor(t) {
+    const ease = x => x * x * x * (x * (x * 6 - 15) + 10);
+    if (t < DN_DAY) return 0;
+    if (t < DN_DAY + DN_FADE) return ease((t - DN_DAY) / DN_FADE);
+    if (t < DN_DAY + DN_FADE + DN_NIGHT) return 1;
+    return 1 - ease((t - DN_DAY - DN_FADE - DN_NIGHT) / DN_FADE);
+  }
   function updateDayNight(dt) {
-    if (!dnEnabled) {
-      // Ensure lights are at full day state when disabled
-      if (_dnFactor !== 0) {
-        _dnFactor = 0;
-        _applyDNLights(0);
-      }
-      return;
-    }
-    _dnTime = (_dnTime + dt) % DN_CYCLE;
-    // Build smooth factor: 0=day, 1=night
-    // Cycle shape: day (0..DN_DAY*cycle) → dusk → night → dawn → day
-    const t = _dnTime / DN_CYCLE;                        // 0..1
-    const dayFrac = DN_DAY;
-    let raw;
-    if (t < dayFrac) {
-      // Full day — last 8% fade to dusk
-      const fade = Math.max(0, (t - (dayFrac - 0.08)) / 0.08);
-      raw = Math.max(0, fade);
-    } else {
-      // Past day: night approaches, peaks at midpoint of night, fades back
-      const nightT = (t - dayFrac) / (1 - dayFrac); // 0..1 through night+dawn
-      // Smooth tent: rises to 1 at nightT=0.5, back to 0 at nightT=1
-      raw = Math.sin(nightT * Math.PI);
-    }
-    // Apply smoothstep to soften edges
-    _dnFactor = raw * raw * (3 - 2 * raw);
-    _applyDNLights(_dnFactor);
+    if (dnEnabled) _dnTime = (_dnTime + dt) % DN_CYCLE;
+    const target = dnEnabled ? _dnCycleFactor(_dnTime) : 0;
+    // Slew-limited: the cycle itself moves slower than this, so only switching
+    // the cycle on / off is blended (the night lifts over DN_SLEW s, not at once)
+    const step = dt / DN_SLEW;
+    const f = Math.max(_dnFactor - step, Math.min(_dnFactor + step, target));
+    if (f !== _dnFactor) { _dnFactor = f; _applyDNLights(f); }
     _updateDNIndicator();
   }
 
@@ -2576,9 +2620,9 @@ const G = (() => {
       _ambientLight.color.copy(_dnLerpCol(b.ambCol, 0x112233, f));
       _ambientLight.intensity = b.amb * (1 - f) + 0.18 * f;
     }
-    // Sun: day full → night off
+    // Sun: day full → night off, through a warm low sun at dusk / dawn
     if (_sunLight) {
-      _sunLight.color.copy(_dnLerpCol(0xfff4cc, 0x001122, f));
+      _sunLight.color.copy(f < 0.45 ? _dnLerpCol(0xfff4cc, 0xff9a55, f / 0.45) : _dnLerpCol(0xff9a55, 0x001122, (f - 0.45) / 0.55));
       _sunLight.intensity = b.sun * (1 - f);
     }
     // Fill: day present → night off
@@ -2589,10 +2633,12 @@ const G = (() => {
     if (_bunkerLight) {
       _bunkerLight.intensity = f * 5.5;
     }
-    // Fog
+    // Fog: the radius shrinks by the same ratio every second (geometric blend).
+    // Blended linearly, it stayed outside the battlefield for the first 60% of
+    // dusk, then closed in on the bunker all at once.
     if (scene.fog) {
-      scene.fog.near  = DN_DAY_FOG_NEAR  + f * (DN_NIGHT_FOG_NEAR - DN_DAY_FOG_NEAR);
-      scene.fog.far   = DN_DAY_FOG_FAR   + f * (DN_NIGHT_FOG_FAR  - DN_DAY_FOG_FAR);
+      scene.fog.near  = DN_DAY_FOG_NEAR * Math.pow(DN_NIGHT_FOG_NEAR / DN_DAY_FOG_NEAR, f);
+      scene.fog.far   = DN_DAY_FOG_FAR  * Math.pow(DN_NIGHT_FOG_FAR  / DN_DAY_FOG_FAR,  f);
       // Fog color: day sky green → night deep blue
       scene.fog.color.copy(_dnLerpCol(0x2a3a18, 0x050a12, f));
     }
@@ -2605,21 +2651,20 @@ const G = (() => {
   function _updateDNIndicator() {
     const el = document.getElementById('tv-dn');
     if (!el) return;
-    if (!dnEnabled) { el.textContent = ''; return; }
-    const icon  = _dnFactor > 0.5 ? '☽' : '☀';
-    const label = _dnFactor > 0.75 ? 'NIGHT' : _dnFactor > 0.25 ? 'DUSK' : 'DAY';
-    el.textContent = icon + ' ' + label;
+    // (a night still lifting after the cycle restarted at day reads DAWN)
+    const text = !dnEnabled ? '' : (_dnFactor > 0.5 ? '☽ ' : '☀ ') + (_dnFactor > 0.97 ? 'NIGHT' : _dnFactor < 0.03 ? 'DAY'
+      : _dnTime >= DN_DAY && _dnTime < DN_DAY + DN_FADE + DN_NIGHT ? 'DUSK' : 'DAWN');
+    if (el.textContent === text) return;   // called every frame
+    el.textContent = text;
     el.style.color = _dnFactor > 0.5 ? '#8899ff' : '#ffcc44';
   }
 
   function toggleDayNight() {
     dnEnabled = !dnEnabled;
     if (!dnEnabled) {
-      // Reset to full day
-      _dnTime = 0; _dnFactor = 0;
-      _applyDNLights(0);
-      if (scene.fog) { scene.fog.near = DN_DAY_FOG_NEAR; scene.fog.far = DN_DAY_FOG_FAR; scene.fog.color.set(0x2a3a18); }
-      if (scene.background) scene.background.set(0x2a3a18);
+      // Back to day: the night lifts over DN_SLEW s (updateDayNight — run by the
+      // loop while the cycle is off even when the game is paused or over)
+      _dnTime = 0;
       _updateDNIndicator();
     }
     // Update MENU checkbox
@@ -2642,6 +2687,10 @@ const G = (() => {
     if(phase!=='playing'||isPaused()){
       // Game clock, survival timer and scheduled events are frozen here
       if(phase==='playing'){ syncEnemyPools(); syncBullets(); updateParticles(_glow,0); updateParticles(_smoke,0); }
+      // A night switched off still lifts behind the menu, title and results (it is
+      // not game time: with the cycle off nothing else moves). Left frozen, the
+      // title showed the night and the next game started in it.
+      if(!dnEnabled&&_dnFactor>0) updateDayNight(dt);
       drawCH();tickPortrait(dt);renderer.render(scene,camera);return;
     }
     _gameT+=dt;
@@ -2653,6 +2702,7 @@ const G = (() => {
     _dmgFlashCD=Math.max(0,_dmgFlashCD-dt);
 
     shootCD=Math.max(0,shootCD-dt);
+    holdFire(dt);
     airCD=Math.max(0,airCD-dt);
     if(stimT>0){
       stimT=Math.max(0,stimT-dt);
@@ -2697,7 +2747,7 @@ const G = (() => {
     // Enemies
     const arm=1/(1+armorLvl*.35);
     // Night fog: enemies beyond this dist become invisible (fog culling)
-    const _nightFogFar = (dnEnabled && _dnFactor > 0.1) ? scene.fog.far : Infinity;
+    const _nightFogFar = _dnFactor > 0.1 ? scene.fog.far : Infinity;   // also while the night lifts after switching it off
     allEnemies().forEach(e=>{
       if(e.dead)return;
       e.leg+=dt*(e.type==='r'?5:9);
@@ -2853,6 +2903,7 @@ const G = (() => {
     updateShrike(dt);
     updateCorpses(dt);
     updateDayNight(dt);
+    tutorialTick();
     // Update floating damage numbers
     floatTexts.forEach(f=>{ f.life-=dt*1000; f.y+=dt*0.8; });
     floatTexts=floatTexts.filter(f=>f.life>0);
@@ -2866,6 +2917,7 @@ const G = (() => {
   function clearEntities(){
     clearScheduler();        // drop pending wave countdown / Viking / bombs / nuke (runs their cleanup)
     removeViking();
+    _crateCbs=null; waveCrates=0;   // the crate on its way went with the Viking / marines; a stale wait would stall the next game
     _nukeInFlight=false;
     clearParticles(); _fireAccum.length=0;
     beams.forEach(_removeBeam);
@@ -2927,11 +2979,107 @@ const G = (() => {
     updateHUD();
   }
 
+  // ── Tutorial: hints for new players ───────────────────────────────────────
+  // The first time a mechanic matters, the game pauses on a short hint, with a
+  // ring around the HUD control it is about, until GOT IT, Enter / Space / Esc,
+  // a key it names or a click anywhere else (which then does its job). Each
+  // hint shows once; MENU → TUTORIAL turns them off, REPLAY shows them again.
+  const TUT_KEY = 'dotd_tutorial', TUT_GAP = 3;   // game seconds between two hints
+  const TUT_GRACE = 800;   // ms after a hint opens in which clicks are swallowed: mid-fight clicks must not close it unread
+  const _canUpgrade = () => [[dmgLvl,CFG.dmg_costs],[armorLvl,CFG.armor_costs],[hpLvl,CFG.hp_costs],[ammoLvl,CFG.ammo_costs]]
+    .some(([l,c]) => l < 3 && minerals >= c[l][0] && gas >= c[l][1]);
+  // In priority order; `after` = shown only once that hint has been seen; `keys` = the
+  // keys the hint names, which close it and do their job
+  const TUT_STEPS = [
+    { id:'fire', when:()=>_gameT>0.8, title:'HOLD THE BUNKER',
+      text:'The Zerg attack from every side. <b>Click on the ground</b> near them: every unit inside the bunker fires one volley at that spot. <b>Hold the button</b> for full auto.' },
+    { id:'ammo', after:'fire', when:()=>wavePhase==='combat'&&ammo<=maxAmmo-4&&!_hold, focus:['#ammo-bar'], title:'AMMO',
+      text:'Each volley uses one round. Full auto empties the magazine fast. The magazine is refilled at the end of every wave.' },
+    { id:'strike', when:()=>wavePhase==='combat'&&ammo<=0&&airCD<=0&&!vikingActive, focus:['#cmd-air'], keys:['r'], title:'OUT OF AMMO',
+      text:'Call an airstrike: press <kbd>R</kbd> or click STRIKE. A Viking bombs every Zerg group and drops an ammo crate by the bunker — that crate is also this wave\'s resupply.' },
+    { id:'cleared', when:()=>wavePhase==='cleared', focus:['#res-min','#res-gas'], title:'WAVE CLEARED',
+      text:'Kills and cleared waves pay minerals and vespene gas. A Marine runs out for the wave\'s supply crate (unless the Viking\'s crate already came in), the magazine is refilled, then the next wave comes. The game autosaves after every wave.' },
+    { id:'upgrade', after:'cleared', when:_canUpgrade, focus:['#cmd-dmg','#cmd-ammo'], keys:['1','2','3','4'], title:'UPGRADES',
+      text:'Spend minerals and gas on the command card: <kbd>1</kbd> damage, <kbd>2</kbd> armor, <kbd>3</kbd> bunker hull, <kbd>4</kbd> ammo storage. Hover a button for details.' },
+    { id:'roster', after:'cleared', when:()=>wave>=2&&wavePhase!=='combat', focus:['#cmd-roster'], keys:['b'], title:'BUNKER ROSTER',
+      text:'Press <kbd>B</kbd> to open the roster (the game pauses): hire Marines, Marauders and Ghosts into the bunker\'s 6 slots and research their upgrades. More units, heavier volleys.' },
+    { id:'roach', when:()=>roaches.some(r=>!r.dead), title:'ROACHES',
+      text:'Roaches are <b>Armored</b> and spit acid from range. Marauders lock onto the nearest Armored enemy and deal it double damage; armor (<kbd>2</kbd>) cuts the damage the bunker takes.' },
+    { id:'nuke', when:()=>wave>=CFG.nuke_wave&&wavePhase==='combat'&&nukeCD<=0&&!_nukeInFlight, focus:['#cmd-nuke'], keys:['n'], title:'NUKE READY',
+      text:`From wave ${CFG.nuke_wave}, press <kbd>N</kbd> or click NUKE: a Ghost marks the middle of the swarm and the warhead wipes out everything in the blast. It recharges after each launch.` },
+    { id:'hull', when:()=>wavePhase==='combat'&&bunkerHp<maxHp*0.5, focus:['#hp-bar'], title:'BUNKER DAMAGED',
+      text:'Below half HP the bunker burns — if it falls, the game is lost. Armor reduces the damage; bunker hull level 3 mounts a Shrike turret and repairs itself.' },
+    { id:'stim', when:()=>wavePhase==='combat'&&stimUnlocked()&&stimT<=0, focus:['#cmd-stim'], keys:['t'], title:'STIMPACK',
+      text:`Six Marines can stim: press <kbd>T</kbd> or click STIM. For ${CFG.stim_duration} s they fire 50% faster, for ${CFG.stim_hp} HP per Marine from the bunker (free with the Super Stimpack research).` },
+    { id:'view', after:'roster', when:()=>wave>=3&&wavePhase!=='combat', focus:['#cmd-view'], keys:['m'], title:'VIEW',
+      text:'The mouse wheel (or <kbd>+</kbd> <kbd>−</kbd>) zooms in on the bunker, <kbd>INSERT</kbd> / <kbd>DELETE</kbd> rotate the view, <kbd>HOME</kbd> resets it. <kbd>M</kbd> or <kbd>ESC</kbd> opens the menu: settings, save and load.' },
+  ];
+  const _tut = (() => {
+    try { const d = JSON.parse(_store.get(TUT_KEY) || 'null'); if (d && Array.isArray(d.seen)) return { on: d.on !== false, seen: new Set(d.seen) }; } catch (e) {}
+    return { on: true, seen: new Set() };       // a new player: hints on
+  })();
+  let _tutNext = 0;                             // no new hint before this _gameT
+  let _tutShownAt = 0, _tutSwallow = false;     // performance.now() when it opened; a swallowed press's click is swallowed too
+  function _tutSave() { _store.set(TUT_KEY, JSON.stringify({ on: _tut.on, seen: [..._tut.seen] })); }
+  function tutorialTick() {                     // live frames only (paused / title: never)
+    // phase: the frame that wins the campaign still runs to the end — a hint
+    // raised there would hide under the victory card
+    if (phase !== 'playing' || !_tut.on || _tutStep || _gameT < _tutNext) return;
+    const st = TUT_STEPS.find(s => !_tut.seen.has(s.id) && (!s.after || _tut.seen.has(s.after)) && s.when());
+    if (st) _tutShow(st);
+  }
+  function _tutShow(st) {
+    _tutStep = st; _tut.seen.add(st.id); _tutSave();
+    $('tut-n').textContent = `${_tut.seen.size} / ${TUT_STEPS.length}`;
+    $('tut-title').textContent = st.title;
+    $('tut-text').innerHTML = st.text;
+    $('tut-box').classList.add('open');
+    $('gw').classList.add('tut-open');        // hides the command-card tooltip, which covered the hint on narrow screens
+    _tutShownAt = performance.now();
+    _tutPlaceRing();
+  }
+  function tutDismiss() {
+    if (!_tutStep) return;
+    _tutStep = null; _tutNext = _gameT + TUT_GAP;
+    $('tut-box').classList.remove('open');
+    $('gw').classList.remove('tut-open');
+    $('tut-ring').style.display = 'none';
+  }
+  // Ring around the union of the hint's HUD controls (a ring element, not an
+  // outline: the command buttons are clipped polygons)
+  function _tutPlaceRing() {
+    const ring = $('tut-ring'), els = (_tutStep?.focus || []).map(s => document.querySelector(s)).filter(Boolean);
+    if (!els.length) { ring.style.display = 'none'; return; }
+    const g = $('gw').getBoundingClientRect();
+    let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+    els.forEach(el => { const q = el.getBoundingClientRect(); l = Math.min(l, q.left); t = Math.min(t, q.top); r = Math.max(r, q.right); b = Math.max(b, q.bottom); });
+    Object.assign(ring.style, { display: 'block', left: (l - g.left - 4) + 'px', top: (t - g.top - 4) + 'px', width: (r - l + 8) + 'px', height: (b - t + 8) + 'px' });
+  }
+  addEventListener('resize', () => { if (_tutStep) _tutPlaceRing(); });
+  // A press anywhere outside the hint (and the menu) dismisses it first — the
+  // click then does what it would have done (fire, open the roster, ...). In the
+  // first TUT_GRACE ms the press and its click are swallowed instead: a player
+  // clicking away mid-fight would otherwise close the hint before reading it.
+  document.addEventListener('pointerdown', e => {
+    _tutSwallow = false;
+    if (!_tutStep || (e.target.closest && e.target.closest('#tut-box, #menu-overlay'))) return;
+    if (performance.now() - _tutShownAt < TUT_GRACE) { _tutSwallow = true; e.stopPropagation(); e.preventDefault(); return; }
+    tutDismiss();
+  }, true);
+  document.addEventListener('click', e => { if (_tutSwallow) { _tutSwallow = false; e.stopPropagation(); e.preventDefault(); } }, true);
+  function setTutorial(on) { _tut.on = !!on; if (!_tut.on) tutDismiss(); _tutSave(); _syncTutUI(); }
+  function replayTutorial() { _tut.seen.clear(); _tut.on = true; _tutNext = 0; _tutSave(); _syncTutUI(); }
+  function tutSkip() { setTutorial(false); setStatus('Tutorial hints off — MENU → TUTORIAL turns them back on'); }
+  function _syncTutUI() {
+    ['menu-tut-cb', 'ov-tut-cb'].forEach(id => { const cb = $(id); if (cb) cb.checked = _tut.on; });
+    const n = $('menu-tut-note'); if (n) n.textContent = `${_tut.seen.size} / ${TUT_STEPS.length} seen`;
+  }
+
   // ── Title / results screens (one overlay card) ──────────────────────────
   const _esc = v => String(v).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   function _showCard(html){ const c=$('ov-card'); if(c) c.innerHTML=html; $('overlay').style.display='flex'; }
   const _KEYS_HTML = `<div class="ov-keys">
-      <kbd>CLICK</kbd><span>Fire a volley</span><kbd>R</kbd><span>Airstrike + resupply</span>
+      <kbd>CLICK / HOLD</kbd><span>Fire a volley / full auto</span><kbd>R</kbd><span>Airstrike + resupply</span>
       <kbd>N</kbd><span>Nuke (wave 5+)</span><kbd>B</kbd><span>Roster (pauses)</span>
       <kbd>1-4</kbd><span>Upgrades</span><kbd>M / ESC</kbd><span>Menu</span>
       <kbd>WHEEL</kbd><span>Zoom on the bunker</span><kbd>INS / DEL</kbd><span>Rotate view 90°</span>
@@ -2939,7 +3087,7 @@ const G = (() => {
   function showTitle(){
     Music.play('title');
     clearEntities();
-    closeRoster(); closeMenu(); closeCheat();
+    closeRoster(); closeMenu(); closeCheat(); tutDismiss();
     phase='menu'; wavePhase='idle';
     const unlocked=endlessUnlocked(), best=_bestEndless();
     const auto=_readSave(AUTO_KEY), manual=_readSave(SAVE_KEY);
@@ -2955,11 +3103,31 @@ const G = (() => {
           <span><span class="ob-t">CONTINUE</span><span class="ob-d">Autosave — ${_esc(_saveLabel(auto))}</span></span></button>`:''}
         ${_validSave(manual)?`<button class="ov-btn" data-play onclick="G.loadGame()"><svg class="ico"><use href="#i-load"/></svg>
           <span><span class="ob-t">LOAD GAME</span><span class="ob-d">Saved game — ${_esc(_saveLabel(manual))}</span></span></button>`:''}
+        <button class="ov-btn" onclick="G.showHowTo()"><svg class="ico"><use href="#i-help"/></svg>
+          <span><span class="ob-t">HOW TO PLAY</span><span class="ob-d">The goal, the controls, your units and the Zerg</span></span></button>
       </div>
       <div class="ov-load" id="ov-load"><div class="ol-bar"><i></i></div><span class="ol-t"></span><button class="ol-skip" onclick="G.skipAssetWait()">start now</button></div>
       ${_KEYS_HTML}<div class="ov-legal">${BLIZZARD_NOTICE}</div>`);
     _assetGate();
     if (!_gateTimer) _gateTimer = setInterval(_assetGate, 200);
+  }
+  // Title → HOW TO PLAY: the rules on one card (the in-game hints teach them one at a time)
+  function showHowTo(){
+    if (phase !== 'menu') return;
+    _showCard(`<div class="ov-kicker">FIELD MANUAL</div>
+      <div class="ov-title ov-title-sm">HOW TO PLAY</div>
+      <div class="ov-howto">
+        <b>GOAL</b><span>Hold the bunker against the Zerg swarm. Campaign: clear ${CFG.victory_wave} waves to win — that unlocks Endless mode.</span>
+        <b>FIRE</b><span>Click the ground: every unit inside the bunker fires one volley at that spot, for one round. Hold the button for full auto — it empties the magazine fast.</span>
+        <b>AMMO</b><span>After each wave a Marine fetches a supply crate that refills the magazine. Out of ammo mid-wave? <kbd>R</kbd> calls a Viking: it bombs the swarm and drops an ammo crate — one crate covers the wave.</span>
+        <b>MONEY</b><span>Kills and cleared waves pay minerals and gas. Spend them on upgrades <kbd>1</kbd>–<kbd>4</kbd> (damage, armor, hull, ammo) and on units in the roster <kbd>B</kbd>, which pauses the game.</span>
+        <b>UNITS</b><span>The bunker has 6 slots. Marine (1 slot): all-round. Marauder (2): locks onto the nearest Armored enemy, double damage to it. Ghost (2): bonus damage to Light, researches auto-Snipe.</span>
+        <b>POWERS</b><span><kbd>N</kbd> nuke from wave ${CFG.nuke_wave}. <kbd>T</kbd> Stimpack with six Marines. Bunker hull level 3: Shrike auto-turret and self-repair.</span>
+        <b>ZERG</b><span>Zerglings: fast, Light, bite the hull. Roaches from wave ${CFG.roach_wave}: Armored, spit acid from range. From wave ${CFG.metabolic_wave} the Zerglings run faster.</span>
+      </div>
+      ${_KEYS_HTML}
+      <label class="menu-check ov-tut"><input type="checkbox" id="ov-tut-cb" ${_tut.on ? 'checked' : ''} onchange="G.setTutorial(this.checked)">TUTORIAL HINTS IN GAME — pause on each new mechanic</label>
+      <div class="ov-row"><button class="ov-btn" onclick="G.showTitle()"><svg class="ico"><use href="#i-home"/></svg><span class="ob-t">BACK</span></button></div>`);
   }
   // Title screen: asset loading progress. The start buttons wait until the first
   // two LOAD_STAGES (bunker, first waves' units) have loaded or failed — later
@@ -3021,6 +3189,7 @@ const G = (() => {
     resetRoster();
     airCD=0;nukeCD=0;shootCD=0;wavePhase='idle';
     _gameT=0;_hudTick=0;_dmgFlashCD=0;
+    tutDismiss(); _tutNext=0;       // a hint left open (Restart / Load from the menu) goes with the old game
     _slotSig=null;_slotBarSig=null; // force pip rebuild on fresh state
     $('overlay').style.display='none';
     phase='playing';
@@ -3629,6 +3798,7 @@ const G = (() => {
     _syncGfxUI(); // sync button active states
     _syncSoundUI();
     _syncSaveUI();
+    _syncTutUI();
     // Sync day/night checkbox
     const cb = document.getElementById('menu-dn-cb');
     if (cb) cb.checked = dnEnabled;
@@ -3759,5 +3929,6 @@ const G = (() => {
   _syncSoundUI();
   showTitle();
   return {start, buy, buyArmory, skipAssetWait, doAirstrike, doNuke, doStim, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
-          saveGame, loadGame, toggleDayNight, setVolume, setMuted, setMusic, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode};
+          saveGame, loadGame, toggleDayNight, setVolume, setMuted, setMusic, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode,
+          showHowTo, tutDismiss, tutSkip, setTutorial, replayTutorial};
 })();
