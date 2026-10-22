@@ -8,7 +8,7 @@ const G = (() => {
   let _logW = 0, _logH = 0; // logical (CSS) canvas dimensions — never multiplied by devicePixelRatio
 
   let gfxQuality = 'HIGH'; // 'LOW' | 'HIGH'
-  let _ambientLight, _sunLight, _fillLight, _bunkerLight, _fireLight, _muzzleLight;
+  let _ambientLight, _sunLight, _fillLight, _bunkerLight, _fireLight, _muzzleLight, _nukeLight;
 
   // ── Day/Night cycle (experimental) ──────────────────────────────────────
   let dnEnabled = false;     // opt-in toggle
@@ -178,8 +178,9 @@ const G = (() => {
       deny:     t => tone(t, .14, 190, 150, .09, 'square'),
       crate:    t => tone(t, .16, 440, 880, .12, 'sine'),
       snipe:    t => { tone(t, .25, 1600, 300, .16, 'sine'); noise(t, .08, 3500, 3000, .16, 'highpass'); },
+      rocket:   t => { noise(t, .45, 900, 2600, .2, 'bandpass', 1.5); tone(t, .1, 160, 70, .12, 'sine'); },   // Viking missile off the rail
     };
-    const MIN_GAP = { hit: .045, bite: .22, spit: .07, acid: .06, marine: .03, marauder: .05, ghost: .05, shrike: .05, zdie: .035, rdie: .06, boom: .07 };
+    const MIN_GAP = { hit: .045, bite: .22, spit: .07, acid: .06, marine: .03, marauder: .05, ghost: .05, shrike: .05, zdie: .035, rdie: .06, boom: .07, rocket: .06 };
     function play(name) {
       if (!ctx || muted || ctx.state !== 'running' || !SOUNDS[name]) return;
       const t = ctx.currentTime, gap = MIN_GAP[name];
@@ -382,6 +383,10 @@ const G = (() => {
     _fireLight.position.set(0, 1.8, 0);
     scene.add(_fireLight);
 
+    // Nuke light — the fireball lights the field (strongest at night: updateNukeLight)
+    _nukeLight = new THREE.PointLight(0xffa050, 0, 30, 1.5);
+    scene.add(_nukeLight);
+
     // Fog — day: effectively invisible; night: tight range (set once, updated in updateDayNight)
     scene.fog = new THREE.Fog(0x2a3a18, DN_DAY_FOG_NEAR, DN_DAY_FOG_FAR);
 
@@ -517,7 +522,7 @@ const G = (() => {
   function _shrikePick() {
     let best = null, bestS = Infinity, curLive = false;
     for (const list of [zerglings, roaches]) for (const e of list) {
-      if (e.dead || !e.mesh.visible) continue;
+      if (e.dead || !(e.mesh.visible || _sensed(e))) continue;   // at night: in the light, or a Sensor Tower blip
       if (e === _shrikeTgt) curLive = true;
       const sc = _shrikeScore(e);
       if (sc < bestS) { bestS = sc; best = e; }
@@ -968,13 +973,35 @@ const G = (() => {
   const BULLET_CAP = 512;
   const _bulletIM = new THREE.InstancedMesh(
     new THREE.BoxGeometry(.07, .07, .5),          // tracer streak, long axis = flight direction
-    new THREE.MeshBasicMaterial({ color: 0xffffff }), BULLET_CAP);
+    new THREE.MeshBasicMaterial({ color: 0xffffff, fog: false }), BULLET_CAP);   // a tracer burns: it shows out in the dark
   _bulletIM.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   _bulletIM.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(BULLET_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
   _bulletIM.frustumCulled = false; // instances spread far from the mesh origin
   _bulletIM.count = 0;
   scene.add(_bulletIM);
-  const _tmpCol = new THREE.Color();
+  const _tmpCol = new THREE.Color(), _white = new THREE.Color(0xffffff);
+  // Soft round glow (white, its alpha falling to 0 at the rim; quads stretch it into
+  // streaks): the tracer halos and the radar ring's profile across its band
+  const _glowTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    for (let i = 0; i <= 8; i++) { const k = 1 - i / 8; gr.addColorStop(i / 8, `rgba(255,255,255,${(k * k).toFixed(3)})`); }
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+    return new THREE.CanvasTexture(c);
+  })();
+  const _glowMat = () => new THREE.MeshBasicMaterial({ map: _glowTex, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+  // Tracer halos: a flat soft quad along each round (a little by day, strong at night),
+  // and at night a faint pool of light on the ground beneath it
+  const _haloGeo = new THREE.PlaneGeometry(.5, 1.6).rotateX(-Math.PI / 2);   // long axis = flight direction
+  function _glowIM(renderOrder) {
+    const im = new THREE.InstancedMesh(_haloGeo, _glowMat(), BULLET_CAP);
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(BULLET_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    im.frustumCulled = false; im.count = 0; im.renderOrder = renderOrder;
+    scene.add(im);
+    return im;
+  }
+  const _haloIM = _glowIM(2), _poolIM = _glowIM(1);
   // R = Ry(yaw)·Rx(pitch) + translation, column-major (local +Z → flight direction);
   // L stretches the round along its flight axis
   function _writeBulletMatrix(m, o, b, L) {
@@ -992,7 +1019,7 @@ const G = (() => {
   function _missileParts() {
     if (_missileIMs || !ModelLoader.isReady('marauderMissile')) return _missileIMs;
     const body = new THREE.MeshStandardMaterial({ color: 0x6b7078, metalness: .6, roughness: .35, emissive: 0x301000 });
-    const glow = new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false });
+    const glow = new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
     const t = ModelLoader.clone('marauderMissile');
     t.position.set(0, 0, 0);                      // centred on the round, not stood on the ground
     t.traverse(ch => { if (ch.isMesh) ch.material = ch.name === 'region_1' ? glow : body; });
@@ -1007,10 +1034,22 @@ const G = (() => {
   }
   function syncBullets() {
     const m = _bulletIM.instanceMatrix.array, c = _bulletIM.instanceColor.array;
-    const mis = _missileParts();
-    let n = 0, nm = 0;
+    const H = _haloIM.instanceMatrix.array, HC = _haloIM.instanceColor.array, P = _poolIM.instanceMatrix.array, PC = _poolIM.instanceColor.array;
+    const mis = _missileParts(), night = _dnFactor;
+    let n = 0, nm = 0, nh = 0;
     for (const b of bullets) {
       if (!b.alive) continue;
+      if (nh < BULLET_CAP) {   // halo along the round; pool flat on the ground under it
+        const o = nh * 16, p = b.mesh.position;
+        _writeBulletMatrix(H, o, b, 1);
+        const fl = Math.hypot(H[o + 8], H[o + 10]) || 1, ux = H[o + 8] / fl, uz = H[o + 10] / fl;
+        P[o] = -uz * 2.4; P[o+1] = 0; P[o+2] = ux * 2.4; P[o+3] = 0;
+        P[o+4] = 0;       P[o+5] = 1; P[o+6] = 0;        P[o+7] = 0;
+        P[o+8] = ux * 1.6; P[o+9] = 0; P[o+10] = uz * 1.6; P[o+11] = 0;
+        P[o+12] = p.x;    P[o+13] = .03; P[o+14] = p.z;  P[o+15] = 1;
+        _tmpCol.setHex(b.color); _tmpCol.toArray(HC, nh * 3); _tmpCol.toArray(PC, nh * 3);
+        nh++;
+      }
       if (mis && b.unitType === 'marauder') {
         if (nm < MISSILE_CAP) for (const im of mis) _writeBulletMatrix(im.instanceMatrix.array, nm * 16, b, 1);
         nm++;
@@ -1018,12 +1057,16 @@ const G = (() => {
       }
       if (n >= BULLET_CAP) continue;
       _writeBulletMatrix(m, n * 16, b, b.len || 1);
-      _tmpCol.setHex(b.color); _tmpCol.toArray(c, n * 3);
+      _tmpCol.setHex(b.color).lerp(_white, .35 * night); _tmpCol.toArray(c, n * 3);   // white-hot at night
       n++;
     }
     _bulletIM.count = n;
     _bulletIM.instanceMatrix.needsUpdate = true;
     _bulletIM.instanceColor.needsUpdate = true;
+    _haloIM.material.opacity = .25 + .65 * night;
+    _poolIM.material.opacity = .3 * night;
+    _haloIM.count = nh; _poolIM.count = night > .01 ? nh : 0;
+    for (const im of [_haloIM, _poolIM]) { im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; }
     if (mis) for (const im of mis) { im.count = Math.min(nm, MISSILE_CAP); im.instanceMatrix.needsUpdate = true; }
   }
 
@@ -1219,25 +1262,138 @@ const G = (() => {
     return ModelLoader.clone('viking', _proceduralVikingMesh);
   }
 
-  const _bombGeo = new THREE.SphereGeometry(0.18, 6, 5);
-  const _bombMat = new THREE.MeshBasicMaterial({color: 0xff6600});
-  function dropBomb(wx, wz) {
-    // Bomb visual — falls from Viking altitude to the ground, then strikes
-    const bomb = new THREE.Mesh(_bombGeo, _bombMat);
-    bomb.position.set(wx, 5, wz);
-    scene.add(bomb);
-    let life = 0.35;
-    addTicker(dt => {
-      life -= dt;
-      bomb.position.y = Math.max(0.2, bomb.position.y - 37.5 * dt);
-      if (life > 0) return true;
-      strikeAt(wx, wz, 0xff8800, 4.5); // impact
-      return false;
-    }, () => scene.remove(bomb));
+  // ── Viking missiles ──────────────────────────────────────────────────────
+  // One air-to-ground missile per target, from the muzzle of one of the Viking's
+  // two launcher tubes in turn: it runs ahead, then dives on its target along a
+  // quadratic curve (p0 → p1 → target), homing on the lead enemy while it lives,
+  // with an exhaust flame, a light streak and a smoke trail; strikes as the bombs did.
+  const VM_FLIGHT = 0.6, VM_RUN = 4;                 // s from the tube to the target; run ahead before the dive
+  const VM_LEN = 0.13, VM_TAIL = 0.5 * VM_LEN;       // its length; centre → nozzle
+  const VM_STREAK = 0.25;                            // the light streak covers the last this-many seconds of the path
+  // the SC2 model's launchers: the two long tubes either side of the nose, muzzles at
+  // (±0.2, 0.09, 0.91) in its normalised space (+z = nose); the procedural stand-in uses the same points
+  const VM_MUZZLE = [0.2, 0.09, 0.91];
+  let vMissiles = [], _vmSide = 1;
+  // Unit-length missile on +z (nozzle at z = -0.5): body, nose cone, four tail fins, merged
+  function _mergeGeos(geos) {
+    const parts = geos.map(g => g.index ? g.toNonIndexed() : g);
+    const n = parts.reduce((s, g) => s + g.attributes.position.count, 0), pos = new Float32Array(n * 3), nrm = new Float32Array(n * 3);
+    let o = 0;
+    for (const g of parts) { pos.set(g.attributes.position.array, o); nrm.set(g.attributes.normal.array, o); o += g.attributes.position.array.length; }
+    const out = new THREE.BufferGeometry();
+    out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    return out;
+  }
+  const _vmGeo = (() => {
+    const zAxis = new THREE.Matrix4().makeRotationX(Math.PI / 2);   // cylinder / cone axis y → +z
+    const body = new THREE.CylinderGeometry(.09, .09, .72, 10).applyMatrix4(zAxis).translate(0, 0, -.14);
+    const nose = new THREE.ConeGeometry(.09, .28, 10).applyMatrix4(zAxis).translate(0, 0, .36);
+    const fins = [0, 1, 2, 3].map(k => {
+      const a = k * Math.PI / 2;
+      return new THREE.BoxGeometry(.02, .14, .2).rotateZ(a - Math.PI / 2).translate(Math.cos(a) * .15, Math.sin(a) * .15, -.38);
+    });
+    return _mergeGeos([body, nose, ...fins]);
+  })();
+  const VM_CAP = 32, STREAK_CAP = 32 * 24;
+  function _vmIM(geo, mat, cap, renderOrder) {
+    const im = new THREE.InstancedMesh(geo, mat, cap);
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    im.frustumCulled = false; im.count = 0; im.renderOrder = renderOrder;
+    scene.add(im);
+    return im;
+  }
+  const _vmFlameMat = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+  const _vmBodyIM = _vmIM(_vmGeo, new THREE.MeshStandardMaterial({ color: 0xc4c9d0, metalness: .5, roughness: .4 }), VM_CAP, 0);
+  _vmBodyIM.castShadow = true;
+  const _vmFlameGeo = new THREE.CylinderGeometry(0.25, 1, 1, 10);   // unit height on y, wide end (r 1) at y = -0.5
+  const _vmFlameGlowIM = _vmIM(_vmFlameGeo, _vmFlameMat(0xff6a1a, .55), VM_CAP, 2);
+  const _vmFlameCoreIM = _vmIM(_vmFlameGeo, _vmFlameMat(0xfff2d0, .95), VM_CAP, 3);
+  const _streakGeo = new THREE.CylinderGeometry(1, 1, 1, 6);
+  const _streakGlowIM = _vmIM(_streakGeo, _vmFlameMat(0xff8a3a, .55), STREAK_CAP, 2);
+  const _streakCoreIM = _vmIM(_streakGeo, _vmFlameMat(0xfff0c0, .95), STREAK_CAP, 3);
+  for (const im of [_streakGlowIM, _streakCoreIM])
+    im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(STREAK_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
+
+  function fireVikingMissile(tgt) {
+    if (!vikingMesh) return;
+    _vmSide = -_vmSide;
+    const p0 = new THREE.Vector3(VM_MUZZLE[0] * _vmSide, VM_MUZZLE[1], VM_MUZZLE[2]).applyEuler(vikingMesh.rotation).add(vikingMesh.position);
+    vMissiles.push({ p0, p1: p0.clone().add(new THREE.Vector3(VM_RUN, -0.5, 0)), p: p0.clone(), dir: new THREE.Vector3(1, 0, 0),
+      tx: tgt.x, tz: tgt.z, e: tgt.e, t: 0, trail: [] });
+    for (let i = 0; i < 6; i++)   // ignition
+      emitParticle(_glow, p0.x, p0.y, p0.z, -2 - Math.random() * 3, (Math.random() - .5) * 1.5, (Math.random() - .5) * 1.5, .18, .35, .1, .95, 0xffd080, 0xff5010, 0, 2, 0);
+    SFX.play('rocket');
+  }
+  const _vmP2 = new THREE.Vector3(), _vmD = new THREE.Vector3(), _vmTail = new THREE.Vector3();
+  function updateVikingMissiles(dt) {
+    for (let i = 0; i < vMissiles.length;) {
+      const m = vMissiles[i];
+      if (m.e && !m.e.dead) { m.tx = m.e.mesh.position.x; m.tz = m.e.mesh.position.z; }
+      const prevTail = m.p.clone().addScaledVector(m.dir, -VM_TAIL);
+      m.t = Math.min(1, m.t + dt / VM_FLIGHT);
+      const u = m.t * (0.6 + 0.4 * m.t), a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u;   // speeds up through the dive
+      _vmP2.set(m.tx, 0.15, m.tz);
+      m.p.set(a * m.p0.x + b * m.p1.x + c * _vmP2.x, a * m.p0.y + b * m.p1.y + c * _vmP2.y, a * m.p0.z + b * m.p1.z + c * _vmP2.z);
+      _vmD.subVectors(m.p1, m.p0).multiplyScalar(1 - u).addScaledVector(_vmP2.clone().sub(m.p1), u);
+      if (_vmD.lengthSq() > 1e-8) m.dir.copy(_vmD).normalize();
+      // smoke trail: a puff every ~0.12 along this frame's path, and a few embers
+      const tail = _vmTail.copy(m.p).addScaledVector(m.dir, -VM_TAIL);
+      m.trail.push([tail.x, tail.y, tail.z, _gameT]);   // the light streak
+      while (m.trail.length > 2 && _gameT - m.trail[0][3] > VM_STREAK) m.trail.shift();
+      const n = Math.max(1, Math.min(16, Math.ceil(tail.distanceTo(prevTail) / 0.12)));
+      for (let k = 1; k <= n; k++) {
+        const f = k / n, R = Math.random;
+        emitParticle(_smoke, prevTail.x + (tail.x - prevTail.x) * f, prevTail.y + (tail.y - prevTail.y) * f, prevTail.z + (tail.z - prevTail.z) * f,
+          (R() - .5) * .2, .2, (R() - .5) * .2, .8, .07, .4, .4, 0xb0aaa0, 0x605c56, -.1, .8, 1);
+      }
+      if (Math.random() < .5)
+        emitParticle(_glow, tail.x, tail.y, tail.z, -m.dir.x * 2 + Math.random() - .5, -m.dir.y * 2 + Math.random() - .5, -m.dir.z * 2 + Math.random() - .5, .2, .05, .015, .9, 0xffd080, 0xc02000, 2, 1, 0);
+      if (m.t < 1) { i++; continue; }
+      vMissiles.splice(i, 1);
+      strikeAt(m.tx, m.tz, 0xff8800, 4.5);
+    }
+  }
+  const _vmM = new THREE.Matrix4(), _vmX = new THREE.Vector3(), _vmY = new THREE.Vector3(), _vmZ = new THREE.Vector3(), _vmUp = new THREE.Vector3(0, 1, 0);
+  function syncVikingMissiles() {
+    let n = 0, ns = 0;
+    for (const v of vMissiles) {
+      if (n >= VM_CAP) break;
+      const side = Math.abs(v.dir.y) < .99 ? _vmX.crossVectors(_vmUp, v.dir).normalize() : _vmX.set(1, 0, 0);
+      const up = _vmY.crossVectors(v.dir, side);
+      _vmM.makeBasis(_vmZ.copy(side).multiplyScalar(VM_LEN), up.clone().multiplyScalar(VM_LEN), v.dir.clone().multiplyScalar(VM_LEN)).setPosition(v.p);
+      _vmBodyIM.setMatrixAt(n, _vmM);
+      const flick = 0.85 + 0.15 * Math.sin(_gameT * 70 + n * 1.7);
+      const nozzle = v.p.clone().addScaledVector(v.dir, -VM_TAIL);
+      for (const [im, len, w] of [[_vmFlameGlowIM, .45 * flick, .05], [_vmFlameCoreIM, .25 * flick, .02]]) {
+        _vmM.makeBasis(side.clone().multiplyScalar(w), v.dir.clone().multiplyScalar(-len), up.clone().multiplyScalar(w))
+          .setPosition(nozzle.clone().addScaledVector(v.dir, -len / 2));
+        im.setMatrixAt(n, _vmM);
+      }
+      // the light streak along its recent path: thin cylinders, dimming and narrowing with age
+      for (let k = 0; k + 1 < v.trail.length && ns < STREAK_CAP; k++) {
+        const A = v.trail[k], B = v.trail[k + 1];
+        const d = new THREE.Vector3(B[0] - A[0], B[1] - A[1], B[2] - A[2]), L = d.length();
+        if (L < 1e-4) continue;
+        const kk = Math.max(0, Math.min(1, 1 - (_gameT - B[3]) / VM_STREAK));
+        const s = Math.abs(d.y) < .99 * L ? new THREE.Vector3().crossVectors(d, _vmUp).normalize() : new THREE.Vector3(1, 0, 0);
+        const u = new THREE.Vector3().crossVectors(s, d).normalize();
+        const mid = new THREE.Vector3((A[0] + B[0]) / 2, (A[1] + B[1]) / 2, (A[2] + B[2]) / 2);
+        for (const [im, w] of [[_streakGlowIM, .04 * (.4 + .6 * kk)], [_streakCoreIM, .014]]) {
+          _vmM.makeBasis(s.clone().multiplyScalar(w), d, u.clone().multiplyScalar(w)).setPosition(mid);
+          im.setMatrixAt(ns, _vmM);
+          _tmpCol.setRGB(kk, kk, kk); im.setColorAt(ns, _tmpCol);
+        }
+        ns++;
+      }
+      n++;
+    }
+    for (const im of [_vmBodyIM, _vmFlameGlowIM, _vmFlameCoreIM]) { im.count = n; im.instanceMatrix.needsUpdate = true; }
+    for (const im of [_streakGlowIM, _streakCoreIM]) { im.count = ns; im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; }
   }
 
-  // bombTargets: [{x, z, e}] — e = lead enemy of the cluster (may be undefined)
-  function launchViking(bombTargets, cratePos) {
+  // targets: [{x, z, e}] — e = lead enemy of the cluster (may be undefined)
+  function launchViking(targets, cratePos) {
     if (vikingActive) return;
     vikingActive = true;
 
@@ -1247,19 +1403,16 @@ const G = (() => {
     vikingMesh.rotation.y = Math.PI / 2;
     scene.add(vikingMesh);
 
-    // Viking travels x=-22 → +22 at 14 units/s (~3.1 s). Each bomb drops as it
-    // passes the target's x and re-aims at the lead enemy's CURRENT position —
-    // enemies keep moving during the run, so launch-time positions missed.
+    // Viking travels x=-22 → +22 at 14 units/s (~3.1 s). Each missile leaves
+    // VM_FLIGHT s before the Viking would pass over its target, so it lands about
+    // then, homing on the lead enemy's CURRENT position (enemies keep moving).
     const SPEED = 14, TOTAL_X = 44, START_X = -22;
-    bombTargets.forEach(tgt => {
-      after(Math.max(0.2, (tgt.x - START_X) / SPEED), () => {
-        const live = tgt.e && !tgt.e.dead;
-        dropBomb(live ? tgt.e.mesh.position.x : tgt.x, live ? tgt.e.mesh.position.z : tgt.z);
-      });
+    targets.forEach(tgt => {
+      after(Math.max(0.2, (tgt.x - START_X) / SPEED - VM_FLIGHT), () => fireVikingMissile(tgt));
     });
 
     // Drop crate near the bunker as the Viking exits (~2.7 s in). The crate is
-    // promised from launch on: a wave cleared by these bombs waits for it (resupply)
+    // promised from launch on: a wave cleared by these missiles waits for it (resupply)
     awaitCrate(() => setStatus('Ammo restocked! Good hunting, Commander.'));
     after((22 - START_X) / SPEED * 0.85, () => {
       setStatus('Crate deployed! Marine incoming...');
@@ -1450,7 +1603,7 @@ const G = (() => {
 
     const alive=allEnemies().filter(e=>!e.dead);
 
-    // Build bomb target list — one per enemy cluster (group nearby enemies together)
+    // Build the missile target list — one per enemy cluster (group nearby enemies together)
     const targets=[];
     const assigned=new Set();
     alive.forEach(e=>{
@@ -1531,7 +1684,7 @@ const G = (() => {
 
     // ── Phase 2: Laser designator beam (thin red line, 2s) ──────────────
     const laserGeo = new THREE.CylinderGeometry(0.04, 0.04, 28, 5);
-    const laserMat = new THREE.MeshBasicMaterial({color:0xff0000, transparent:true, opacity:0.85});
+    const laserMat = new THREE.MeshBasicMaterial({color:0xff0000, transparent:true, opacity:0.85, fog:false});   // the designator and its marks show in the dark
     const laser = new THREE.Mesh(laserGeo, laserMat);
     laser.position.copy(along(14 * up.y));          // 28 long: target → sky, down the dive path
     laser.quaternion.copy(tilt);
@@ -1541,8 +1694,8 @@ const G = (() => {
     // drawn additively), or a plain red ring until that texture has loaded
     const dotGeo = _nukeTargetTex ? new THREE.PlaneGeometry(2.6, 2.6) : new THREE.RingGeometry(0.3, 0.6, 16);
     const dotMat = _nukeTargetTex
-      ? new THREE.MeshBasicMaterial({map:_nukeTargetTex, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false})
-      : new THREE.MeshBasicMaterial({color:0xff0000, side:THREE.DoubleSide, transparent:true});
+      ? new THREE.MeshBasicMaterial({map:_nukeTargetTex, transparent:true, blending:THREE.AdditiveBlending, depthWrite:false, fog:false})
+      : new THREE.MeshBasicMaterial({color:0xff0000, side:THREE.DoubleSide, transparent:true, fog:false});
     const dot = new THREE.Mesh(dotGeo, dotMat);
     dot.rotation.x = -Math.PI/2;
     dot.position.set(tx, 0.05, tz);
@@ -1562,7 +1715,7 @@ const G = (() => {
     // a white-hot core in an orange glow (both taper toward the sky), and a flare at
     // the tail. (Sparks sprayed from the tail every frame read as fireworks.)
     const trailGeo = new THREE.CylinderGeometry(0.25, 1, 1, 10);   // unit height, narrowing to the top
-    const glowMat = (color, opacity) => new THREE.MeshBasicMaterial({color, transparent:true, opacity, blending:THREE.AdditiveBlending, depthWrite:false});
+    const glowMat = (color, opacity) => new THREE.MeshBasicMaterial({color, transparent:true, opacity, blending:THREE.AdditiveBlending, depthWrite:false, fog:false});
     const trailGlow = new THREE.Mesh(trailGeo, glowMat(0xff6a1a, 0.45));
     const trailCore = new THREE.Mesh(trailGeo, glowMat(0xfff2d0, 0.95));
     const flareGeo = new THREE.SphereGeometry(1, 12, 8);
@@ -1576,12 +1729,18 @@ const G = (() => {
     }
 
     // Expanding warning ring — unit ring, animated via scale (no geometry churn)
-    const warnMat = new THREE.MeshBasicMaterial({color:0xff2200, side:THREE.DoubleSide, transparent:true, opacity:0.6});
+    const warnMat = new THREE.MeshBasicMaterial({color:0xff2200, side:THREE.DoubleSide, transparent:true, opacity:0.6, fog:false});
     const warnRing = new THREE.Mesh(_ringGeo, warnMat);
     warnRing.scale.setScalar(0.1);
     warnRing.rotation.x = -Math.PI/2;
     warnRing.position.set(tx, 0.06, tz);
     scene.add(warnRing);
+    // At night the warning ring glows softly: a soft band along it, as strong as the night is dark
+    const warnGlow = new THREE.Mesh(_glowRingGeo, Object.assign(_glowMat(), { color: new THREE.Color(0xff3018), opacity: 0 }));
+    warnGlow.scale.setScalar(0.1);
+    warnGlow.position.set(tx, 0.07, tz);
+    warnGlow.renderOrder = 1;
+    scene.add(warnGlow);
 
     // Animate warning ring expanding and dot blinking (game time — freezes on pause)
     let warnT = 0, detonated = false;
@@ -1595,6 +1754,8 @@ const G = (() => {
         // Ring expands to show blast radius
         warnRing.scale.setScalar(Math.max(0.1, prog * NUKE_RADIUS));
         warnRing.material.opacity = 0.4 + Math.sin(warnT*12)*0.3; // pulse
+        warnGlow.scale.setScalar(Math.max(0.1, prog * NUKE_RADIUS));
+        warnGlow.material.opacity = 0.9 * _dnFactor * (0.6 + 0.4 * Math.sin(warnT * 12));
         // Dot blinks faster as impact nears
         dot.material.opacity = Math.sin(warnT*(6+prog*14)) > 0 ? 0.9 : 0.1;
         laser.material.opacity = 0.5 + Math.sin(warnT*8)*0.35;
@@ -1614,7 +1775,7 @@ const G = (() => {
         if (warnT < WARN_DUR) return true;
         // ── impact: the designator and the warhead go, the streak ends in the blast and fades
         detonated = true;
-        [laser, dot, warnRing, flare].forEach(m => { m.visible = false; });
+        [laser, dot, warnRing, warnGlow, flare].forEach(m => { m.visible = false; });
         if (missile) missile.visible = false;
         setTrail(0);
         _nukeInFlight = false;
@@ -1627,11 +1788,11 @@ const G = (() => {
     }, () => {
       // Remove designator visuals (warnRing uses shared _ringGeo — don't dispose it).
       // Also runs when Restart/Load drops the launch mid-countdown.
-      scene.remove(laser); scene.remove(dot); scene.remove(warnRing);
+      scene.remove(laser); scene.remove(dot); scene.remove(warnRing); scene.remove(warnGlow);
       if (missile) scene.remove(missile);         // shares the template's geometry — no dispose
       [trailGlow, trailCore, flare].forEach(m => { scene.remove(m); m.material.dispose(); });
       laser.geometry.dispose(); dot.geometry.dispose(); trailGeo.dispose(); flareGeo.dispose();
-      laser.material.dispose(); dot.material.dispose(); warnRing.material.dispose();
+      laser.material.dispose(); dot.material.dispose(); warnRing.material.dispose(); warnGlow.material.dispose();
       _nukeInFlight = false;
     });
 
@@ -1639,7 +1800,7 @@ const G = (() => {
     function detonate() {
       SFX.play('nukeBoom');
       // Shockwave ring — expands outward rapidly (scale-animated unit ring)
-      const shockMat = new THREE.MeshBasicMaterial({color:0xff6600, side:THREE.DoubleSide, transparent:true, opacity:0.9});
+      const shockMat = new THREE.MeshBasicMaterial({color:0xff6600, side:THREE.DoubleSide, transparent:true, opacity:0.9, fog:false});
       const shock = new THREE.Mesh(_ringGeo, shockMat);
       shock.scale.setScalar(0.2);
       shock.rotation.x = -Math.PI/2;
@@ -1647,29 +1808,23 @@ const G = (() => {
       scene.add(shock);
       beams.push({mesh: shock, life: 1.2, isShock: true, tx, tz, startLife: 1.2});
 
-      // Main explosion column — tall, fat, bright
-      const expGeo = new THREE.CylinderGeometry(0.1, 3.5, 18, 10);
-      const expMat = new THREE.MeshBasicMaterial({color:0xff4400, transparent:true, opacity:0.92});
-      const exp = new THREE.Mesh(expGeo, expMat);
-      exp.position.set(tx, 9, tz);
-      scene.add(exp);
-      beams.push({mesh: exp, life: 0.9});
-
-      // Secondary fireball
-      const fbGeo = new THREE.SphereGeometry(4, 12, 8);
-      const fbMat = new THREE.MeshBasicMaterial({color:0xff8800, transparent:true, opacity:0.85});
-      const fb = new THREE.Mesh(fbGeo, fbMat);
-      fb.position.set(tx, 1.5, tz);
-      scene.add(fb);
-      beams.push({mesh: fb, life: 0.7});
+      // The mushroom cloud of fire (it replaces the solid cone and ball the blast used
+      // to show), and the fireball's light (at night it lights the field)
+      mushrooms.push({x: tx, z: tz, t: 0});
+      _nukeLightT = 0;
+      _nukeLight.position.set(tx, 3, tz);
 
       // Screen flash — strong white then orange
       flash('nuke-flash');
 
-      // Massive particle burst
+      // Massive particle burst, and black debris flung out of the blast
       spawnParts(new THREE.Vector3(tx, 0.5, tz), 0xff6600, 50);
       spawnParts(new THREE.Vector3(tx, 3,   tz), 0xff4400, 30);
       spawnParts(new THREE.Vector3(tx, 0.5, tz), 0xffaa00, 25);
+      for (let i = 0; i < 40; i++) {
+        const a = Math.random() * Math.PI * 2, v = 4 + Math.random() * 7;
+        emitParticle(_smoke, tx, .4, tz, Math.cos(a) * v, 4 + Math.random() * 6, Math.sin(a) * v, 1.2 + Math.random() * .6, .16, .1, .95, 0x1a1410, 0x2a2018, 14, .3, 0);
+      }
 
       // Kill ALL enemies in radius — bunker excluded (hardened)
       let killed = 0;
@@ -1683,6 +1838,122 @@ const G = (() => {
       });
 
       setStatus(`Nuclear detonation — ${killed} unit${killed!==1?'s':''} annihilated. Bunker intact.`);
+    }
+  }
+  // A soft glowing band along a unit circle (the nuke's warning ring at night), scaled with it
+  const _glowRingGeo = (() => {
+    const pos = [], uv = [], S = 96;
+    for (let i = 0; i < S; i++) {
+      const a0 = i / S * Math.PI * 2, a1 = (i + 1) / S * Math.PI * 2;
+      const v = (a, r, t) => { pos.push(Math.cos(a) * r, 0, Math.sin(a) * r); uv.push(0.5, t); };
+      v(a0, .95, 0); v(a0, 1.05, 1); v(a1, 1.05, 1); v(a0, .95, 0); v(a1, 1.05, 1); v(a1, .95, 0);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    return g;
+  })();
+
+  // ── Nuke fireball light ──────────────────────────────────────────────────
+  // Flashes up in 0.08 s, holds NUKE_LIGHT_HOLD s, then cools (gone after
+  // NUKE_LIGHT_DUR s): a warm point light at the blast, and at night the dark
+  // lifts toward NUKE_LIGHT_F (fog far ≈ 40: past the spawn ring) — _dnEffFactor.
+  const NUKE_LIGHT_DUR = 6, NUKE_LIGHT_HOLD = 0.5, NUKE_LIGHT_F = 0.35;
+  let _nukeLightT = -1;          // seconds since the blast (game time); -1 = none
+  function _nukeLightK() {
+    if (_nukeLightT < 0) return 0;
+    const t = _nukeLightT;
+    return Math.min(1, t / 0.08) * (t < NUKE_LIGHT_HOLD ? 1 : Math.exp(-(t - NUKE_LIGHT_HOLD) / 1.4)) * Math.min(1, NUKE_LIGHT_DUR - t);
+  }
+  function updateNukeLight(dt) {   // live frames only, before updateDayNight (the lights follow it)
+    if (_nukeLightT >= 0 && (_nukeLightT += dt) >= NUKE_LIGHT_DUR) _nukeLightT = -1;
+    if (_nukeLight) _nukeLight.intensity = _nukeLightK() * (1 + 3 * _dnFactor);
+  }
+
+  // ── Nuke mushroom cloud ──────────────────────────────────────────────────
+  // As StarCraft II draws it, in soft sprites rebuilt every frame: a cap of fire (a
+  // rolling torus under a dome) on a fiery stem, burning white-yellow inside and
+  // orange at the edges, cooling to dark red and soot; a grey dust ring surging out
+  // along the ground around it. Smoke dims with the scene's light; fire is self-lit.
+  const MUSH_DUR = 7;
+  let mushrooms = [];
+  const _mushSmoke = makeParticleSystem(600, THREE.NormalBlending), _mushFire = makeParticleSystem(300, THREE.AdditiveBlending);
+  const _puffHash = (i, salt) => { const s = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453; return s - Math.floor(s); };
+  const _FIRE_RAMP = [0x2e2420, 0x8a2a0c, 0xf06a18, 0xffb43a, 0xfff0c0].map(h => new THREE.Color(h));
+  function _fireRamp(T, out) {   // white-hot → yellow → orange → deep red → soot
+    T = Math.max(0, Math.min(1, T)) * 4;
+    const i = Math.min(3, Math.floor(T));
+    return out.copy(_FIRE_RAMP[i]).lerp(_FIRE_RAMP[i + 1], T - i);
+  }
+  const _sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const _mc = new THREE.Color(), _mcA = new THREE.Color(0x6a6460), _mcB = new THREE.Color(0x9a948c), _mcHot = new THREE.Color(0xfff0c0);
+  function _mushPut(sys, x, y, z, size, col, alpha) {
+    if (sys.n >= sys.cap) return;
+    const i = sys.n++, i3 = i * 3;
+    sys.pos[i3] = x; sys.pos[i3+1] = y; sys.pos[i3+2] = z;
+    sys.col[i3] = col.r; sys.col[i3+1] = col.g; sys.col[i3+2] = col.b;
+    sys.size[i] = size; sys.alpha[i] = alpha;
+  }
+  function _mushroomSprites(mc, lit) {
+    const t = mc.t, g = 1 - Math.exp(-t / 0.9), spread = 1 - Math.exp(-t / 1.0), heat = Math.exp(-t / 2.8);
+    const capH = 1.4 + 6.0 * g + 0.2 * t, capR = 0.9 + 2.7 * spread, tube = 0.7 + 0.9 * g, puff = 1.3 + 1.6 * g;
+    const fade = Math.min(1, t / 0.15) * (1 - _sstep(MUSH_DUR - 2.5, MUSH_DUR, t));
+    let n = 0;
+    const add = (x, y, z, size, a, inner) => {   // inner: how hot this puff burns for the cloud's temperature (1 = its core)
+      const i = n++, T = heat * inner * (0.9 + 0.2 * _puffHash(i, 1)), sz = size * (0.85 + 0.3 * _puffHash(i, 2));
+      _fireRamp(T, _mc);
+      if (T < 0.3) _mc.multiplyScalar(lit + (1 - lit) * T / 0.3);   // cooled to smoke: lit by the scene
+      _mushPut(_mushSmoke, mc.x + x, y, mc.z + z, sz, _mc, a * fade * (0.6 + 0.4 * Math.min(1, T * 2)));
+      if (T < 0.45) return;   // the hottest parts glow
+      _mushPut(_mushFire, mc.x + x, y, mc.z + z, sz * 0.6, _fireRamp(Math.min(1, T + 0.2), _mc), 0.5 * Math.min(1, (T - 0.45) / 0.55) * fade);
+    };
+    const PI2 = Math.PI * 2, stemTop = Math.max(0.5, capH - tube * 0.6);
+    for (let i = 0; i < 22; i++) {   // stem: a column of fire, wider at the foot, twisting slowly
+      const f = i / 21, a = _puffHash(i, 3) * PI2 + t * 0.7, r = (0.12 + 0.25 * (1 - f)) * _puffHash(i, 4);
+      add(Math.cos(a) * r, 0.3 + f * (stemTop - 0.3), Math.sin(a) * r, (1.2 + 0.9 * (1 - f)) * (0.6 + 0.4 * g), 0.6, 1.05 - 0.15 * f);
+    }
+    for (let k = 0; k < 90; k++) {   // cap: the rolling torus (golden-angle offsets spread the puffs over its tube)
+      const a = PI2 * k / 90 + _puffHash(k, 5) * 0.1, phi = -t * 1.4 + k * 2.39996, s = Math.sin(phi), cph = Math.cos(phi);
+      const rr = capR + tube * cph;
+      add(Math.cos(a) * rr, capH + tube * 0.8 * s, Math.sin(a) * rr, puff * 0.85, 0.55, 0.85 + 0.2 * s - 0.1 * cph);   // the outer rim cools first
+    }
+    for (let k = 0; k < 18; k++) {   // dome and core of the cap: the hottest
+      const a = PI2 * _puffHash(k, 6), r = capR * 0.7 * Math.sqrt(_puffHash(k, 7));
+      add(Math.cos(a) * r, capH + tube * (0.2 + 0.6 * _puffHash(k, 8)), Math.sin(a) * r, puff * 1.1, 0.55, 1.1 - 0.3 * r / Math.max(capR, 0.1));
+    }
+    // the dust ring: grey smoke rolling out along the ground, thickest at its rim, settling
+    const ringR = 1.8 + 5.0 * (1 - Math.exp(-t / 0.8)), settle = 1 - _sstep(3, MUSH_DUR, t);
+    for (let k = 0; k < 56; k++) {
+      const a = PI2 * k / 56 + _puffHash(k, 9) * 0.1, r = ringR + (_puffHash(k, 10) - 0.5) * 0.9;
+      _mc.copy(_mcA).lerp(_mcB, 0.75 + 0.25 * _puffHash(k, 13)).multiplyScalar(lit);
+      _mushPut(_mushSmoke, mc.x + Math.cos(a) * r, 0.35 + 0.3 * _puffHash(k, 11), mc.z + Math.sin(a) * r,
+        (1.5 + 1.0 * g) * (0.8 + 0.4 * _puffHash(k, 12)), _mc, 0.42 * settle * Math.min(1, t / 0.2));
+    }
+    if (heat > 0.35)   // the white flash at the heart of the young fireball
+      _mushPut(_mushFire, mc.x, capH * 0.8, mc.z, capR * 2.6, _mcHot, 0.55 * (heat - 0.35) / 0.65);
+  }
+  const _mushOrder = [];
+  function syncMushrooms(dt) {   // live frames: they age in game time
+    for (const mc of mushrooms) mc.t += dt;
+    mushrooms = mushrooms.filter(mc => mc.t < MUSH_DUR);
+    _mushSmoke.n = _mushFire.n = 0;
+    for (const mc of mushrooms) _mushroomSprites(mc, 1 - 0.75 * _dnLitF);
+    // smoke back to front (normal blending): reorder the buffers by view depth
+    const S = _mushSmoke, N = S.n, v = camera.matrixWorldInverse.elements;
+    if (N > 1) {
+      _mushOrder.length = 0;
+      for (let i = 0; i < N; i++) _mushOrder.push([v[2] * S.pos[i * 3] + v[6] * S.pos[i * 3 + 1] + v[10] * S.pos[i * 3 + 2], i]);
+      _mushOrder.sort((a, b) => a[0] - b[0]);
+      const pos = S.pos.slice(0, N * 3), col = S.col.slice(0, N * 3), size = S.size.slice(0, N), alpha = S.alpha.slice(0, N);
+      _mushOrder.forEach(([, i], j) => {
+        for (let c = 0; c < 3; c++) { S.pos[j * 3 + c] = pos[i * 3 + c]; S.col[j * 3 + c] = col[i * 3 + c]; }
+        S.size[j] = size[i]; S.alpha[j] = alpha[i];
+      });
+    }
+    for (const sys of [_mushSmoke, _mushFire]) {
+      const geo = sys.points.geometry;
+      geo.setDrawRange(0, sys.n);
+      for (const k of ['position', 'aColor', 'aSize', 'aAlpha']) geo.attributes[k].needsUpdate = true;
     }
   }
 
@@ -2625,53 +2896,103 @@ const G = (() => {
 
   // ── Sensor Tower: radar blips for Zerg in the dark ─────────────────────────
   // Every live enemy hidden by the night fog (mesh not visible) within
-  // SENSOR_RANGE shows as a pulsing red "!" at its feet — the same marker for
-  // every kind, no HP bar. At night a faint ring on the ground marks the range.
-  const _sensorV = new THREE.Vector3();
-  function drawSensor() {
-    if (phase !== 'playing' || sensorLvl < 1) return;
-    const ctx = chCtx, R = SENSOR_RANGE[sensorLvl];
-    // Coverage ring (projected segment by segment; a point behind the camera breaks the line)
-    if (_dnFactor > 0.1) {
-      ctx.strokeStyle = `rgba(255,80,60,${(0.22 * _dnFactor).toFixed(3)})`;
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      let pen = false;
-      for (let i = 0; i <= 64; i++) {
-        const a = i / 64 * Math.PI * 2, v = _sensorV.set(Math.cos(a) * R, 0, Math.sin(a) * R).project(camera);
-        if (v.z > 1) { pen = false; continue; }
-        const sx = (v.x * 0.5 + 0.5) * _logW, sy = (-v.y * 0.5 + 0.5) * _logH;
-        if (pen) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy);
-        pen = true;
+  // SENSOR_RANGE shows as a pulsing red "!" disc lying on the ground under it,
+  // upright as the camera sees it — the same marker for every kind, no HP bar.
+  // At night a glowing ring on the ground marks the range, with a triangle every
+  // 30° pointing at the bunker. (The Shrike engages blips too: _shrikePick.)
+  function _sensed(e) {
+    const p = e.mesh.position;
+    return sensorLvl >= 1 && !e.dead && !e.mesh.visible && Math.hypot(p.x, p.z) <= SENSOR_RANGE[sensorLvl];
+  }
+  // The ring per level: a soft band with a brighter core (the glow texture's centre
+  // column gives the profile across it) and 12 triangles, tips toward the bunker
+  const _sensorRings = [], _sensorRingMat = Object.assign(_glowMat(), { color: new THREE.Color(0xff503c) });
+  function _sensorRing(lvl) {
+    if (_sensorRings[lvl]) return _sensorRings[lvl];
+    const R = SENSOR_RANGE[lvl], pos = [], uv = [];
+    const vtx = (x, z, v) => { pos.push(x, 0, z); uv.push(0.5, v); };
+    const band = w => {   // inner edge v = 0, outer v = 1
+      const S = 160;
+      for (let i = 0; i < S; i++) {
+        const a0 = i / S * Math.PI * 2, a1 = (i + 1) / S * Math.PI * 2, ri = R - w, ro = R + w;
+        const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+        vtx(c0 * ri, s0 * ri, 0); vtx(c0 * ro, s0 * ro, 1); vtx(c1 * ro, s1 * ro, 1);
+        vtx(c0 * ri, s0 * ri, 0); vtx(c1 * ro, s1 * ro, 1); vtx(c1 * ri, s1 * ri, 0);
       }
-      ctx.stroke();
+    };
+    band(0.45); band(0.12);   // glow, core
+    for (let k = 0; k < 12; k++) {
+      const a = k * Math.PI / 6, c = Math.cos(a), s = Math.sin(a), rBase = R + 0.35, rTip = R - 0.6, hw = 0.32;
+      vtx(c * rBase - s * hw, s * rBase + c * hw, 0.5);
+      vtx(c * rBase + s * hw, s * rBase - c * hw, 0.5);
+      vtx(c * rTip, s * rTip, 0.5);
     }
-    // Blips (pulse on real time: they keep blinking while paused)
-    const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 1000 * Math.PI * 2 * 1.5);
-    ctx.lineWidth = 2;
-    ctx.font = 'bold 11px "Share Tech Mono", Consolas, monospace';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    allEnemies().forEach(e => {
-      if (e.dead || e.mesh.visible) return;
-      const p = e.mesh.position;
-      if (Math.hypot(p.x, p.z) > R) return;
-      const v = _sensorV.set(p.x, 0.3, p.z).project(camera);
-      if (v.z > 1) return;
-      const sx = (v.x * 0.5 + 0.5) * _logW, sy = (-v.y * 0.5 + 0.5) * _logH;
-      if (sx < -10 || sx > _logW + 10 || sy < -10 || sy > _logH + 10) return;
-      ctx.globalAlpha = pulse;
-      ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255,59,47,0.18)'; ctx.fill();
-      ctx.strokeStyle = '#ff3b2f'; ctx.stroke();
-      ctx.fillStyle = '#ffd0c8'; ctx.fillText('!', sx, sy + 0.5);
-    });
-    ctx.globalAlpha = 1; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    const m = new THREE.Mesh(g, _sensorRingMat);
+    m.position.y = 0.03; m.renderOrder = 1; m.visible = false;
+    scene.add(m);
+    return (_sensorRings[lvl] = m);
+  }
+  // The blip: a red disc and ring around a pale "!", drawn once
+  const _blipTex = (() => {
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d');
+    g.beginPath(); g.arc(64, 64, 51, 0, Math.PI * 2); g.fillStyle = 'rgba(255,59,47,0.22)'; g.fill();
+    g.lineWidth = 9; g.strokeStyle = '#ff3b2f'; g.stroke();
+    g.strokeStyle = g.fillStyle = '#ffd0c8'; g.lineWidth = 11.5; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(64, 34.5); g.lineTo(64, 65.3); g.stroke();   // the bar
+    g.beginPath(); g.arc(64, 85, 6.4, 0, Math.PI * 2); g.fill();          // the dot
+    return new THREE.CanvasTexture(c);
+  })();
+  const BLIP_CAP = 128;
+  const _blipIM = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+    Object.assign(_glowMat(), { map: _blipTex }), BLIP_CAP);
+  _blipIM.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  _blipIM.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(BLIP_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
+  _blipIM.frustumCulled = false; _blipIM.count = 0; _blipIM.renderOrder = 2;
+  scene.add(_blipIM);
+  const _blipM = new THREE.Matrix4(), _blipF = new THREE.Vector3(), _blipR = new THREE.Vector3(), _blipU = new THREE.Vector3(0, 1, 0);
+  function syncSensor() {
+    const on = phase === 'playing' && sensorLvl >= 1;
+    _sensorRings.forEach((m, l) => { if (m) m.visible = false; });
+    if (!on) { _blipIM.count = 0; return; }
+    if (_dnFactor > 0.1) {
+      const ring = _sensorRing(sensorLvl);
+      ring.visible = true;
+      _sensorRingMat.opacity = 0.75 * _dnFactor;
+    }
+    // the screen's up direction on the ground: the camera's up and forward axes, flattened (no roll)
+    const e = camera.matrixWorld.elements;
+    _blipF.set(e[4] - e[8], 0, e[6] - e[10]);
+    if (_blipF.lengthSq() < 1e-8) _blipF.set(0, 0, -1);
+    _blipF.normalize();
+    _blipR.crossVectors(_blipF, _blipU);
+    // pulse on real time: blips keep blinking while paused
+    const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 1000 * Math.PI * 2 * 1.5), s = 1.4 * (0.94 + 0.06 * pulse);
+    let n = 0;
+    for (const en of allEnemies()) {
+      if (n >= BLIP_CAP || !_sensed(en)) continue;
+      const p = en.mesh.position;
+      // the glyph's top (the quad's -z: the canvas top, flipped up the plane) → F, its x → the screen's right
+      _blipM.set(_blipR.x * s, 0, -_blipF.x * s, p.x,
+                 _blipR.y * s, 1, -_blipF.y * s, 0.05,
+                 _blipR.z * s, 0, -_blipF.z * s, p.z,
+                 0, 0, 0, 1);
+      _blipIM.setMatrixAt(n, _blipM);
+      _tmpCol.setRGB(pulse, pulse, pulse); _blipIM.setColorAt(n, _tmpCol);
+      n++;
+    }
+    _blipIM.count = n;
+    _blipIM.instanceMatrix.needsUpdate = true;
+    _blipIM.instanceColor.needsUpdate = true;
   }
 
   function drawCH(){
     const gameH=_logH;
     chCtx.clearRect(0,0,_logW,gameH);
-    drawSensor();
+    syncSensor();
     drawEnemyHPBars();
     // Floating damage numbers
     if(floatTexts.length>0){
@@ -2783,7 +3104,10 @@ const G = (() => {
     if (fe !== _dnLitF) { _dnLitF = fe; _applyDNLights(fe); }
     _updateDNIndicator();
   }
-  function _dnEffFactor() { return _dnFactor - _flareK() * Math.max(0, _dnFactor - FLARE_F); }
+  // A flare lifts the night toward FLARE_F, a nuke's fireball toward NUKE_LIGHT_F
+  function _dnEffFactor() {
+    return _dnFactor - Math.max(_flareK() * Math.max(0, _dnFactor - FLARE_F), _nukeLightK() * Math.max(0, _dnFactor - NUKE_LIGHT_F));
+  }
 
   // Day-time light levels per graphics quality. Day/night blends from these,
   // so the two settings no longer overwrite each other.
@@ -2832,6 +3156,23 @@ const G = (() => {
     // (a night still lifting after the cycle restarted at day reads DAWN)
     const text = !dnEnabled ? '' : (_dnFactor > 0.5 ? '☽ ' : '☀ ') + (_dnFactor > 0.97 ? 'NIGHT' : _dnFactor < 0.03 ? 'DAY'
       : _dnTime >= DN_DAY && _dnTime < DN_DAY + DN_FADE + DN_NIGHT ? 'DUSK' : 'DAWN');
+    // the countdown to the next phase: "DUSK IN 0:42" (day), "NIGHT IN" (dusk), "DAWN IN" (night), "DAY IN" (dawn)
+    const next = document.getElementById('tv-dn-next');
+    if (next) {
+      const ends = [DN_DAY, DN_DAY + DN_FADE, DN_DAY + DN_FADE + DN_NIGHT, DN_CYCLE], names = ['DUSK', 'NIGHT', 'DAWN', 'DAY'];
+      let k = 0;
+      while (k < 3 && _dnTime >= ends[k]) k++;
+      let until = ends[k] - _dnTime;
+      // the label turns NIGHT / DAY at factor 0.97 / 0.03, a moment before that phase begins:
+      // then count to the one after ("NIGHT IN 0:01" under NIGHT read wrong)
+      if (names[k] === (_dnFactor > 0.97 ? 'NIGHT' : _dnFactor < 0.03 ? 'DAY' : '')) {
+        until = k < 3 ? ends[k + 1] - _dnTime : DN_CYCLE + ends[0] - _dnTime;
+        k = (k + 1) % 4;
+      }
+      const sec = Math.max(0, Math.ceil(until));
+      const nt = !dnEnabled ? '' : `${names[k]} IN ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+      if (next.textContent !== nt) next.textContent = nt;
+    }
     if (el.textContent === text) return;   // called every frame
     el.textContent = text;
     el.style.color = _dnFactor > 0.5 ? '#8899ff' : '#ffcc44';
@@ -2891,7 +3232,7 @@ const G = (() => {
     }
     if(nukeCD>0) nukeCD=Math.max(0,nukeCD-dt);
 
-    // Scheduled game events (wave countdown, Viking, bombs, nuke)
+    // Scheduled game events (wave countdown, Viking, its missiles, nuke)
     tickScheduler(dt);
     if(phase!=='playing') return; // an event may have ended the game
 
@@ -3076,12 +3417,16 @@ const G = (() => {
 
     updateMarines(dt);
     updateViking(dt);
+    updateVikingMissiles(dt);
+    syncVikingMissiles();
     checkBunkerHover(dt);
     ghostSnipeTick(dt);
     updateShrike(dt);
     updateCorpses(dt);
-    updateFlare(dt);            // before the lights: they follow its strength
+    updateFlare(dt);            // before the lights: they follow its strength (and the nuke light's)
+    updateNukeLight(dt);
     updateDayNight(dt);
+    syncMushrooms(dt);
     tutorialTick();
     // Update floating damage numbers
     floatTexts.forEach(f=>{ f.life-=dt*1000; f.y+=dt*0.8; });
@@ -3094,9 +3439,12 @@ const G = (() => {
 
   // ── Start / game over ─────────────────────────────────────────────────────
   function clearEntities(){
-    clearScheduler();        // drop pending wave countdown / Viking / bombs / nuke (runs their cleanup)
+    clearScheduler();        // drop pending wave countdown / Viking / missile launches / nuke (runs their cleanup)
     removeViking();
-    clearFlare();            // also relights the scene at the true night factor
+    vMissiles=[]; syncVikingMissiles();
+    mushrooms=[]; syncMushrooms(0);
+    _nukeLightT=-1; if(_nukeLight) _nukeLight.intensity=0;
+    clearFlare();            // the flare and the nuke light go: relights the scene at the true night factor
     _crateCbs=null; waveCrates=0;   // the crate on its way went with the Viking / marines; a stale wait would stall the next game
     _nukeInFlight=false;
     clearParticles(); _fireAccum.length=0;

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="css/hud.css?v=19">
+<link rel="stylesheet" href="css/hud.css?v=20">
 </head>
 <body>
 <!-- Icon sprite (24×24, stroke icons unless .solid) -->
@@ -46,7 +46,7 @@
     <div class="tb-stat"><span class="tb-l">TIME</span><span id="tv-time" class="tb-v">0:00</span></div>
     <span id="tv-mode" class="tb-mode">CAMPAIGN</span>
     <div id="tv-status"></div>
-    <span id="tv-dn-wrap" style="display:none"><span id="tv-dn"></span></span>
+    <span id="tv-dn-wrap" style="display:none"><span id="tv-dn"></span><span id="tv-dn-next"></span></span>
     <span id="tv-rank">PRIVATE</span>
     <button class="tb-btn" id="tv-snd" onclick="G.toggleMute()" title="Sound on/off [K]"><svg class="ico"><use href="#i-snd"/></svg></button>
     <button class="tb-btn" onclick="G.toggleGfx()" title="Graphics quality [Q]"><span>GFX</span><span id="tv-gfx">HIGH</span></button>
@@ -319,6 +319,6 @@
 <script src="js/radial-fog.js?v=1"></script>
 <script src="js/config.js?v=16"></script>
 <script src="js/model-loader.js?v=8"></script>
-<script src="js/game.js?v=25"></script>
+<script src="js/game.js?v=26"></script>
 </body>
 </html>
