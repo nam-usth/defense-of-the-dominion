@@ -617,7 +617,6 @@ const G = (() => {
     for (const tip of _shrikeTips) {
       const ox = cy * tip.x + sy * tip.z, oz = -sy * tip.x + cy * tip.z, oy = _shrikeY + tip.y; // turret yaw → world
       const blt = makeBulletTyped(tx, tz, 0, 'marine', ox, oy, oz, aimY);
-      blt.len = 1.8;                              // longer streaks: the V reads clearly
       if (od) blt.color = SHRIKE.overdriveColor;
       bullets.push(blt);
       muzzleFlash(ox, oy, oz, blt.vx / blt.speed, blt.vz / blt.speed, od ? 0xff4020 : 0xffb030, false);
@@ -1587,59 +1586,75 @@ const G = (() => {
 
   // ── Crate runner's chest lamps ───────────────────────────────────────────
   // At night a unit out of the bunker wears a twin white LED pod on its chest
-  // armour: two small hot lamps, and their beams lying on the ground ahead of it —
-  // fans brightest just past its feet, fading and widening with distance (as the
-  // Marines' flashlights in StarCraft II)
-  const LAMP_FRONT = 0.22, LAMP_SPACING = 0.07, LAMP_CAP = 16;   // ahead of its centre · apart from the middle (LAMP_CHEST: setUnitModel)
-  const _beamTex = (() => {   // u across the fan, v along it (v = 0 at the lamp: the canvas bottom, as flipY puts it)
+  // armour (as the Marines' flashlights in StarCraft II): two small soft hot spots
+  // in one soft glow, and a soft pool of light on the ground ahead of it with no
+  // edge anywhere — plus a real spot light. (A fan with a tip and straight sides,
+  // two of them overlapping, and lamp spheres with hard rims read as sharp rays.)
+  const LAMP_FRONT = 0.22, LAMP_SPACING = 0.07, LAMP_CAP = 8;   // ahead of its centre · apart from the middle (LAMP_CHEST: setUnitModel)
+  // the pool: across, a Gaussian that widens with distance (0.25 → 0.85 of the half-width);
+  // along, it swells in over the first quarter and dies away toward the far end
+  const _beamTex = (() => {   // x across, v along (v = 0 at the lamp: the canvas bottom, as flipY puts it)
     const W = 64, H = 128, c = document.createElement('canvas'); c.width = W; c.height = H;
     const g = c.getContext('2d'), img = g.createImageData(W, H);
     const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
     for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
-      const u = (i + .5) / W, v = 1 - (j + .5) / H, e = Math.abs(u - 0.5) * 2, o = (j * W + i) * 4;
-      const along = sstep(0, 0.08, v) * Math.pow(1 - v, 1.4), across = (1 - sstep(0.3, 1, e)) * (0.7 + 0.3 * (1 - e));
+      const x = (i + .5) / W * 2 - 1, v = 1 - (j + .5) / H, w = 0.25 + 0.6 * v, o = (j * W + i) * 4;
+      const along = sstep(0, 0.25, v) * (1 - v) * (1 - v), across = Math.exp(-3 * (x / w) * (x / w));
       img.data[o] = img.data[o + 1] = img.data[o + 2] = 255; img.data[o + 3] = Math.round(255 * along * across);
     }
     g.putImageData(img, 0, 0);
     return new THREE.CanvasTexture(c);
   })();
-  const _beamGeo2 = (() => {   // the fan, xz plane: 0.14 wide at z = 0 (the lamp's end), 1 wide at z = 1
+  const _beamGeo2 = (() => {   // a quad in the xz plane, 1 wide on x, z from 0 (the lamp's end) to 1
     const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute([-.07,0,0, .5,0,1, .07,0,0, -.07,0,0, -.5,0,1, .5,0,1], 3));
+    g.setAttribute('position', new THREE.Float32BufferAttribute([-.5,0,0, .5,0,1, .5,0,0, -.5,0,0, -.5,0,1, .5,0,1], 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute([0,0, 1,1, 1,0, 0,0, 0,1, 1,1], 2));
     return g;
   })();
-  const _lampMat = (color, map) => new THREE.MeshBasicMaterial({ color, map: map || null, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
-  function _lampIM(geo, mat, renderOrder) {
-    const im = new THREE.InstancedMesh(geo, mat, LAMP_CAP);
-    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    im.frustumCulled = false; im.count = 0; im.renderOrder = renderOrder;
-    scene.add(im);
-    return im;
-  }
-  const _lampSphere = new THREE.SphereGeometry(1, 10, 8);
-  const _lampBeamIM = _lampIM(_beamGeo2, _lampMat(0xf2f6ff, _beamTex), 1);   // white LEDs
-  const _lampGlowIM = _lampIM(_lampSphere, _lampMat(0xe8f0ff), 2), _lampCoreIM = _lampIM(_lampSphere, _lampMat(0xffffff), 3);
+  const _lampBeamIM = new THREE.InstancedMesh(_beamGeo2, new THREE.MeshBasicMaterial({ color: 0xf2f6ff, map: _beamTex, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }), LAMP_CAP);   // white LEDs
+  _lampBeamIM.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  _lampBeamIM.frustumCulled = false; _lampBeamIM.count = 0; _lampBeamIM.renderOrder = 1;
+  scene.add(_lampBeamIM);
+  const _lampFx = makeParticleSystem(32, THREE.AdditiveBlending);   // the lamps themselves: soft sprites, rebuilt every frame
   const _lampM = new THREE.Matrix4(), _lampQ = new THREE.Quaternion(), _lampP = new THREE.Vector3(), _lampS = new THREE.Vector3(), _lampUp = new THREE.Vector3(0, 1, 0);
+  const _lampWhite = new THREE.Color(0xffffff), _lampGlowCol = new THREE.Color(0xe8f0ff);
+  // The pod's light, a real one (one runner at a time): a spot light (40° cone, full within 7° — a wide soft rim — fading
+  // fast with distance, aimed LAMP_TILT below level: flatter, its near rim spreads far over the ground) that lights the
+  // hull, the Zerg and the rocks it faces. In the scene from the start, at 0 when unused (adding a light later recompiles
+  // every material).
+  const LAMP_TILT = 0.21;
+  const _lampLight = new THREE.SpotLight(0xf2f6ff, 0, 8, 0.7, 1 - 0.12 / 0.7, 2);   // penumbra: inner 0.12 rad
+  scene.add(_lampLight, _lampLight.target);
   function syncUnitLamps() {
     let n = 0;
+    _lampLight.intensity = 0;
+    _lampFx.n = 0;
     if (_dnFactor > 0.02) for (const m of marines) {
-      if (!m.mesh.visible || n + 2 > LAMP_CAP) continue;
+      if (!m.mesh.visible || n >= LAMP_CAP) continue;
       const rot = m.mesh.rotation.y, p = m.mesh.position, h = m.lampH ?? 0.8;
-      for (const side of [-1, 1]) {
-        _lampP.set(side * LAMP_SPACING, h, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p);
-        _lampCoreIM.setMatrixAt(n, _lampM.makeScale(.045, .045, .045).setPosition(_lampP));
-        _lampGlowIM.setMatrixAt(n, _lampM.makeScale(.16, .16, .16).setPosition(_lampP));
-        _lampP.set(side * LAMP_SPACING, 0, LAMP_FRONT + 0.1).applyAxisAngle(_lampUp, rot).add(p).setY(.025);
-        _lampQ.setFromAxisAngle(_lampUp, rot + side * 0.06);   // a little outward
-        _lampBeamIM.setMatrixAt(n, _lampM.compose(_lampP, _lampQ, _lampS.set(3.2, 1, 4.4)));
-        n++;
+      if (_lampLight.intensity === 0) {
+        _lampLight.position.set(0, h, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p);
+        _lampLight.target.position.set(Math.sin(rot) * Math.cos(LAMP_TILT), -Math.sin(LAMP_TILT), Math.cos(rot) * Math.cos(LAMP_TILT)).add(_lampLight.position);
+        _lampLight.target.updateMatrixWorld();
+        _lampLight.intensity = 3.5 * _dnFactor;
       }
+      for (const side of [-1, 1]) {   // the two LEDs
+        _lampP.set(side * LAMP_SPACING, h, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p);
+        _mushPut(_lampFx, _lampP.x, _lampP.y, _lampP.z, 0.12, _lampWhite, _dnFactor);
+      }
+      _lampP.set(0, h, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p);
+      _mushPut(_lampFx, _lampP.x, _lampP.y, _lampP.z, 0.6, _lampGlowCol, 0.35 * _dnFactor);
+      // one pool of light on the ground for the pod
+      _lampP.set(0, 0, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p).setY(.025);
+      _lampBeamIM.setMatrixAt(n, _lampM.compose(_lampP, _lampQ.setFromAxisAngle(_lampUp, rot), _lampS.set(3.6, 1, 5.0)));
+      n++;
     }
-    _lampBeamIM.material.opacity = 0.6 * _dnFactor;
-    _lampCoreIM.material.opacity = _dnFactor;
-    _lampGlowIM.material.opacity = 0.35 * _dnFactor;
-    for (const im of [_lampBeamIM, _lampCoreIM, _lampGlowIM]) { im.count = n; im.instanceMatrix.needsUpdate = true; }
+    _lampBeamIM.material.opacity = 0.55 * _dnFactor;   // over the ground the spot light lights too
+    _lampBeamIM.count = n; _lampBeamIM.instanceMatrix.needsUpdate = true;
+    const geo = _lampFx.points.geometry;
+    geo.setDrawRange(0, _lampFx.n);
+    for (const k of ['position', 'aColor', 'aSize', 'aAlpha']) geo.attributes[k].needsUpdate = true;
   }
 
   // ── Strikes ──────────────────────────────────────────────────────────────
@@ -2193,7 +2208,8 @@ const G = (() => {
     const vx=Math.cos(a)*def.bulletSpeed, vz=Math.sin(a)*def.bulletSpeed;
     const D=Math.hypot(tx-ox,tz-oz), vy=D>0.05?(ty-oy)/D*def.bulletSpeed:0;   // per-frame drop to reach ty at the aim point
     const b={mesh:{position:new THREE.Vector3(ox,oy,oz)},vx,vy,vz,color:def.bulletColor,
-             alive:true,dist:0,speed:def.bulletSpeed,unitType}; // mesh = position holder; drawn by syncBullets()
+             alive:true,dist:0,speed:def.bulletSpeed,unitType,
+             len:1.8}; // mesh = position holder; drawn by syncBullets(). len: the streak, alike for every round (bunker and Shrike: as bright; the Shrike's V reads clearly)
     _orientBullet(b);
     return b;
   }
@@ -3000,7 +3016,7 @@ const G = (() => {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
-    const m = new THREE.Mesh(g, _sensorRingMat);
+    const m = new THREE.Mesh(g, _sensorRingMat.clone());   // its own: each level's ring fades on its own (syncSensor)
     m.position.y = 0.03; m.renderOrder = 1; m.visible = false;
     scene.add(m);
     return (_sensorRings[lvl] = m);
@@ -3024,15 +3040,29 @@ const G = (() => {
   _blipIM.frustumCulled = false; _blipIM.count = 0; _blipIM.renderOrder = 2;
   scene.add(_blipIM);
   const _blipM = new THREE.Matrix4(), _blipF = new THREE.Vector3(), _blipR = new THREE.Vector3(), _blipU = new THREE.Vector3(0, 1, 0);
+  // Each level's ring eases (real time: also behind the menu) toward shown — the level owned,
+  // while playing, as strong as the night is dark — or hidden: it fades in when researched,
+  // the levels crossfade on an upgrade, it follows the night and fades out with the game
+  const SENSOR_RING_FADE = 0.35;   // s: the time constant (~1 s to show or hide)
+  const _sensorRingA = [0, 0, 0, 0];
+  let _sensorT = performance.now();
   function syncSensor() {
-    const on = phase === 'playing' && sensorLvl >= 1;
-    _sensorRings.forEach((m, l) => { if (m) m.visible = false; });
-    if (!on) { _blipIM.count = 0; return; }
-    if (_dnFactor > 0.1) {
-      const ring = _sensorRing(sensorLvl);
-      ring.visible = true;
-      _sensorRingMat.opacity = 0.75 * _dnFactor;
+    const now = performance.now(), k = 1 - Math.exp(-Math.min(0.1, (now - _sensorT) / 1000) / SENSOR_RING_FADE);
+    _sensorT = now;
+    for (let l = 1; l <= 3; l++) {
+      _sensorRingA[l] += ((phase === 'playing' && sensorLvl === l ? _dnFactor : 0) - _sensorRingA[l]) * k;
+      const show = _sensorRingA[l] >= 0.003;
+      if (!show && !_sensorRings[l]) continue;
+      const ring = _sensorRing(l);
+      ring.visible = show;
+      ring.material.opacity = 0.75 * _sensorRingA[l];
     }
+    if (phase !== 'playing' || sensorLvl < 1) { _blipIM.count = 0; return; }
+    // the blips come in with the ring (fresh research), and each fades in as it crosses into
+    // range and out as it nears the lit edge (where its Zerg appears) instead of popping
+    const blipsA = Math.max(0, Math.min(1, _sensorRingA[sensorLvl] / Math.max(0.1, _dnFactor)));
+    const range = SENSOR_RANGE[sensorLvl], litEdge = scene.fog.far * 1.05;   // the enemies' visibility edge (loop)
+    const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
     // the screen's up direction on the ground: the camera's up and forward axes, flattened (no roll)
     const e = camera.matrixWorld.elements;
     _blipF.set(e[4] - e[8], 0, e[6] - e[10]);
@@ -3044,14 +3074,16 @@ const G = (() => {
     let n = 0;
     for (const en of allEnemies()) {
       if (n >= BLIP_CAP || !_sensed(en)) continue;
-      const p = en.mesh.position;
+      const p = en.mesh.position, d = Math.hypot(p.x, p.z);
+      const a = blipsA * sstep(litEdge, litEdge + 0.8, d) * (1 - sstep(range - 0.8, range, d));
+      if (a < 0.01) continue;
       // the glyph's top (the quad's -z: the canvas top, flipped up the plane) → F, its x → the screen's right
       _blipM.set(_blipR.x * s, 0, -_blipF.x * s, p.x,
                  _blipR.y * s, 1, -_blipF.y * s, 0.05,
                  _blipR.z * s, 0, -_blipF.z * s, p.z,
                  0, 0, 0, 1);
       _blipIM.setMatrixAt(n, _blipM);
-      _tmpCol.setRGB(pulse, pulse, pulse); _blipIM.setColorAt(n, _tmpCol);
+      _tmpCol.setRGB(pulse * a, pulse * a, pulse * a); _blipIM.setColorAt(n, _tmpCol);   // additive: the colour scales its light
       n++;
     }
     _blipIM.count = n;
