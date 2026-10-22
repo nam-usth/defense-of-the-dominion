@@ -129,6 +129,9 @@ const UI_ICONS = {
   superstim:  UI_DIR + 'btn-upgrade-terran-superstimppack.png',
   concussive: UI_DIR + 'btn-upgrade-terran-explosiveshrapnelshells.png',
   snipe:      UI_DIR + 'btn-upgrade-terran-ui-lazertargetingsystem.png',
+  // Placeholder: btn-building-terran-sensortower.png is not exported yet. Until it is,
+  // the roster card draws the #i-sensor glyph (index.html sprite; also the console chip)
+  sensor:     null,
 };
 
 // Music: the StarCraft soundtrack (Glenn Stafford), AAC 96 kbps made with

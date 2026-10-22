@@ -143,6 +143,7 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 
 /* Centre: upgrade chips (side column) */
 #con-upgrades{display:grid;grid-template-columns:repeat(3,34px);grid-auto-rows:34px;gap:5px;align-content:center;flex-shrink:0}
+#con-upgrades.wide{grid-template-columns:repeat(4,34px)}   /* ten chips: four rows would overflow the console */
 .upg-chip{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#7fa6cc;opacity:.4;
   background:linear-gradient(180deg,#0b1726,#050b14);border:1px solid #1d3048;transition:opacity .2s,border-color .2s,box-shadow .2s;
   clip-path:polygon(5px 0,100% 0,100% calc(100% - 5px),calc(100% - 5px) 100%,0 100%,0 5px)}
@@ -270,6 +271,7 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .upgrow.marauder{border:1px solid #d4761e;background:rgba(130,60,10,.16)}
 .upgrow.ghost{border:1px solid #9152e0;background:rgba(70,20,140,.16)}
 .upgrow.marine{border:1px solid #3a78d4;background:rgba(20,60,130,.16)}
+.upgrow.sensor{border:1px solid #c0453a;background:rgba(130,30,20,.16)}   /* Sensor Tower (no unit): radar red */
 .upgrow.locked{opacity:.6}
 .armory-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
 .upgrow.armory{display:flex;flex-direction:column;border:1px solid #b08a10;background:rgba(120,90,10,.14);padding:7px 9px}
@@ -283,9 +285,10 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .armory-head span{margin-left:8px;font-size:11px;letter-spacing:.5px;font-weight:600;color:var(--dim)}
 .upgrow-head{display:flex;align-items:center;gap:9px}
 .upgrow-ico{width:40px;height:40px;flex-shrink:0;border:1px solid rgba(140,200,255,.35);border-radius:2px}
+.upgrow-glyph{display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#0b1726,#050b14);color:#ff7a6a;font-size:28px}   /* placeholder until the button art is exported */
 .upgrow.locked .upgrow-ico{filter:grayscale(1) brightness(.7)}
 .upgrow-name{font-size:15px;font-weight:700;letter-spacing:1px;margin-bottom:2px}
-.upgrow-name.marauder{color:#ffbd8a}.upgrow-name.ghost{color:#d6b0ff}.upgrow-name.marine{color:#9fc8ff}
+.upgrow-name.marauder{color:#ffbd8a}.upgrow-name.ghost{color:#d6b0ff}.upgrow-name.marine{color:#9fc8ff}.upgrow-name.sensor{color:#ffa294}
 .upgrow-desc{font-size:13px;font-weight:500;color:#b9cfe6;line-height:1.3}
 
 /* ── Menu ────────────────────────────────────────────────────────────────── */

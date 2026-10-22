@@ -14,6 +14,7 @@ const G = (() => {
   let dnEnabled = false;     // opt-in toggle
   let _dnTime   = 0;         // seconds into current cycle (0..DN_CYCLE)
   let _dnFactor = 0;         // 0=full day, 1=full night (smooth blend)
+  let _dnLitF   = 0;         // effective factor the lights / fog were last applied at (a Viking flare lifts it)
   // One cycle (3 min): day 78 s → dusk 24 s → night 54 s → dawn 24 s
   const DN_DAY = 78, DN_FADE = 24, DN_NIGHT = 54;
   const DN_CYCLE = DN_DAY + DN_FADE + DN_NIGHT + DN_FADE;
@@ -276,6 +277,8 @@ const G = (() => {
                 label:'Gh', name:'GHOST',    cls:'gh',
                 attrs:['light','biological','psionic'] },
   };
+  // Sensor Tower blip range per level (world units from the bunker centre); the night's lit edge is 9
+  const SENSOR_RANGE = [0, 10.75, 12.5, 16];
   const UPGRADE_DEF = {
     superstim:  { cost:[250,150], unit:'marine',   name:'Super Stimpack', icon:UI_ICONS.superstim,
                   desc:"Nova's Marines: Stimpack costs no HP and repairs the bunker while it lasts (stacks with the hull's self-repair)",
@@ -294,6 +297,11 @@ const G = (() => {
                     { cost:[320,130],  desc:'Snipe Lv.2 — CD 6s → 4s' },
                     { cost:[500,200],  desc:'Snipe Lv.3 — CD 4s → 2.5s (MAX)' },
                   ]},
+    // SC2's Sensor Tower: Zerg in the dark show as red "!" blips (sensorLvl 0-3). Needs no
+    // unit. The research buys Lv.1, so tiers[n] is Lv.n+1 (tiers[0] repeats the research)
+    sensor:     { cost:[100,25],  unit:null,       name:'Sensor Tower', icon:UI_ICONS.sensor,   // null: #i-sensor glyph
+                  desc:'At night, Zerg in the dark within range show as red ! blips (not which kind). Range 10.75 / 12.5 / 16; the lit area reaches about 9.',
+                  tiers:[[100,25],[175,50],[275,100]].map((cost, i) => ({ cost, desc:`Sensor Tower lv.${i+1} — blips out to ${SENSOR_RANGE[i+1]}` })) },
   };
   // Snipe CD per level (ms): base + 3 tiers
   const SNIPE_CD   = [8000, 6000, 4000, 2500];
@@ -320,6 +328,7 @@ const G = (() => {
   let snipeUnlocked = false;
   let snipeLvl = 0;       // 0-3 tier within snipe upgrade
   let concussiveLvl = 0;  // 0-3 tier within concussive upgrade
+  let sensorLvl = 0;      // 0 = not researched, 1-3 = Sensor Tower level (SENSOR_RANGE)
   let slowedEnemies = new Map();      // enemy mesh uuid → {until (_gameT), factor}
   let rosterHover = false;
   let bunkerHoverTimer = 0;
@@ -1259,6 +1268,10 @@ const G = (() => {
 
     // Cleanup after the Viking leaves the screen
     after(TOTAL_X / SPEED + 0.4, removeViking);
+
+    // At night the Viking also drops a parachute flare (as in Beach Head). Checked again
+    // when it fires: Y switches the cycle off without pausing.
+    if (dnEnabled && _dnFactor > 0.5) after(0.6, () => { if (dnEnabled && _dnFactor > 0.5) startFlare(); });
   }
 
   function removeViking() {
@@ -1274,6 +1287,55 @@ const G = (() => {
     vikingMesh.position.y = 5 + Math.sin(_gameT * 4) * 0.15;
     // Tilt slightly in direction of travel
     vikingMesh.rotation.z = -0.05;
+  }
+
+  // ── Viking flare ─────────────────────────────────────────────────────────
+  // A night airstrike drops a parachute flare that burns FLARE_DUR s of game
+  // time. While it burns the lights and fog follow an effective night factor
+  // lifted toward FLARE_F (_dnEffFactor; fog far ≈ 21.6 at full flare, so the
+  // whole spawn ring shows). It hangs 2.5 units beyond the bunker as the camera
+  // saw it on ignition and sinks from 11 to 6.5.
+  const FLARE_DUR = 7.5, FLARE_F = 0.62;
+  let _flareT = -1;              // seconds burned (game time); -1 = no flare
+  let _flareDir = [0, -1];       // ground direction camera → bunker at ignition
+  let _flareMesh = null, _flareCore = null, _flareGlow = null;
+  const _flareCoreGeo = new THREE.SphereGeometry(0.22, 12, 8), _flareGlowGeo = new THREE.SphereGeometry(0.8, 16, 12);
+  function startFlare() {
+    if (!_flareMesh) {
+      const mat = (color) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+      _flareCore = new THREE.Mesh(_flareCoreGeo, mat(0xfff6d8));
+      _flareGlow = new THREE.Mesh(_flareGlowGeo, mat(0xffd9a0));
+      _flareMesh = new THREE.Group(); _flareMesh.add(_flareGlow, _flareCore);
+      scene.add(_flareMesh);
+    }
+    const cx = camera.position.x, cz = camera.position.z, l = Math.hypot(cx, cz) || 1;
+    _flareDir = [-cx / l, -cz / l];
+    _flareT = 0;                 // a flare started while one burns restarts the timer
+    _flareMesh.visible = false;
+    setStatus('Viking flare — the battlefield is lit!');
+  }
+  // Flare strength 0-1: fades in over 0.4 s, out over the last 1.5 s
+  function _flareK() {
+    if (_flareT < 0) return 0;
+    return Math.min(1, _flareT / 0.4) * Math.max(0, Math.min(1, (FLARE_DUR - _flareT) / 1.5));
+  }
+  function updateFlare(dt) {     // live frames only (game time)
+    if (_flareT < 0) return;
+    _flareT += dt;
+    if (_flareT >= FLARE_DUR) _flareT = -1;
+    const k = _flareK();
+    _flareMesh.visible = k > 0;
+    if (k <= 0) return;
+    const [dx, dz] = _flareDir, sway = 0.35 * Math.sin(_flareT * 1.3);
+    _flareMesh.position.set(dx * 2.5 - dz * sway, 11 - 4.5 * _flareT / FLARE_DUR, dz * 2.5 + dx * sway);
+    _flareCore.material.opacity = 0.95 * k;
+    _flareGlow.material.opacity = 0.35 * k;
+  }
+  // Restart / Load / main menu: no flare, lights back at the true night factor
+  function clearFlare() {
+    _flareT = -1;
+    if (_flareMesh) { scene.remove(_flareMesh); _flareCore.material.dispose(); _flareGlow.material.dispose(); _flareMesh = _flareCore = _flareGlow = null; }
+    if (_dnLitF !== _dnFactor) { _dnLitF = _dnFactor; _applyDNLights(_dnFactor); }
   }
 
     // ── Marine movement ──────────────────────────────────────────────────────
@@ -2224,6 +2286,7 @@ const G = (() => {
       { id:'upg-ammo',  lvl:ammoLvl,       show:true },
       { id:'upg-conc',  lvl:concussiveLvl, show:concussiveUnlocked },
       { id:'upg-snipe', lvl:snipeLvl,      show:snipeUnlocked },
+      { id:'upg-sensor', lvl:sensorLvl,    show:sensorLvl>=1 },
       { id:'upg-superstim', lvl:3,         show:superStimUnlocked },   // single research: shown as maxed
       { id:'upg-shrike',    lvl:3,         show:hpLvl>=3 },            // Shrike turret (hull Lv3)
     ];
@@ -2245,6 +2308,11 @@ const G = (() => {
     }
     const od = shrikeOverdrive(), sh = $('upg-shrike');
     if (sh) { sh.classList.toggle('od', od); sh.title = od ? 'Shrike overdrive — six Marines inside: rate of fire ×2.5' : 'Shrike turret — auto-fire, firepower of 2 marines'; }
+    const sn = $('upg-sensor');
+    if (sn) sn.title = `Sensor Tower — blips out to ${SENSOR_RANGE[sensorLvl]}`;
+    // Ten chips shown (Sensor Tower with all the others) take a fourth column: four rows overflow the console
+    const box = $('con-upgrades');
+    if (box) box.classList.toggle('wide', [...box.children].filter(c => c.style.display !== 'none').length > 9);
   }
 
   // DOM caches: slot pips are rebuilt only when the roster changes; text and
@@ -2555,9 +2623,55 @@ const G = (() => {
     ctx.globalAlpha = 1;
   }
 
+  // ── Sensor Tower: radar blips for Zerg in the dark ─────────────────────────
+  // Every live enemy hidden by the night fog (mesh not visible) within
+  // SENSOR_RANGE shows as a pulsing red "!" at its feet — the same marker for
+  // every kind, no HP bar. At night a faint ring on the ground marks the range.
+  const _sensorV = new THREE.Vector3();
+  function drawSensor() {
+    if (phase !== 'playing' || sensorLvl < 1) return;
+    const ctx = chCtx, R = SENSOR_RANGE[sensorLvl];
+    // Coverage ring (projected segment by segment; a point behind the camera breaks the line)
+    if (_dnFactor > 0.1) {
+      ctx.strokeStyle = `rgba(255,80,60,${(0.22 * _dnFactor).toFixed(3)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let pen = false;
+      for (let i = 0; i <= 64; i++) {
+        const a = i / 64 * Math.PI * 2, v = _sensorV.set(Math.cos(a) * R, 0, Math.sin(a) * R).project(camera);
+        if (v.z > 1) { pen = false; continue; }
+        const sx = (v.x * 0.5 + 0.5) * _logW, sy = (-v.y * 0.5 + 0.5) * _logH;
+        if (pen) ctx.lineTo(sx, sy); else ctx.moveTo(sx, sy);
+        pen = true;
+      }
+      ctx.stroke();
+    }
+    // Blips (pulse on real time: they keep blinking while paused)
+    const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 1000 * Math.PI * 2 * 1.5);
+    ctx.lineWidth = 2;
+    ctx.font = 'bold 11px "Share Tech Mono", Consolas, monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    allEnemies().forEach(e => {
+      if (e.dead || e.mesh.visible) return;
+      const p = e.mesh.position;
+      if (Math.hypot(p.x, p.z) > R) return;
+      const v = _sensorV.set(p.x, 0.3, p.z).project(camera);
+      if (v.z > 1) return;
+      const sx = (v.x * 0.5 + 0.5) * _logW, sy = (-v.y * 0.5 + 0.5) * _logH;
+      if (sx < -10 || sx > _logW + 10 || sy < -10 || sy > _logH + 10) return;
+      ctx.globalAlpha = pulse;
+      ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,59,47,0.18)'; ctx.fill();
+      ctx.strokeStyle = '#ff3b2f'; ctx.stroke();
+      ctx.fillStyle = '#ffd0c8'; ctx.fillText('!', sx, sy + 0.5);
+    });
+    ctx.globalAlpha = 1; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  }
+
   function drawCH(){
     const gameH=_logH;
     chCtx.clearRect(0,0,_logW,gameH);
+    drawSensor();
     drawEnemyHPBars();
     // Floating damage numbers
     if(floatTexts.length>0){
@@ -2662,10 +2776,14 @@ const G = (() => {
     // Slew-limited: the cycle itself moves slower than this, so only switching
     // the cycle on / off is blended (the night lifts over DN_SLEW s, not at once)
     const step = dt / DN_SLEW;
-    const f = Math.max(_dnFactor - step, Math.min(_dnFactor + step, target));
-    if (f !== _dnFactor) { _dnFactor = f; _applyDNLights(f); }
+    _dnFactor = Math.max(_dnFactor - step, Math.min(_dnFactor + step, target));
+    // Lights and fog follow the effective factor (a burning flare lifts the
+    // night); the DAY / NIGHT label and the flare trigger keep the true one
+    const fe = _dnEffFactor();
+    if (fe !== _dnLitF) { _dnLitF = fe; _applyDNLights(fe); }
     _updateDNIndicator();
   }
+  function _dnEffFactor() { return _dnFactor - _flareK() * Math.max(0, _dnFactor - FLARE_F); }
 
   // Day-time light levels per graphics quality. Day/night blends from these,
   // so the two settings no longer overwrite each other.
@@ -2962,6 +3080,7 @@ const G = (() => {
     ghostSnipeTick(dt);
     updateShrike(dt);
     updateCorpses(dt);
+    updateFlare(dt);            // before the lights: they follow its strength
     updateDayNight(dt);
     tutorialTick();
     // Update floating damage numbers
@@ -2977,6 +3096,7 @@ const G = (() => {
   function clearEntities(){
     clearScheduler();        // drop pending wave countdown / Viking / bombs / nuke (runs their cleanup)
     removeViking();
+    clearFlare();            // also relights the scene at the true night factor
     _crateCbs=null; waveCrates=0;   // the crate on its way went with the Viking / marines; a stale wait would stall the next game
     _nukeInFlight=false;
     clearParticles(); _fireAccum.length=0;
@@ -3394,7 +3514,7 @@ const G = (() => {
   function researchUpgrade(key, tier) {
     const def = UPGRADE_DEF[key];
     if (!def) return;
-    if (!roster.includes(def.unit)) { setStatus(`Need a ${def.unit} in bunker first!`); return; }
+    if (def.unit && !roster.includes(def.unit)) { setStatus(`Need a ${def.unit} in bunker first!`); return; }   // (the Sensor Tower needs none)
 
     if (tier === undefined) {
       // Base unlock
@@ -3404,7 +3524,8 @@ const G = (() => {
       if (key === 'concussive') concussiveUnlocked = true;
       if (key === 'snipe')      snipeUnlocked      = true;
       if (key === 'superstim')  superStimUnlocked  = true;
-      setStatus(`${def.name} researched!`);
+      if (key === 'sensor')     sensorLvl          = 1;
+      setStatus(key === 'sensor' ? def.tiers[0].desc : `${def.name} researched!`);
     } else {
       // Tier upgrade
       const td = def.tiers[tier];
@@ -3414,6 +3535,7 @@ const G = (() => {
       minerals -= m; gas -= g;
       if (key === 'concussive') concussiveLvl = tier + 1;
       if (key === 'snipe')      snipeLvl      = tier + 1;
+      if (key === 'sensor')     sensorLvl     = tier + 1;
       setStatus(td.desc);
     }
     updateHUD();
@@ -3545,10 +3667,12 @@ const G = (() => {
     const upgRow = document.getElementById('upgrade-row');
     upgRow.innerHTML = '';
     Object.entries(UPGRADE_DEF).forEach(([key, def]) => {
-      const [unlocked, curTierLvl] = { concussive: [concussiveUnlocked, concussiveLvl], snipe: [snipeUnlocked, snipeLvl], superstim: [superStimUnlocked, 0] }[key];
-      const hasUnit    = roster.includes(def.unit);
+      const [unlocked, curTierLvl] = { concussive: [concussiveUnlocked, concussiveLvl], snipe: [snipeUnlocked, snipeLvl], superstim: [superStimUnlocked, 0],
+                                       sensor: [sensorLvl > 0, sensorLvl] }[key];
+      const hasUnit    = !def.unit || roster.includes(def.unit);   // the Sensor Tower needs no unit
+      const cls        = def.unit || key;
       const el = document.createElement('div');
-      el.className = `upgrow ${def.unit} ${!hasUnit&&!unlocked?'locked':''}`;
+      el.className = `upgrow ${cls} ${!hasUnit&&!unlocked?'locked':''}`;
 
       // What's the current status line?
       let statusLine = def.desc;
@@ -3556,6 +3680,7 @@ const G = (() => {
         if (key === 'snipe')      statusLine = `CD: ${(SNIPE_CD[snipeLvl]/1000).toFixed(1)}s | tier ${snipeLvl}/3`;
         if (key === 'concussive') statusLine = concussiveLvl===0 ? 'Single target' : `AOE radius ${CONC_RADIUS[concussiveLvl].toFixed(1)} | tier ${concussiveLvl}/3`;
         if (key === 'superstim')  statusLine = `Stim: no HP cost, +${CFG.superstim_heal} HP/s to the bunker for ${CFG.stim_duration} s (stacks with self-repair)`;
+        if (key === 'sensor')     statusLine = `Blips out to ${SENSOR_RANGE[sensorLvl]} | tier ${sensorLvl}/3`;
       }
 
       // Determine next action
@@ -3579,9 +3704,12 @@ const G = (() => {
         btnHandler = null;
       }
 
+      // No button art yet (Sensor Tower): the sprite glyph in a dark framed square of the same size
+      const ico = def.icon ? `<img class="upgrow-ico" src="${def.icon}" alt="">`
+                           : `<span class="upgrow-ico upgrow-glyph"><svg class="ico"><use href="#i-${key}"/></svg></span>`;
       el.innerHTML = `
-        <div class="upgrow-head"><img class="upgrow-ico" src="${def.icon}" alt=""><div>
-          <div class="upgrow-name ${def.unit}">${def.name}${unlocked?' ✓':''}</div>
+        <div class="upgrow-head">${ico}<div>
+          <div class="upgrow-name ${cls}">${def.name}${unlocked?' ✓':''}</div>
           <div class="upgrow-desc">${statusLine}${!hasUnit&&!unlocked?' — need '+def.unit:''}</div></div></div>
         <button class="upgrow-btn" ${btnDisabled?'disabled':''}>${btnLabel}</button>`;
       if (btnHandler && !btnDisabled) el.querySelector('button').addEventListener('click', btnHandler);
@@ -3708,6 +3836,7 @@ const G = (() => {
     superStimUnlocked = false;
     snipeLvl = 0;
     concussiveLvl = 0;
+    sensorLvl = 0;
     slowedEnemies.clear();
     snipeReady = [];
     syncMarines();
@@ -3768,6 +3897,10 @@ const G = (() => {
         updateBunkerVisual(); // upgrade plates + hologram follow hpLvl
         updateHUD();
       }
+    },
+    'sensor': {
+      desc: '📡 Sensor Tower maxed — blips out to 16',
+      fn: () => { sensorLvl=3; setStatus('Sensor Tower maxed — blips out to 16'); updateHUD(); }
     },
 
     // ── Zerg faction cheats ───────────────────────────────────────────────
@@ -3915,7 +4048,7 @@ const G = (() => {
     resize(); // applies the quality's pixel ratio and keeps _logW/_logH accurate
 
     if (_sunLight) _sunLight.castShadow = hi;
-    _applyDNLights(_dnFactor); // light levels for this quality, blended with day/night
+    _applyDNLights(_dnLitF); // light levels for this quality, blended with day/night (and a flare)
 
     if (hi && _sunLight && _sunLight.shadow.map) { _sunLight.shadow.map.dispose(); _sunLight.shadow.map = null; }
     _syncGfxUI();
@@ -3992,7 +4125,7 @@ const G = (() => {
       bunkerHp, maxHp, ammo, maxAmmo,
       dmgLvl, armorLvl, hpLvl, ammoLvl,
       roster: [...roster],
-      concussiveUnlocked, snipeUnlocked, concussiveLvl, snipeLvl, superStimUnlocked,
+      concussiveUnlocked, snipeUnlocked, concussiveLvl, snipeLvl, superStimUnlocked, sensorLvl,
       armory: { ...armory }, endlessSteps,
       gfxQuality,
       wavePhase, gameT: _gameT, victoryAchieved, gameMode,
@@ -4053,7 +4186,7 @@ const G = (() => {
       dmgLvl = d.dmgLvl || 0; armorLvl = d.armorLvl || 0; hpLvl = d.hpLvl || 0; ammoLvl = d.ammoLvl || 0;
       roster = [...d.roster];
       concussiveUnlocked = !!d.concussiveUnlocked; snipeUnlocked = !!d.snipeUnlocked; superStimUnlocked = !!d.superStimUnlocked;
-      concussiveLvl = d.concussiveLvl || 0; snipeLvl = d.snipeLvl || 0;
+      concussiveLvl = d.concussiveLvl || 0; snipeLvl = d.snipeLvl || 0; sensorLvl = d.sensorLvl || 0;   // older saves: no Sensor Tower
       armory = { hp: 0, dmg: 0, ammo: 0, cd: 0, ...(d.armory || {}) };   // HP / ammo purchases are already in maxHp / maxAmmo
       snipeReady = roster.filter(u => u === 'ghost').map(() => 0);
       // Survival clock, victory and cooldowns (absent in older saves → defaults)

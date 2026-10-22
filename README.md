@@ -94,6 +94,8 @@ The **nuke** (N) unlocks at wave 5: a two-second warning, then the warhead strea
 
 Hover a command-card button for a tooltip with its cost, effect, and why it is disabled.
 
+**At night** (Y) the light reaches only about 9 units from the bunker, and the Zerg come in from 13–15. The **Sensor Tower** research in the roster (B — needs no unit; 100 ◆ 25 ▲, then 175 ◆ 50 ▲ and 275 ◆ 100 ▲) shows Zerg in the dark as pulsing red **!** blips, without telling which kind, out to 10.75 / 12.5 / 16 units; a faint red ring marks the range at night. Its icon is a placeholder radar glyph until the StarCraft II button art is exported. An airstrike (R) called at night also drops a **Viking flare**: for 7.5 s it lifts the darkness enough to show the whole field.
+
 ## Saving
 
 - **Menu → SAVE / LOAD** — one manual save slot.
@@ -111,6 +113,7 @@ Type `dotd` during play to open the cheat console. `help` prints the full list t
 | `mineral` / `gas` | +500 minerals / +500 gas |
 | `fu` | damage, armor and hull maxed (Shrike turret + self-repair) |
 | `siege` · `bunker` | damage maxed · HP + armor maxed |
+| `sensor` | Sensor Tower maxed (blips out to 16) |
 | `terran` | hire 2 Marines |
 | `medic` · `immortal` | full repair · 99999 HP |
 | `korhal` | reset airstrike and nuke cooldowns |

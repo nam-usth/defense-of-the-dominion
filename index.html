@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="css/hud.css?v=18">
+<link rel="stylesheet" href="css/hud.css?v=19">
 </head>
 <body>
 <!-- Icon sprite (24×24, stroke icons unless .solid) -->
@@ -31,6 +31,8 @@
   <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.3 9.4a2.8 2.8 0 1 1 3.9 2.6c-.8.4-1.2 1-1.2 1.9v.4M12 17.2v.3"/></symbol>
   <symbol id="i-cheat" viewBox="0 0 24 24"><path d="M3.5 5h17v14h-17z"/><path d="M7 10l3 2-3 2M12.5 15H17"/></symbol>
   <symbol id="i-gfx" viewBox="0 0 24 24"><path d="M3 4.5h18v11.5H3z"/><path d="M8 20h8M12 16v4"/></symbol>
+  <!-- Sensor Tower radar: PLACEHOLDER until the SC2 btn-building-terran-sensortower.png is exported (then UI_ICONS.sensor + an <img> in #upg-sensor) -->
+  <symbol id="i-sensor" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 8 8M4 5a15 15 0 0 1 15 15M4 20l10.5-10.5"/><circle cx="14" cy="14.3" r="1.6" fill="currentColor" stroke="none"/></symbol>
 </svg>
 <div id="gw">
   <canvas id="gc"></canvas>
@@ -99,6 +101,7 @@
         <div class="upg-chip" id="upg-ammo"  title="Ammo storage"><img class="ico" id="upg-ammo-ico" src="assets/ui/btn-upgrade-terran-magrailmunitions.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
         <div class="upg-chip" id="upg-conc"  title="Concussive Shells" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-explosiveshrapnelshells.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
         <div class="upg-chip" id="upg-snipe" title="Snipe" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-ui-lazertargetingsystem.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
+        <div class="upg-chip" id="upg-sensor" title="Sensor Tower" style="display:none"><svg class="ico"><use href="#i-sensor"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
         <div class="upg-chip" id="upg-superstim" title="Super Stimpack" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-superstimppack.png" alt=""></div>
         <div class="upg-chip maxed" id="upg-endless" title="Endless reinforcements" style="display:none"><svg class="ico"><use href="#i-endless"/></svg><span class="uc-n" id="upg-endless-n"></span></div>
         <div class="upg-chip" id="upg-shrike" title="Shrike turret" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-hisecautotracking.png" alt=""></div>
@@ -314,8 +317,8 @@
 <!-- Game: classic scripts sharing globals — keep this order. Bump ?v= when a file changes. -->
 <script src="js/lib/obj-loader.js?v=2"></script>
 <script src="js/radial-fog.js?v=1"></script>
-<script src="js/config.js?v=15"></script>
+<script src="js/config.js?v=16"></script>
 <script src="js/model-loader.js?v=8"></script>
-<script src="js/game.js?v=24"></script>
+<script src="js/game.js?v=25"></script>
 </body>
 </html>
