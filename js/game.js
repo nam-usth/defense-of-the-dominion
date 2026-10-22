@@ -1817,22 +1817,16 @@ const G = (() => {
       // Screen flash — strong white then orange
       flash('nuke-flash');
 
-      // Massive particle burst, and black debris flung out of the blast
-      spawnParts(new THREE.Vector3(tx, 0.5, tz), 0xff6600, 50);
-      spawnParts(new THREE.Vector3(tx, 3,   tz), 0xff4400, 30);
-      spawnParts(new THREE.Vector3(tx, 0.5, tz), 0xffaa00, 25);
-      for (let i = 0; i < 40; i++) {
-        const a = Math.random() * Math.PI * 2, v = 4 + Math.random() * 7;
-        emitParticle(_smoke, tx, .4, tz, Math.cos(a) * v, 4 + Math.random() * 6, Math.sin(a) * v, 1.2 + Math.random() * .6, .16, .1, .95, 0x1a1410, 0x2a2018, 14, .3, 0);
-      }
+      // (no sparks or debris flung across the field: hard to read; the cloud, its dust
+      // ring and the shockwave carry it)
 
-      // Kill ALL enemies in radius — bunker excluded (hardened)
+      // Kill ALL enemies in radius — bunker excluded (hardened); burnt: no blood
       let killed = 0;
       allEnemies().forEach(e => {
         if(e.dead) return;
         const dx=e.mesh.position.x-tx, dz=e.mesh.position.z-tz;
         if(Math.sqrt(dx*dx+dz*dz) <= NUKE_RADIUS){
-          killEnemy(e, true);
+          killEnemy(e, true, false);
           killed++;
         }
       });
@@ -1958,10 +1952,27 @@ const G = (() => {
   }
 
   // ── Kill / upgrade ────────────────────────────────────────────────────────
-  function killEnemy(e,reward){
+  // Zerg blood: Zergling, Roach — fresh → dried
+  const BLOOD = { z: [0x3e9a2e, 0x0a2a0c], r: [0xc8601e, 0x3a1200] };
+  // A round hitting a Zerg: a little of its blood spurts out the far side along (dx, dz)
+  // and falls. (Sparks in the round's colour, flung up and out, read as fireworks.)
+  function bloodFx(e, p, dx, dz) {
+    const [c0, c1] = BLOOD[e.type === 'r' ? 'r' : 'z'], R = Math.random;
+    for (let i = 0; i < 4; i++)
+      emitParticle(_smoke, p.x, p.y, p.z, dx * 2.4 + (R() - .5) * 1.4, .6 + R() * 1.8, dz * 2.4 + (R() - .5) * 1.4, .3 + R() * .25, .09, .05, .9, c0, c1, 14, .6, 0);
+  }
+  // A Zerg dying: a low splash of its blood that lands on the ground (a burst of
+  // glowing sparks flung up read as fireworks — a field of them after a nuke)
+  function deathFx(e) {
+    const r = e.type === 'r', [c0, c1] = BLOOD[r ? 'r' : 'z'], p = e.mesh.position, R = Math.random;
+    for (let i = 0; i < (r ? 10 : 7); i++)
+      emitParticle(_smoke, p.x, p.y + .35, p.z, (R() - .5) * 2.6, .8 + R() * 2, (R() - .5) * 2.6, .45 + R() * .35, .11, .06, .9, c0, c1, 16, .8, 0);
+  }
+  // splash: its blood (not for a nuke: burnt)
+  function killEnemy(e,reward,splash=true){
     if(e.dead)return; e.dead=true;
     slowedEnemies.delete(e.mesh.uuid);
-    spawnParts(e.mesh.position.clone(),e.type==='r'?0xff6600:0x22cc44,e.type==='r'?12:7);
+    if(splash) deathFx(e);
     scene.remove(e.mesh);
     SFX.play(e.type==='r'?'rdie':'zdie');
     if(e.pool&&e.mesh.visible){                       // death animation (instanced corpse)
@@ -3387,7 +3398,8 @@ const G = (() => {
               spawnParts(e.mesh.position.clone(),0x4488ff,10);
             }
           }
-          spawnParts(b.mesh.position.clone(),def.bulletColor,4);
+          const vl=Math.hypot(b.vx,b.vz)||1;
+          bloodFx(e,b.mesh.position,b.vx/vl,b.vz/vl);
           b.alive=false;
           if(e.hp<=0) killEnemy(e,true);
         }
