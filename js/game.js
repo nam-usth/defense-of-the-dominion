@@ -1457,11 +1457,22 @@ const G = (() => {
     setStatus('NUCLEAR LAUNCH DETECTED — 2 seconds to impact!');
     SFX.play('nukeWarn');
 
+    // The dive path leans NUKE_SLANT toward the far side of the target as the camera
+    // sees it, so the warhead and its streak come in from the top of the screen. (A
+    // vertical one, seen from the steep overview camera, pointed sideways or at the
+    // camera for targets in the lower half of the screen.)
+    const NUKE_SKY_Y = 30, NUKE_FALL_AT = 0.4, NUKE_SLANT = 0.55, NUKE_TRAIL_FADE = 0.5;   // leaves the sky at 0.4 s (above the camera, y 22)
+    const away = new THREE.Vector2(-camera.position.x, -camera.position.z).normalize();
+    const up = new THREE.Vector3(away.x * NUKE_SLANT, 1, away.y * NUKE_SLANT).normalize();
+    const tilt = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), up);
+    const along = h => new THREE.Vector3(tx, 0, tz).addScaledVector(up, h / up.y);   // the path's point at height h
+
     // ── Phase 2: Laser designator beam (thin red line, 2s) ──────────────
     const laserGeo = new THREE.CylinderGeometry(0.04, 0.04, 28, 5);
     const laserMat = new THREE.MeshBasicMaterial({color:0xff0000, transparent:true, opacity:0.85});
     const laser = new THREE.Mesh(laserGeo, laserMat);
-    laser.position.set(tx, 14, tz);
+    laser.position.copy(along(14 * up.y));          // 28 long: target → sky, down the dive path
+    laser.quaternion.copy(tilt);
     scene.add(laser);
 
     // Blinking target marker on the ground: the SC2 nuke reticle (red on black,
@@ -1475,14 +1486,31 @@ const G = (() => {
     dot.position.set(tx, 0.05, tz);
     scene.add(dot);
 
-    // The warhead itself falls down the laser, nose first (SC2 model, if loaded)
-    const NUKE_DROP_H = 9;                        // stays well below the overview camera (y 22)
+    // The warhead itself streaks down the laser from the sky, nose first (SC2 model, if loaded)
     const missile = ModelLoader.clone('nukeMissile');
     const missileHalf = missile ? missile.position.y : 0;  // the template floats by half its height
+    const flip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI);   // modelled nose up
+    const spinQ = new THREE.Quaternion(), Y_AXIS = new THREE.Vector3(0, 1, 0);
+    let spin = 0;
     if (missile) {
-      missile.rotation.x = Math.PI;               // modelled nose up; flips about its centre
-      missile.position.set(tx, missileHalf + NUKE_DROP_H, tz);
+      missile.visible = false;                    // until the dive (a close-up camera looks up)
       scene.add(missile);
+    }
+    // Its trail, as in StarCraft: one straight streak from the tail up out of view,
+    // a white-hot core in an orange glow (both taper toward the sky), and a flare at
+    // the tail. (Sparks sprayed from the tail every frame read as fireworks.)
+    const trailGeo = new THREE.CylinderGeometry(0.25, 1, 1, 10);   // unit height, narrowing to the top
+    const glowMat = (color, opacity) => new THREE.MeshBasicMaterial({color, transparent:true, opacity, blending:THREE.AdditiveBlending, depthWrite:false});
+    const trailGlow = new THREE.Mesh(trailGeo, glowMat(0xff6a1a, 0.45));
+    const trailCore = new THREE.Mesh(trailGeo, glowMat(0xfff2d0, 0.95));
+    const flareGeo = new THREE.SphereGeometry(1, 12, 8);
+    const flare = new THREE.Mesh(flareGeo, glowMat(0xffd28a, 0.9));
+    [trailGlow, trailCore, flare].forEach((m, i) => { m.renderOrder = 4 + i; m.visible = false; scene.add(m); });
+    function setTrail(bottom) {                   // the streak from height `bottom` up the path into the sky
+      const top = NUKE_SKY_Y + 8, len = (top - bottom) / up.y;
+      [[trailGlow, 0.24], [trailCore, 0.07]].forEach(([m, r]) => {
+        m.position.copy(along((top + bottom) / 2)); m.quaternion.copy(tilt); m.scale.set(r, len, r);
+      });
     }
 
     // Expanding warning ring — unit ring, animated via scale (no geometry churn)
@@ -1494,32 +1522,53 @@ const G = (() => {
     scene.add(warnRing);
 
     // Animate warning ring expanding and dot blinking (game time — freezes on pause)
-    let warnT = 0;
+    let warnT = 0, detonated = false;
     const WARN_DUR = 2.0; // seconds
     const NUKE_RADIUS = 16; // kills everything within this range
+    // (one ticker to the end of the trail's fade: a ticker added from inside a ticker would be dropped)
     addTicker(dt => {
       warnT += dt;
-      const prog = Math.min(1, warnT / WARN_DUR);
-      // Ring expands to show blast radius
-      warnRing.scale.setScalar(Math.max(0.1, prog * NUKE_RADIUS));
-      warnRing.material.opacity = 0.4 + Math.sin(warnT*12)*0.3; // pulse
-      // Dot blinks faster as impact nears
-      dot.material.opacity = Math.sin(warnT*(6+prog*14)) > 0 ? 0.9 : 0.1;
-      laser.material.opacity = 0.5 + Math.sin(warnT*8)*0.35;
-      if (missile) {                              // accelerating drop, lands at detonation
-        missile.position.y = missileHalf + NUKE_DROP_H * (1 - prog * prog);
-        missile.rotation.y += dt * 4;
-        spawnParts({x: tx, y: missile.position.y + missileHalf, z: tz}, 0xffaa55, 1);   // exhaust at the tail
+      if (!detonated) {
+        const prog = Math.min(1, warnT / WARN_DUR);
+        // Ring expands to show blast radius
+        warnRing.scale.setScalar(Math.max(0.1, prog * NUKE_RADIUS));
+        warnRing.material.opacity = 0.4 + Math.sin(warnT*12)*0.3; // pulse
+        // Dot blinks faster as impact nears
+        dot.material.opacity = Math.sin(warnT*(6+prog*14)) > 0 ? 0.9 : 0.1;
+        laser.material.opacity = 0.5 + Math.sin(warnT*8)*0.35;
+        // accelerating dive from the sky, lands at detonation
+        const fall = Math.max(0, Math.min(1, (warnT - NUKE_FALL_AT) / (WARN_DUR - NUKE_FALL_AT)));
+        const y = missileHalf + NUKE_SKY_Y * (1 - Math.pow(fall, 1.6)), tail = y + missileHalf * up.y;   // nose first: the tail is up the path
+        spin += dt * 4;
+        if (missile) {
+          missile.visible = fall > 0;
+          missile.position.copy(along(y));
+          missile.quaternion.copy(tilt).multiply(flip).multiply(spinQ.setFromAxisAngle(Y_AXIS, spin));
+        }
+        trailGlow.visible = trailCore.visible = flare.visible = fall > 0;
+        setTrail(tail);
+        flare.position.copy(along(tail));
+        flare.scale.setScalar(0.28 + 0.06 * Math.sin(warnT * 40));
+        if (warnT < WARN_DUR) return true;
+        // ── impact: the designator and the warhead go, the streak ends in the blast and fades
+        detonated = true;
+        [laser, dot, warnRing, flare].forEach(m => { m.visible = false; });
+        if (missile) missile.visible = false;
+        setTrail(0);
+        _nukeInFlight = false;
+        detonate();
       }
-      if (warnT < WARN_DUR) return true;
-      detonate();
-      return false;
+      const k = Math.max(0, 1 - (warnT - WARN_DUR) / NUKE_TRAIL_FADE);
+      trailGlow.material.opacity = 0.45 * k;
+      trailCore.material.opacity = 0.95 * k;
+      return k > 0;
     }, () => {
       // Remove designator visuals (warnRing uses shared _ringGeo — don't dispose it).
       // Also runs when Restart/Load drops the launch mid-countdown.
       scene.remove(laser); scene.remove(dot); scene.remove(warnRing);
       if (missile) scene.remove(missile);         // shares the template's geometry — no dispose
-      laser.geometry.dispose(); dot.geometry.dispose();
+      [trailGlow, trailCore, flare].forEach(m => { scene.remove(m); m.material.dispose(); });
+      laser.geometry.dispose(); dot.geometry.dispose(); trailGeo.dispose(); flareGeo.dispose();
       laser.material.dispose(); dot.material.dispose(); warnRing.material.dispose();
       _nukeInFlight = false;
     });

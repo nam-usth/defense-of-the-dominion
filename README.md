@@ -69,7 +69,7 @@ Dismissing a unit refunds 75%. Units fight from inside the bunker; you see them 
 
 The command card and the upgrade chips use StarCraft II button art that follows the level: Infantry Weapons Level 0 → 3 for damage; Magrail Munitions (Lv0–1), Magfield Accelerator (Lv2) and Enhanced Munitions (Lv3) for ammo; Fleet Calldown for the airstrike, the co-op nuke, the Detector eye for the view. Research has its own art (Super Stimpack — which also replaces the STIM icon once researched —, Explosive Shrapnel Shells for Concussive Shells, Laser Targeting System for Snipe), and the Shrike turret shows as a Hi-Sec Auto Tracking chip that pulses red in overdrive.
 
-The **nuke** (N) unlocks at wave 5: a two-second warning while the warhead falls down the targeting laser, huge blast radius, 15 s cooldown. Below 50% HP the bunker starts to burn.
+The **nuke** (N) unlocks at wave 5: a two-second warning, then the warhead streaks down the targeting laser from the sky, trailing one straight white-hot streak as in StarCraft; huge blast radius, 15 s cooldown. Below 50% HP the bunker starts to burn.
 
 ## Controls
 
