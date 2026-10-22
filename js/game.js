@@ -792,12 +792,14 @@ const G = (() => {
   // marauder, ghost), else a procedural marine. A fallback is swapped for the
   // real model once it has loaded. With a walk cycle, one mesh steps through
   // the frame geometries (see updateMarines).
+  const LAMP_CHEST = 0.62;   // its chest lamps (at night: syncUnitLamps), as a share of its height
   function setUnitModel(m, type, idx) {
     if (m.type === type && !(m.fallback && ModelLoader.isReady(type))) return;
     m.mesh.clear();
     const frames = ModelLoader.animFrames(type, 'walk');
     const model = frames ? frames[0].clone() : ModelLoader.clone(type) || ModelLoader.clone('marine', () => _proceduralMarine(idx));
     if (model) m.mesh.add(model);
+    m.lampH = model ? new THREE.Box3().setFromObject(model).getSize(new THREE.Vector3()).y * LAMP_CHEST : 0.8;   // its chest lamps' height
     m.type = type; m.fallback = !ModelLoader.isReady(type);
     m.walk = frames && frames.map(t => t.getObjectByProperty('isMesh', true).geometry);
     m.walkMesh = frames && model.getObjectByProperty('isMesh', true);
@@ -1581,6 +1583,63 @@ const G = (() => {
         else{mp.x+=dx/d*2.8*dt;mp.z+=dz/d*2.8*dt;m.mesh.rotation.y=Math.atan2(dx,dz);}
       }
     });
+  }
+
+  // ── Crate runner's chest lamps ───────────────────────────────────────────
+  // At night a unit out of the bunker wears a twin white LED pod on its chest
+  // armour: two small hot lamps, and their beams lying on the ground ahead of it —
+  // fans brightest just past its feet, fading and widening with distance (as the
+  // Marines' flashlights in StarCraft II)
+  const LAMP_FRONT = 0.22, LAMP_SPACING = 0.07, LAMP_CAP = 16;   // ahead of its centre · apart from the middle (LAMP_CHEST: setUnitModel)
+  const _beamTex = (() => {   // u across the fan, v along it (v = 0 at the lamp: the canvas bottom, as flipY puts it)
+    const W = 64, H = 128, c = document.createElement('canvas'); c.width = W; c.height = H;
+    const g = c.getContext('2d'), img = g.createImageData(W, H);
+    const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      const u = (i + .5) / W, v = 1 - (j + .5) / H, e = Math.abs(u - 0.5) * 2, o = (j * W + i) * 4;
+      const along = sstep(0, 0.08, v) * Math.pow(1 - v, 1.4), across = (1 - sstep(0.3, 1, e)) * (0.7 + 0.3 * (1 - e));
+      img.data[o] = img.data[o + 1] = img.data[o + 2] = 255; img.data[o + 3] = Math.round(255 * along * across);
+    }
+    g.putImageData(img, 0, 0);
+    return new THREE.CanvasTexture(c);
+  })();
+  const _beamGeo2 = (() => {   // the fan, xz plane: 0.14 wide at z = 0 (the lamp's end), 1 wide at z = 1
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute([-.07,0,0, .5,0,1, .07,0,0, -.07,0,0, -.5,0,1, .5,0,1], 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute([0,0, 1,1, 1,0, 0,0, 0,1, 1,1], 2));
+    return g;
+  })();
+  const _lampMat = (color, map) => new THREE.MeshBasicMaterial({ color, map: map || null, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
+  function _lampIM(geo, mat, renderOrder) {
+    const im = new THREE.InstancedMesh(geo, mat, LAMP_CAP);
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    im.frustumCulled = false; im.count = 0; im.renderOrder = renderOrder;
+    scene.add(im);
+    return im;
+  }
+  const _lampSphere = new THREE.SphereGeometry(1, 10, 8);
+  const _lampBeamIM = _lampIM(_beamGeo2, _lampMat(0xf2f6ff, _beamTex), 1);   // white LEDs
+  const _lampGlowIM = _lampIM(_lampSphere, _lampMat(0xe8f0ff), 2), _lampCoreIM = _lampIM(_lampSphere, _lampMat(0xffffff), 3);
+  const _lampM = new THREE.Matrix4(), _lampQ = new THREE.Quaternion(), _lampP = new THREE.Vector3(), _lampS = new THREE.Vector3(), _lampUp = new THREE.Vector3(0, 1, 0);
+  function syncUnitLamps() {
+    let n = 0;
+    if (_dnFactor > 0.02) for (const m of marines) {
+      if (!m.mesh.visible || n + 2 > LAMP_CAP) continue;
+      const rot = m.mesh.rotation.y, p = m.mesh.position, h = m.lampH ?? 0.8;
+      for (const side of [-1, 1]) {
+        _lampP.set(side * LAMP_SPACING, h, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p);
+        _lampCoreIM.setMatrixAt(n, _lampM.makeScale(.045, .045, .045).setPosition(_lampP));
+        _lampGlowIM.setMatrixAt(n, _lampM.makeScale(.16, .16, .16).setPosition(_lampP));
+        _lampP.set(side * LAMP_SPACING, 0, LAMP_FRONT + 0.1).applyAxisAngle(_lampUp, rot).add(p).setY(.025);
+        _lampQ.setFromAxisAngle(_lampUp, rot + side * 0.06);   // a little outward
+        _lampBeamIM.setMatrixAt(n, _lampM.compose(_lampP, _lampQ, _lampS.set(3.2, 1, 4.4)));
+        n++;
+      }
+    }
+    _lampBeamIM.material.opacity = 0.6 * _dnFactor;
+    _lampCoreIM.material.opacity = _dnFactor;
+    _lampGlowIM.material.opacity = 0.35 * _dnFactor;
+    for (const im of [_lampBeamIM, _lampCoreIM, _lampGlowIM]) { im.count = n; im.instanceMatrix.needsUpdate = true; }
   }
 
   // ── Strikes ──────────────────────────────────────────────────────────────
@@ -3428,6 +3487,7 @@ const G = (() => {
     }
 
     updateMarines(dt);
+    syncUnitLamps();          // their chest lamps at night
     updateViking(dt);
     updateVikingMissiles(dt);
     syncVikingMissiles();
@@ -3468,7 +3528,7 @@ const G = (() => {
       if(e.mesh) scene.remove(e.mesh);
     });
     zerglings=[];roaches=[];bullets=[];beams=[];crates=[];marines=[];spawnQueue=[];corpses=[];acids=[];
-    syncBullets(); syncEnemyPools(); syncAcids();
+    syncBullets(); syncEnemyPools(); syncAcids(); syncUnitLamps();
   }
 
   // ── Victory / defeat ──────────────────────────────────────────────────────
