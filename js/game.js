@@ -2353,7 +2353,7 @@ const G = (() => {
     }
     // Title / game-over screen: only the menu (for Load and settings)
     if(phase!=='playing'){
-      if(e.key==='m'||e.key==='M') openMenu();
+      if(e.key==='m'||e.key==='M'||e.key==='Escape') openMenu();
       return;
     }
     // When roster open, only ESC/B closes it
@@ -3817,8 +3817,10 @@ const G = (() => {
           <span><span class="ob-t">CONTINUE</span><span class="ob-d">Autosave — ${_esc(_saveLabel(auto))}</span></span></button>`:''}
         ${_validSave(manual)?`<button class="ov-btn" data-play onclick="G.loadGame()"><svg class="ico"><use href="#i-load"/></svg>
           <span><span class="ob-t">LOAD GAME</span><span class="ob-d">Saved game — ${_esc(_saveLabel(manual))}</span></span></button>`:''}
-        <button class="ov-btn" onclick="G.showHowTo()"><svg class="ico"><use href="#i-help"/></svg>
-          <span><span class="ob-t">HOW TO PLAY</span><span class="ob-d">The goal, the controls, your units and the Zerg</span></span></button>
+        <div class="ov-pair"><button class="ov-btn" onclick="G.showHowTo()"><svg class="ico"><use href="#i-help"/></svg>
+          <span><span class="ob-t">HOW TO PLAY</span><span class="ob-d">Rules, controls, units</span></span></button>
+        <button class="ov-btn" onclick="G.menuTab('settings');G.openMenu()"><svg class="ico"><use href="#i-gfx"/></svg>
+          <span><span class="ob-t">SETTINGS</span><span class="ob-d">Graphics, sound, day/night</span></span></button></div>
       </div>
       <div class="ov-load" id="ov-load"><div class="ol-bar"><i></i></div><span class="ol-t"></span><button class="ol-skip" onclick="G.skipAssetWait()">start now</button></div>
       ${_KEYS_HTML}<div class="ov-legal">${BLIZZARD_NOTICE}</div>`);
@@ -3833,7 +3835,7 @@ const G = (() => {
       <div class="ov-howto">
         <b>GOAL</b><span>Hold the bunker against the Zerg swarm. Campaign: clear ${CFG.victory_wave} waves to win — that unlocks Endless mode.</span>
         <b>FIRE</b><span>Click the ground: every unit inside the bunker fires one volley at that spot, for one round. Hold the button for full auto — it empties the magazine fast.</span>
-        <b>AMMO</b><span>After each wave a Marine fetches a supply crate that refills the magazine. Out of ammo mid-wave? <kbd>R</kbd> calls a Viking: it bombs the swarm and drops an ammo crate — one crate covers the wave.</span>
+        <b>AMMO</b><span>After each wave a Marine fetches a supply crate that refills the magazine. Out of ammo mid-wave? <kbd>R</kbd> calls a Viking: it fires missiles into the swarm and drops an ammo crate — one crate covers the wave.</span>
         <b>MONEY</b><span>Kills and cleared waves pay minerals and gas. Spend them on upgrades <kbd>1</kbd>–<kbd>4</kbd> (damage, armor, hull, ammo) and on units in the roster <kbd>B</kbd>, which pauses the game.</span>
         <b>UNITS</b><span>The bunker has 6 slots. Marine (1 slot): all-round. Marauder (2): locks onto the nearest Armored enemy, double damage to it. Ghost (2): bonus damage to Light, researches auto-Snipe.</span>
         <b>POWERS</b><span><kbd>N</kbd> nuke from wave ${CFG.nuke_wave}. <kbd>T</kbd> Stimpack with six Marines. Bunker hull level 3: Shrike auto-turret and self-repair.</span>
@@ -4538,6 +4540,10 @@ const G = (() => {
     const ov = document.getElementById('menu-overlay');
     if (ov) { ov.style.display = 'flex'; }
     menuTab(_menuTab);
+    // title / results: BACK, nothing to restart; MAIN MENU from the results only (as the desktop)
+    $('menu-resume').querySelector('span').textContent = phase === 'playing' ? 'RESUME' : 'BACK';
+    $('menu-restart').disabled = phase !== 'playing';
+    $('menu-main').disabled = phase === 'menu';
     _syncGfxUI(); // sync button active states
     _syncSoundUI();
     _syncSaveUI();

@@ -85,7 +85,7 @@ The **nuke** (N) unlocks at wave 5: a two-second warning, then the warhead strea
 | Mouse wheel, + / − | Zoom in on the bunker / back out |
 | Insert / Delete | Rotate the view 90° left / right (the view stays on the bunker) |
 | Home | Reset the view |
-| M or Esc | Menu (pauses), in tabs: GAME (save / load), SETTINGS (graphics, sound, day/night), CONTROLS, TUTORIAL, CHEATS — ↑ ↓ switch tabs |
+| M or Esc | Menu (pauses), in tabs: GAME (save / load), SETTINGS (graphics, sound, day/night), CONTROLS, TUTORIAL, CHEATS — ↑ ↓ switch tabs. On the title screen the SETTINGS button (beside HOW TO PLAY) opens it on SETTINGS |
 | Q | Graphics quality HIGH / LOW |
 | Y | Day/night cycle (experimental): a 3-minute cycle — day 78 s, dusk 24 s, night 54 s, dawn 24 s |
 | K | Sound on / off |

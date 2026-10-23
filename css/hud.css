@@ -389,6 +389,8 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .ov-btn .ob-d{display:block;font-size:13px;font-weight:500;color:var(--muted);letter-spacing:.3px}
 .ov-btn.gold{border-color:#8a6a10} .ov-btn.gold .ico,.ov-btn.gold .ob-t{color:var(--gold)}
 .ov-btn:disabled{cursor:not-allowed;filter:saturate(.2) brightness(.6)}
+.ov-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}   /* title: HOW TO PLAY | SETTINGS */
+@media (max-width:520px){ .ov-pair{grid-template-columns:1fr} }
 .ov-row{display:flex;gap:8px}
 .ov-row .ov-btn{justify-content:center;text-align:center}
 .ov-row .ov-btn .ob-t{font-size:17px;letter-spacing:2px;white-space:nowrap}

@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="css/hud.css?v=20">
+<link rel="stylesheet" href="css/hud.css?v=21">
 </head>
 <body>
 <!-- Icon sprite (24×24, stroke icons unless .solid) -->
@@ -187,9 +187,9 @@
           <button class="menu-tab" data-tab="tutorial" role="tab" onclick="G.menuTab('tutorial')"><svg class="ico"><use href="#i-help"/></svg>TUTORIAL</button>
           <button class="menu-tab" data-tab="cheats" role="tab" onclick="G.menuTab('cheats')"><svg class="ico"><use href="#i-cheat"/></svg>CHEATS</button>
           <span class="menu-grow"></span>
-          <button class="menu-action-btn" onclick="G.closeMenu()"><svg class="ico"><use href="#i-play"/></svg>RESUME</button>
-          <button class="menu-action-btn danger" onclick="G.closeMenu();G.start(G.mode())"><svg class="ico"><use href="#i-restart"/></svg>RESTART</button>
-          <button class="menu-action-btn danger" onclick="G.closeMenu();G.showTitle()"><svg class="ico"><use href="#i-home"/></svg>MAIN MENU</button>
+          <button class="menu-action-btn" id="menu-resume" onclick="G.closeMenu()"><svg class="ico"><use href="#i-play"/></svg><span>RESUME</span></button>
+          <button class="menu-action-btn danger" id="menu-restart" onclick="G.closeMenu();G.start(G.mode())"><svg class="ico"><use href="#i-restart"/></svg>RESTART</button>
+          <button class="menu-action-btn danger" id="menu-main" onclick="G.closeMenu();G.showTitle()"><svg class="ico"><use href="#i-home"/></svg>MAIN MENU</button>
         </div>
         <div class="menu-body">
           <section class="menu-page" data-page="game" role="tabpanel">
@@ -319,6 +319,6 @@
 <script src="js/radial-fog.js?v=1"></script>
 <script src="js/config.js?v=16"></script>
 <script src="js/model-loader.js?v=8"></script>
-<script src="js/game.js?v=31"></script>
+<script src="js/game.js?v=32"></script>
 </body>
 </html>
