@@ -300,9 +300,9 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .upgrow-ico{width:40px;height:40px;flex-shrink:0;border:1px solid rgba(140,200,255,.35);border-radius:2px}
 .upgrow-glyph{display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#0b1726,#050b14);color:#ff7a6a;font-size:28px}   /* placeholder until the button art is exported */
 .upgrow.locked .upgrow-ico{filter:grayscale(1) brightness(.7)}
-.upgrow-name{font-size:15px;font-weight:700;letter-spacing:1px;margin-bottom:2px}
+.upgrow-name{font-size:15px;font-weight:700;letter-spacing:1px;margin-bottom:2px;height:19px;line-height:19px;white-space:nowrap}   /* its ✓ must not grow the line */
 .upgrow-name.marauder{color:#ffbd8a}.upgrow-name.ghost{color:#d6b0ff}.upgrow-name.marine{color:#9fc8ff}.upgrow-name.sensor{color:#ffa294}
-.upgrow-desc{font-size:13px;font-weight:500;color:#b9cfe6;line-height:1.3}
+.upgrow-desc{font-size:13px;font-weight:500;color:#b9cfe6;line-height:1.3;height:3.9em;overflow:hidden}   /* every card one height: three lines, longer is cut off */
 
 /* ── Menu ────────────────────────────────────────────────────────────────── */
 #menu-overlay{position:absolute;inset:0;z-index:50;background:rgba(0,4,10,.72);display:none;align-items:center;justify-content:center}
