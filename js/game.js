@@ -397,7 +397,7 @@ const G = (() => {
     scene.add(_fireLight);
 
     // Nuke light — the fireball lights the field (strongest at night: updateNukeLight)
-    _nukeLight = new THREE.PointLight(0xffa050, 0, 30, 1.5);
+    _nukeLight = new THREE.PointLight(0xfff8da, 0, 24, 1.5);
     scene.add(_nukeLight);
 
     // Fog — day: effectively invisible; night: tight range (set once, updated in updateDayNight)
@@ -1786,10 +1786,10 @@ const G = (() => {
       }
       for (const side of [-1, 1]) {   // the two LEDs
         _lampP.set(side * LAMP_SPACING, h, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p);
-        _mushPut(_lampFx, _lampP.x, _lampP.y, _lampP.z, 0.12, _lampWhite, _dnFactor);
+        _putSprite(_lampFx, _lampP.x, _lampP.y, _lampP.z, 0.12, _lampWhite, _dnFactor);
       }
       _lampP.set(0, h, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p);
-      _mushPut(_lampFx, _lampP.x, _lampP.y, _lampP.z, 0.6, _lampGlowCol, 0.35 * _dnFactor);
+      _putSprite(_lampFx, _lampP.x, _lampP.y, _lampP.z, 0.6, _lampGlowCol, 0.35 * _dnFactor);
       // one pool of light on the ground for the pod
       _lampP.set(0, 0, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p).setY(.025);
       _lampBeamIM.setMatrixAt(n, _lampM.compose(_lampP, _lampQ.setFromAxisAngle(_lampUp, rot), _lampS.set(3.6, 1, 5.0)));
@@ -2018,26 +2018,16 @@ const G = (() => {
     // ── Phase 3: DETONATION (2.0s) ──────────────────────────────────────
     function detonate() {
       SFX.play('nukeBoom');
-      // Shockwave ring — expands outward rapidly (scale-animated unit ring)
-      const shockMat = new THREE.MeshBasicMaterial({color:0xff6600, side:THREE.DoubleSide, transparent:true, opacity:0.9, fog:false});
-      const shock = new THREE.Mesh(_ringGeo, shockMat);
-      shock.scale.setScalar(0.2);
-      shock.rotation.x = -Math.PI/2;
-      shock.position.set(tx, 0.1, tz);
-      scene.add(shock);
-      beams.push({mesh: shock, life: 1.2, isShock: true, tx, tz, startLife: 1.2});
-
-      // The mushroom cloud of fire (it replaces the solid cone and ball the blast used
-      // to show), and the fireball's light (at night it lights the field)
-      mushrooms.push({x: tx, z: tz, t: 0});
+      // The blast, timed from SC2's (flash star, glows, shock ring and bubble, dust ring, fire
+      // ring, stem, cap, smoke rings, scorch), and its light (at night it lights the field)
+      nukeBlasts.push({x: tx, z: tz, t: 0, parts: _nbMake(tx, tz)});
       _nukeLightT = 0;
-      _nukeLight.position.set(tx, 3, tz);
+      _nukeLight.position.set(tx, 2.3, tz);
 
       // Screen flash — strong white then orange
       flash('nuke-flash');
 
-      // (no sparks or debris flung across the field: hard to read; the cloud, its dust
-      // ring and the shockwave carry it)
+      // (no sparks or debris flung across the field: hard to read; the blast carries it)
 
       // Kill ALL enemies in radius — bunker excluded (hardened); burnt: no blood
       let killed = 0;
@@ -2068,107 +2058,338 @@ const G = (() => {
   })();
 
   // ── Nuke fireball light ──────────────────────────────────────────────────
-  // Flashes up in 0.08 s, holds NUKE_LIGHT_HOLD s, then cools (gone after
-  // NUKE_LIGHT_DUR s): a warm point light at the blast, and at night the dark
-  // lifts toward NUKE_LIGHT_F (fog far ≈ 40: past the spawn ring) — _dnEffFactor.
-  const NUKE_LIGHT_DUR = 6, NUKE_LIGHT_HOLD = 0.5, NUKE_LIGHT_F = 0.35;
+  // SC2's (NB.light): dark until the detonation frame, full in ~0.3 s, held to ~2 s, gone by
+  // 4 s: a warm white point light at the blast, and at night the dark lifts toward
+  // NUKE_LIGHT_F (fog far ≈ 40: past the spawn ring) — _dnEffFactor.
+  const NUKE_LIGHT_DUR = 4, NUKE_LIGHT_F = 0.35;
   let _nukeLightT = -1;          // seconds since the blast (game time); -1 = none
-  function _nukeLightK() {
-    if (_nukeLightT < 0) return 0;
-    const t = _nukeLightT;
-    return Math.min(1, t / 0.08) * (t < NUKE_LIGHT_HOLD ? 1 : Math.exp(-(t - NUKE_LIGHT_HOLD) / 1.4)) * Math.min(1, NUKE_LIGHT_DUR - t);
-  }
+  function _nukeLightK() { return _nukeLightT < 0 ? 0 : _nbKey(NB.light, _nukeLightT * 1000 + NB_LEAD); }
   function updateNukeLight(dt) {   // live frames only, before updateDayNight (the lights follow it)
     if (_nukeLightT >= 0 && (_nukeLightT += dt) >= NUKE_LIGHT_DUR) _nukeLightT = -1;
     if (_nukeLight) _nukeLight.intensity = _nukeLightK() * (1 + 3 * _dnFactor);
   }
 
-  // ── Nuke mushroom cloud ──────────────────────────────────────────────────
-  // As StarCraft II draws it, in soft sprites rebuilt every frame: a cap of fire (a
-  // rolling torus under a dome) on a fiery stem, burning white-yellow inside and
-  // orange at the edges, cooling to dark red and soot; a grey dust ring surging out
-  // along the ground around it. Smoke dims with the scene's light; fire is self-lit.
-  const MUSH_DUR = 7;
-  let mushrooms = [];
-  const _mushSmoke = makeParticleSystem(600, THREE.NormalBlending), _mushFire = makeParticleSystem(300, THREE.AdditiveBlending);
-  const _puffHash = (i, salt) => { const s = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453; return s - Math.floor(s); };
-  const _FIRE_RAMP = [0x2e2420, 0x8a2a0c, 0xf06a18, 0xffb43a, 0xfff0c0].map(h => new THREE.Color(h));
-  function _fireRamp(T, out) {   // white-hot → yellow → orange → deep red → soot
-    T = Math.max(0, Math.min(1, T)) * 4;
-    const i = Math.min(3, Math.floor(T));
-    return out.copy(_FIRE_RAMP[i]).lerp(_FIRE_RAMP[i + 1], T - i);
+  // ── Nuke blast ───────────────────────────────────────────────────────────
+  // Timed from StarCraft II's own nuke (Nuke.m3, its Death sequence), built light: soft glow
+  // cards, rings of fire cloud with scrolling textures, a lumpy dust ring, sprite smoke, a
+  // scorch mark with cracks glowing red. Each part follows SC2's key tracks (ms -> value);
+  // a blast at t s reads them at t * 1000 + NB_LEAD ms, so the flash star is already opening
+  // at the detonation frame. Sizes are SC2's units (ours match: the bunker is 3 wide), the
+  // rings along the ground x NB_RING. The textures are drawn here (no art for them).
+  const NB_LEAD = 130, NB_END = 13000, NB_RING = 1.25;
+  let nukeBlasts = [];   // {x, z, t: s since the blast, parts}
+  const NB = {
+    flashSide:  [[0, 1.15], [200, 2.2], [300, 6.6], [400, 12.3], [500, 16.7], [566, 17.8]],
+    flashLight: [[133, 1], [366, .8], [566, 0]],
+    glowSide:   [[0, 1.25], [333, 1.4], [433, 2.8], [700, 15.4], [933, 22.5], [1166, 22.1], [2000, 15.8], [3166, 2.7], [3233, .8]],
+    glow2Side:  [[0, .9], [500, 3.7], [766, 13.1], [1066, 15.8], [1800, 12.6], [2400, 7.9], [3100, 2.4], [3233, .57]],
+    glowLight:  [[333, 0], [633, 1], [5033, 0]],
+    shockDiam:  [[666, 2.3], [1000, 5.3], [1700, 17.1], [1966, 18.9]],
+    shockLight: [[300, 0], [700, 1], [1466, .6], [1966, 0]],
+    domeDiam:   [[0, .47], [166, 1.8], [500, 7.6], [900, 15.6], [1300, 21.8], [1600, 23.6]],
+    domeLight:  [[0, 0], [233, 1], [733, .9], [1233, .5], [1300, .6], [1600, 0]],
+    dustDiam:   [[0, .19], [333, 1.2], [566, 3.5], [800, 8.5], [933, 10.25], [2000, 11.6], [3300, 12.5]],
+    dustAlpha:  [[0, 0], [333, .8], [1500, 1], [3633, 0]],
+    ringDiam:   [[666, 2.4], [800, 5.7], [1300, 11.1], [1666, 13.5]],
+    ringLight:  [[566, 1], [800, 0], [1066, 1], [1700, 0]],     // two pulses
+    stemLight:  [[966, 0], [1800, 1], [3166, .53], [4700, 0]],
+    capZ:       [[333, -2.71], [500, -2.32], [1000, -1.17], [1500, -.04], [2000, 1.02], [2500, 1.98], [3000, 2.8], [3500, 3.46], [4000, 3.9], [4500, 4.11], [5000, 4.16]],
+    capGrow:    [[2200, 1], [4300, 1.43]],
+    capLight:   [[1100, 0], [1433, 1], [3566, .53], [4700, 0]],
+    topLight:   [[1566, 0], [2100, 1], [4433, .6], [5500, 0]],
+    light:      [[333, 0], [400, .1], [466, .35], [533, .65], [600, .9], [666, 1], [1966, 1], [2200, .96], [2466, .84], [2633, .75],
+                 [2900, .57], [3266, .32], [3466, .19], [3633, .11], [3766, .05], [3900, .02], [4000, 0]],
+    markSize:   [[333, .3], [833, 1]],
+    markGlow:   [[833, 1], [13000, .25]],
+    markAlpha:  [[333, 0], [450, 1], [12800, 1], [13000, 0]],
+  };
+  function _nbKey(tr, ms) {   // piecewise linear, held at both ends
+    if (ms <= tr[0][0]) return tr[0][1];
+    for (let i = 1; i < tr.length; i++)
+      if (ms <= tr[i][0]) { const [a, va] = tr[i - 1], [b, vb] = tr[i]; return va + (vb - va) * (ms - a) / (b - a); }
+    return tr[tr.length - 1][1];
   }
+  const _puffHash = (i, salt) => { const s = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453; return s - Math.floor(s); };
   const _sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
-  const _mc = new THREE.Color(), _mcA = new THREE.Color(0x6a6460), _mcB = new THREE.Color(0x9a948c), _mcHot = new THREE.Color(0xfff0c0);
-  function _mushPut(sys, x, y, z, size, col, alpha) {
-    if (sys.n >= sys.cap) return;
+
+  // textures: tileable noise (fire cloud, smoke), the flash star, the scorch and its cracks
+  function _nbNoise(w, h, cells, seed, oct) {   // fbm of value noise that wraps in both axes, ~0..0.94
+    const out = new Float32Array(w * h);
+    for (let o = 0, amp = .5, cx = cells; o < oct; o++, amp *= .5, cx *= 2) {
+      const cy = Math.max(1, Math.round(cx * h / w)), lat = new Float32Array(cx * cy);
+      for (let i = 0; i < lat.length; i++) lat[i] = _puffHash(i, seed + o * 13);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const fx = x / w * cx, fy = y / h * cy, ix = Math.floor(fx), iy = Math.floor(fy);
+        let tx = fx - ix, ty = fy - iy; tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+        const x0 = ix % cx, x1 = (ix + 1) % cx, r0 = (iy % cy) * cx, r1 = ((iy + 1) % cy) * cx;
+        const a = lat[r0 + x0] + (lat[r0 + x1] - lat[r0 + x0]) * tx, b = lat[r1 + x0] + (lat[r1 + x1] - lat[r1 + x0]) * tx;
+        out[y * w + x] += amp * (a + (b - a) * ty);
+      }
+    }
+    return out;
+  }
+  function _nbCanvasTex(w, h, paint, repeat) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    paint(c.getContext('2d'), w, h);
+    const t = new THREE.CanvasTexture(c);
+    if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  }
+  function _nbPixels(g, w, h, fn) {   // fn(x, y, i) -> [r, g, b, a]
+    const img = g.createImageData(w, h);
+    for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i++) img.data.set(fn(x, y, i), i * 4);
+    g.putImageData(img, 0, 0);
+  }
+  // fire cloud: orange billows with yellow knots, deep red at the thin edges (alpha)
+  const _nbFireTex = _nbCanvasTex(256, 128, (g, w, h) => {
+    const n = _nbNoise(w, h, 6, 11, 4);
+    _nbPixels(g, w, h, (x, y, i) => {
+      const v = Math.max(0, Math.min(1, (n[i] - .2) / .6)), k = v * 3, f = k - Math.floor(k);
+      const C = [[110, 20, 4], [225, 80, 14], [255, 150, 35], [255, 220, 120]], c0 = C[Math.min(2, Math.floor(k))], c1 = C[Math.min(3, Math.floor(k) + 1)];
+      return [c0[0] + (c1[0] - c0[0]) * f, c0[1] + (c1[1] - c0[1]) * f, c0[2] + (c1[2] - c0[2]) * f, 255 * _sstep(.12, .6, v)];
+    });
+  }, true);
+  const _nbCapTex = _nbFireTex.clone(), _nbStemTex = _nbFireTex.clone(), _nbRingTex = _nbFireTex.clone();
+  for (const t of [_nbCapTex, _nbStemTex, _nbRingTex]) t.needsUpdate = true;   // own offsets: each scrolls its own way
+  // dust: soft grey billows (lit by the scene)
+  const _nbSmokeTex = _nbCanvasTex(256, 128, (g, w, h) => {
+    const n = _nbNoise(w, h, 5, 23, 4);
+    _nbPixels(g, w, h, (x, y, i) => { const v = n[i]; return [150 + 100 * v, 140 + 100 * v, 128 + 100 * v, 255 * _sstep(.22, .62, v)]; });
+  }, true);
+  // flash star: a white-hot core and twelve thin rays
+  const _nbStarTex = _nbCanvasTex(128, 128, (g) => {
+    g.globalCompositeOperation = 'lighter';
+    const core = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    core.addColorStop(0, 'rgba(255,255,255,1)'); core.addColorStop(.12, 'rgba(255,248,220,.85)');
+    core.addColorStop(.35, 'rgba(255,220,150,.25)'); core.addColorStop(1, 'rgba(255,200,120,0)');
+    g.fillStyle = core; g.fillRect(0, 0, 128, 128);
+    for (let k = 0; k < 12; k++) {
+      const a = k * Math.PI / 6 + (_puffHash(k, 3) - .5) * .25, len = 50 + 13 * _puffHash(k, 4), wd = .035 + .03 * _puffHash(k, 5);
+      const ray = g.createLinearGradient(64, 64, 64 + Math.cos(a) * len, 64 + Math.sin(a) * len);
+      ray.addColorStop(0, 'rgba(255,255,255,.9)'); ray.addColorStop(1, 'rgba(255,230,180,0)');
+      g.fillStyle = ray;
+      g.beginPath(); g.moveTo(64 + Math.cos(a - wd) * 4, 64 + Math.sin(a - wd) * 4);
+      g.lineTo(64 + Math.cos(a) * len, 64 + Math.sin(a) * len); g.lineTo(64 + Math.cos(a + wd) * 4, 64 + Math.sin(a + wd) * 4); g.fill();
+    }
+  });
+  // scorch: churned brown earth, darkest in the pit, a ragged rim
+  const _nbMarkTex = _nbCanvasTex(256, 256, (g, w, h) => {
+    const n = _nbNoise(w, h, 8, 31, 4);
+    _nbPixels(g, w, h, (x, y, i) => {
+      const r = Math.hypot(x - 127.5, y - 127.5) / 128, v = n[i], pit = 1 - _sstep(.08, .4, r);
+      return [70 - 50 * pit + 30 * v, 48 - 36 * pit + 20 * v, 30 - 24 * pit + 12 * v, 255 * (1 - _sstep(.5, .98, r + .2 * (v - .45))) * (.7 + .3 * v)];
+    });
+  });
+  // cracks: short jagged fissures out of the pit, glowing red (drawn over black, added)
+  const _nbCrackTex = _nbCanvasTex(256, 256, (g) => {
+    g.fillStyle = '#000'; g.fillRect(0, 0, 256, 256);
+    const pit = g.createRadialGradient(128, 128, 0, 128, 128, 48);
+    pit.addColorStop(0, 'rgba(255,70,20,.55)'); pit.addColorStop(1, 'rgba(255,40,10,0)');
+    g.fillStyle = pit; g.fillRect(0, 0, 256, 256);
+    g.lineCap = 'round'; g.shadowColor = 'rgba(255,50,10,1)'; g.shadowBlur = 7;
+    const crack = (a, r0, r1, w0, s) => {
+      let x = 128 + Math.cos(a) * r0, y = 128 + Math.sin(a) * r0;
+      for (let r = r0, j = 0; r < r1; j++) {
+        const step = 7 + 6 * _puffHash(j, s), na = a + (_puffHash(j, s + 1) - .5) * .9 * (12 / Math.max(r, 12));
+        r += step; const nx = 128 + Math.cos(na) * r, ny = 128 + Math.sin(na) * r;
+        g.lineWidth = Math.max(.8, w0 * (1 - (r - r0) / (r1 - r0)));
+        g.strokeStyle = `rgba(255,${(80 + 60 * (1 - r / r1)) | 0},30,1)`;
+        g.beginPath(); g.moveTo(x, y); g.lineTo(nx, ny); g.stroke();
+        x = nx; y = ny;
+      }
+    };
+    for (let k = 0; k < 11; k++) {
+      const a = (k + .6 * _puffHash(k, 40)) * Math.PI * 2 / 11, r1 = 60 + 50 * _puffHash(k, 41);
+      crack(a, 10, r1, 3.2, 100 + k * 7);
+      crack(a + (_puffHash(k, 42) < .5 ? -.35 : .35), 30 + 20 * _puffHash(k, 43), r1 * .8, 1.8, 300 + k * 7);   // its fork
+    }
+  });
+  // shapes: flat quad, lumpy dust doughnut, flat fire ring, open hemisphere, the stem's spindle, a fat cap doughnut
+  const _nbQuad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const _nbDustGeo = (() => {
+    const g = new THREE.TorusGeometry(1, .4, 12, 48).rotateX(-Math.PI / 2), p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) {   // lumps: push each vertex out from the tube's centre line by a fixed hash
+      const x = p.getX(i), z = p.getZ(i), a = Math.atan2(z, x), cx = Math.cos(a), cz = Math.sin(a);
+      const k = 1 + .28 * (_puffHash(Math.round(a * 40) * 7 + Math.round(p.getY(i) * 20), 9) - .5);
+      p.setXYZ(i, cx + (x - cx) * k, p.getY(i) * .87 * k, cz + (z - cz) * k);
+    }
+    g.computeVertexNormals();
+    return g;
+  })();
+  const _nbRingGeo = new THREE.TorusGeometry(1, .26, 8, 48).rotateX(-Math.PI / 2).scale(1, .45, 1);
+  const _nbDomeGeo = new THREE.SphereGeometry(.5, 32, 10, 0, Math.PI * 2, 0, Math.PI / 2);
+  const _nbStemGeo = new THREE.LatheGeometry([[1.65, 0], [1.3, .18], [.85, .45], [.68, 1], [.6, 2.5], [.62, 4.5], [.7, 6.3], [.5, 7.15]]
+    .map(([r, y]) => new THREE.Vector2(r, y)), 24);
+  const _nbCapGeo = new THREE.TorusGeometry(1, .7, 12, 32).rotateX(-Math.PI / 2);   // diameter 3.4
+  // A glow that also hides some of what lies behind it (premultiplied, cover NB_COVER): added
+  // light alone tints the bright grass lime; this whitens and warms it
+  const NB_COVER = .55;
+  function _nbCoverGlow(mat) {
+    mat.blending = THREE.CustomBlending;
+    mat.blendSrc = THREE.OneFactor;
+    mat.blendDst = THREE.OneMinusSrcAlphaFactor;
+    mat.onBeforeCompile = (sh) => { sh.fragmentShader = sh.fragmentShader.replace('#include <dithering_fragment>',
+      '#include <dithering_fragment>\n  gl_FragColor = vec4(gl_FragColor.rgb * gl_FragColor.a, gl_FragColor.a * ' + NB_COVER.toFixed(2) + ');'); };
+    mat.customProgramCacheKey = () => 'nbCoverGlow';
+    return mat;
+  }
+  const _nbDomeMat = () => new THREE.ShaderMaterial({   // the shock bubble: only its rim shows (SC2 draws it as heat haze)
+    uniforms: { uK: { value: 0 } },
+    vertexShader: 'varying vec3 vN, vV; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.); vN = normalMatrix * normal; vV = -mv.xyz; gl_Position = projectionMatrix * mv; }',
+    fragmentShader: 'uniform float uK; varying vec3 vN, vV; void main() { float a = pow(1. - abs(dot(normalize(vN), normalize(vV))), 3.) * uK; gl_FragColor = vec4(vec3(1., .95, .86) * a, a * ' + NB_COVER.toFixed(2) + '); }',
+    transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor });
+
+  // the sprites: smoke rings fired along the ground, fire sucked into the stem, rising embers
+  const _nbSmoke = makeParticleSystem(500, THREE.NormalBlending), _nbFire = makeParticleSystem(260, THREE.AdditiveBlending);
+  const _nbC = new THREE.Color(), _nbWhite = new THREE.Color(0xd8d0c4), _nbGrey = new THREE.Color(0x857c72);   // smoke: warm grey (pure white blows out on the grass)
+  const _nbEmb0 = new THREE.Color(0xffc050), _nbEmb1 = new THREE.Color(0xc02000), _nbSuck = new THREE.Color(0xff6a1c);
+  function _putSprite(sys, x, y, z, size, col, alpha) {   // one sprite into a rebuilt-every-frame system
+    if (sys.n >= sys.cap || alpha < .005) return;
     const i = sys.n++, i3 = i * 3;
-    sys.pos[i3] = x; sys.pos[i3+1] = y; sys.pos[i3+2] = z;
-    sys.col[i3] = col.r; sys.col[i3+1] = col.g; sys.col[i3+2] = col.b;
+    sys.pos[i3] = x; sys.pos[i3 + 1] = y; sys.pos[i3 + 2] = z;
+    sys.col[i3] = col.r; sys.col[i3 + 1] = col.g; sys.col[i3 + 2] = col.b;
     sys.size[i] = size; sys.alpha[i] = alpha;
   }
-  function _mushroomSprites(mc, lit) {
-    const t = mc.t, g = 1 - Math.exp(-t / 0.9), spread = 1 - Math.exp(-t / 1.0), heat = Math.exp(-t / 2.8);
-    const capH = 1.4 + 6.0 * g + 0.2 * t, capR = 0.9 + 2.7 * spread, tube = 0.7 + 0.9 * g, puff = 1.3 + 1.6 * g;
-    const fade = Math.min(1, t / 0.15) * (1 - _sstep(MUSH_DUR - 2.5, MUSH_DUR, t));
-    let n = 0;
-    const add = (x, y, z, size, a, inner) => {   // inner: how hot this puff burns for the cloud's temperature (1 = its core)
-      const i = n++, T = heat * inner * (0.9 + 0.2 * _puffHash(i, 1)), sz = size * (0.85 + 0.3 * _puffHash(i, 2));
-      _fireRamp(T, _mc);
-      if (T < 0.3) _mc.multiplyScalar(lit + (1 - lit) * T / 0.3);   // cooled to smoke: lit by the scene
-      _mushPut(_mushSmoke, mc.x + x, y, mc.z + z, sz, _mc, a * fade * (0.6 + 0.4 * Math.min(1, T * 2)));
-      if (T < 0.45) return;   // the hottest parts glow
-      _mushPut(_mushFire, mc.x + x, y, mc.z + z, sz * 0.6, _fireRamp(Math.min(1, T + 0.2), _mc), 0.5 * Math.min(1, (T - 0.45) / 0.55) * fade);
-    };
-    const PI2 = Math.PI * 2, stemTop = Math.max(0.5, capH - tube * 0.6);
-    for (let i = 0; i < 22; i++) {   // stem: a column of fire, wider at the foot, twisting slowly
-      const f = i / 21, a = _puffHash(i, 3) * PI2 + t * 0.7, r = (0.12 + 0.25 * (1 - f)) * _puffHash(i, 4);
-      add(Math.cos(a) * r, 0.3 + f * (stemTop - 0.3), Math.sin(a) * r, (1.2 + 0.9 * (1 - f)) * (0.6 + 0.4 * g), 0.6, 1.05 - 0.15 * f);
+  function _nbSprites(b, ms, lit) {
+    const s = (ms - 366) / 1000;   // since the detonation frame
+    if (s < 0) return;
+    // the main ring: puffs fired out at 30-34 u/s, stalled by drag 5; white going grey as they thin
+    for (let k = 0; k < 80; k++) {
+      const life = 4.5 + .7 * _puffHash(k, 50), f = s / life;
+      if (f >= 1) continue;
+      const a = (k + .5 * _puffHash(k, 51)) * Math.PI * 2 / 80, r = NB_RING * (29.9 + 4.5 * _puffHash(k, 52)) / 5 * (1 - Math.exp(-5 * s));
+      _nbC.copy(_nbWhite).lerp(_nbGrey, f).multiplyScalar(lit);
+      _putSprite(_nbSmoke, b.x + Math.cos(a) * r, .5 + .15 * s * s, b.z + Math.sin(a) * r, (3.4 + 2.2 * f) * (.85 + .3 * _puffHash(k, 53)), _nbC, .42 * (1 - f) * Math.min(1, s / .1));
     }
-    for (let k = 0; k < 90; k++) {   // cap: the rolling torus (golden-angle offsets spread the puffs over its tube)
-      const a = PI2 * k / 90 + _puffHash(k, 5) * 0.1, phi = -t * 1.4 + k * 2.39996, s = Math.sin(phi), cph = Math.cos(phi);
-      const rr = capR + tube * cph;
-      add(Math.cos(a) * rr, capH + tube * 0.8 * s, Math.sin(a) * rr, puff * 0.85, 0.55, 0.85 + 0.2 * s - 0.1 * cph);   // the outer rim cools first
+    // the inner ring: slower, whiter, a little above the ground, filling the main one
+    for (let k = 0; k < 64; k++) {
+      const life = 4.5 + 1.5 * _puffHash(k, 60), f = s / life;
+      if (f >= 1) continue;
+      const a = Math.PI * 2 * _puffHash(k, 61), r = NB_RING * (11.1 + 11.1 * _puffHash(k, 62)) / 4 * (1 - Math.exp(-4 * s));
+      _nbC.copy(_nbWhite).multiplyScalar(lit);
+      _putSprite(_nbSmoke, b.x + Math.cos(a) * r, 1 + .15 * s * s, b.z + Math.sin(a) * r, (2.1 + 1.7 * f) * (.85 + .3 * _puffHash(k, 63)), _nbC, .4 * (1 - f) * Math.min(1, s / .1));
     }
-    for (let k = 0; k < 18; k++) {   // dome and core of the cap: the hottest
-      const a = PI2 * _puffHash(k, 6), r = capR * 0.7 * Math.sqrt(_puffHash(k, 7));
-      add(Math.cos(a) * r, capH + tube * (0.2 + 0.6 * _puffHash(k, 8)), Math.sin(a) * r, puff * 1.1, 0.55, 1.1 - 0.3 * r / Math.max(capR, 0.1));
+    // the upper ring: a collar at the cap's final height (2.3 s)
+    const su = (ms - 2333) / 1000;
+    for (let k = 0; su >= 0 && k < 36; k++) {
+      const life = 4 + _puffHash(k, 70), f = su / life;
+      if (f >= 1) continue;
+      const a = (k + .5 * _puffHash(k, 71)) * Math.PI * 2 / 36, r = 1.6 + 3.2 * (1 - Math.exp(-3 * su));
+      _nbC.copy(_nbWhite).lerp(_nbGrey, f).multiplyScalar(lit);
+      _putSprite(_nbSmoke, b.x + Math.cos(a) * r, 4.3 + .3 * su, b.z + Math.sin(a) * r, 2.6 + 1.6 * f, _nbC, .4 * (1 - f) * Math.min(1, su / .2));
     }
-    // the dust ring: grey smoke rolling out along the ground, thickest at its rim, settling
-    const ringR = 1.8 + 5.0 * (1 - Math.exp(-t / 0.8)), settle = 1 - _sstep(3, MUSH_DUR, t);
-    for (let k = 0; k < 56; k++) {
-      const a = PI2 * k / 56 + _puffHash(k, 9) * 0.1, r = ringR + (_puffHash(k, 10) - 0.5) * 0.9;
-      _mc.copy(_mcA).lerp(_mcB, 0.75 + 0.25 * _puffHash(k, 13)).multiplyScalar(lit);
-      _mushPut(_mushSmoke, mc.x + Math.cos(a) * r, 0.35 + 0.3 * _puffHash(k, 11), mc.z + Math.sin(a) * r,
-        (1.5 + 1.0 * g) * (0.8 + 0.4 * _puffHash(k, 12)), _mc, 0.42 * settle * Math.min(1, t / 0.2));
+    // smoke rolling round the cap while it burns (1.1-5.5 s): it reads as cloud, not a solid
+    const capK = _nbKey(NB.capLight, ms) + .6 * _nbKey(NB.topLight, ms);
+    if (capK > .01) {
+      const cy = _nbKey(NB.capZ, ms) + 3.9, cr = 2.6 * _nbKey(NB.capGrow, ms);
+      for (let k = 0; k < 26; k++) {
+        const a = (k + .4 * _puffHash(k, 100)) * Math.PI * 2 / 26 + ms * .00012 * (_puffHash(k, 101) - .5), r = cr * (.75 + .45 * _puffHash(k, 102));
+        _nbC.copy(_nbGrey).lerp(_nbSuck, .25 * _puffHash(k, 103)).multiplyScalar(lit * (.6 + .3 * _puffHash(k, 104)));
+        _putSprite(_nbSmoke, b.x + Math.cos(a) * r, cy + 1.6 * (_puffHash(k, 105) - .3), b.z + Math.sin(a) * r, cr * (.7 + .4 * _puffHash(k, 106)), _nbC, .5 * Math.min(1, capK * 1.5));
+      }
     }
-    if (heat > 0.35)   // the white flash at the heart of the young fireball
-      _mushPut(_mushFire, mc.x, capH * 0.8, mc.z, capR * 2.6, _mcHot, 0.55 * (heat - 0.35) / 0.65);
+    // fire sucked from the ground into the stem (1.0-4.1 s), the afterwind (blended over: added, orange turns lime on the grass)
+    for (let k = 0; k < 70; k++) for (let j = 0; j < 2; j++) {
+      const born = 1000 + 3000 * _puffHash(k * 2 + j, 80), life = 1000 + 1500 * _puffHash(k * 2 + j, 81), f = (ms - born) / life;
+      if (f < 0 || f >= 1) continue;
+      const a = Math.PI * 2 * _puffHash(k * 2 + j, 82), r = NB_RING * (2 + 4.5 * _puffHash(k * 2 + j, 83)) * (1 - f * f);
+      _putSprite(_nbSmoke, b.x + Math.cos(a) * r, .25 + .9 * f * f, b.z + Math.sin(a) * r, .9 + .5 * f, _nbSuck, .75 * Math.sin(Math.PI * f));
+    }
+    // embers: small hot sparks rising slowly off the base (0.9-9 s), cooling to red
+    for (let k = 0; k < 44; k++) {
+      const born = 900 + 8200 * _puffHash(k, 90), life = 2500 + 4500 * _puffHash(k, 91), f = (ms - born) / life;
+      if (f < 0 || f >= 1) continue;
+      const a = Math.PI * 2 * _puffHash(k, 92), r = 2.6 * Math.sqrt(_puffHash(k, 93)), up = (.4 + 2 * _puffHash(k, 94)) * f * life / 1000;
+      _nbC.copy(_nbEmb0).lerp(_nbEmb1, f);
+      _putSprite(_nbFire, b.x + Math.cos(a) * r, .3 + up, b.z + Math.sin(a) * r, .28, _nbC, .9 * (1 - f));
+    }
   }
-  const _mushOrder = [];
-  function syncMushrooms(dt) {   // live frames: they age in game time
-    for (const mc of mushrooms) mc.t += dt;
-    mushrooms = mushrooms.filter(mc => mc.t < MUSH_DUR);
-    _mushSmoke.n = _mushFire.n = 0;
-    for (const mc of mushrooms) _mushroomSprites(mc, 1 - 0.75 * _dnLitF);
+
+  function _nbMake(x, z) {
+    const add = (geo, mat, order, y = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.renderOrder = order; m.visible = false; scene.add(m); return m; };
+    const basic = (o) => new THREE.MeshBasicMaterial(Object.assign({ transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide }, o));
+    const glow = (o) => _nbCoverGlow(basic(o));
+    const fire = (o) => basic(o);   // fire cloud: blended over (SC2 adds it, onto its darker ground; added onto bright grass it turns white)
+    return {
+      mark:   add(_nbQuad, new THREE.MeshBasicMaterial({ map: _nbMarkTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), 0, .03),
+      cracks: add(_nbQuad, basic({ map: _nbCrackTex, blending: THREE.AdditiveBlending }), 1, .04),   // (red on black: added)
+      shock:  add(_glowRingGeo, glow({ map: _glowTex, color: 0xfff1d8 }), 1, .15),
+      dome:   add(_nbDomeGeo, _nbDomeMat(), 4),
+      dust:   add(_nbDustGeo, new THREE.MeshLambertMaterial({ map: _nbSmokeTex, color: 0xb4a694, transparent: true, depthWrite: false }), 2, 1.6),
+      ring:   add(_nbRingGeo, fire({ map: _nbRingTex }), 3, 2.6),
+      stem:   add(_nbStemGeo, fire({ map: _nbStemTex }), 3),
+      caps:   [0, 1, 2].map(() => add(_nbCapGeo, fire({ map: _nbCapTex }), 3)),
+      top:    add(_nbCapGeo, fire({ map: _nbCapTex, color: 0xff6a4a }), 3),
+      glows:  [0xffe2b8, 0xffa040].map(c => add(_nbQuad, glow({ map: _glowTex, color: c }), 3, 2.4)),
+      star:   add(_nbQuad, glow({ map: _nbStarTex }), 4, .8),
+    };
+  }
+  function _nbDispose(b) {
+    const P = b.parts;
+    for (const m of [P.mark, P.cracks, P.shock, P.dome, P.dust, P.ring, P.stem, ...P.caps, P.top, ...P.glows, P.star]) { scene.remove(m); m.material.dispose(); }
+    b.parts = null;
+  }
+  function _nbPose(b, ms) {
+    const P = b.parts, K = (tr) => _nbKey(tr, ms), on = (m, from, to) => (m.visible = ms >= from && ms < to);
+    const flat = (m, d, k = 1) => m.scale.set(d, k, d);
+    if (on(P.star, 133, 566)) { flat(P.star, K(NB.flashSide)); P.star.material.opacity = K(NB.flashLight); }
+    for (const [i, m] of P.glows.entries()) if (on(m, 333, 3233)) { flat(m, K(i ? NB.glow2Side : NB.glowSide)); m.material.opacity = .32 * K(NB.glowLight); }   // (additive on bright grass: it saturates fast)
+    if (on(P.shock, 666, 1966)) { flat(P.shock, NB_RING * K(NB.shockDiam) / 2); P.shock.material.opacity = .6 * K(NB.shockLight); }
+    if (on(P.dome, 0, 1600)) { P.dome.scale.setScalar(NB_RING * K(NB.domeDiam)); P.dome.material.uniforms.uK.value = .45 * K(NB.domeLight); }
+    if (on(P.dust, 0, 3633)) { P.dust.scale.setScalar(NB_RING * K(NB.dustDiam) / 2.8); P.dust.material.opacity = .85 * K(NB.dustAlpha); }
+    if (on(P.ring, 566, 1700)) { flat(P.ring, NB_RING * K(NB.ringDiam) / 2.52); P.ring.material.opacity = .8 * K(NB.ringLight); }
+    if (on(P.stem, 966, 4700)) P.stem.material.opacity = .85 * K(NB.stemLight);
+    // the cap: three fire-cloud doughnuts (wide, a tall core, an upper layer) riding the rising column, and a red top skin
+    const z = K(NB.capZ), grow = K(NB.capGrow);
+    const cap = [[3.48, 5.9 * grow, 1.7], [3.48, 2.37 * (1 + .85 * (grow - 1)), 2.2], [4.4, 5.36 * grow, 1.6]];
+    P.caps.forEach((m, i) => {
+      if (!on(m, 1100, 4700)) return;
+      const [dy, d, hy] = cap[i];
+      m.position.y = Math.max(.8, z + dy);
+      flat(m, d / 3.4, hy * d / 3.4);
+      m.material.opacity = (i === 1 ? .45 : .6) * K(NB.capLight);   // (the core thinner: stacked full, they read as a solid can)
+    });
+    if (on(P.top, 1566, 5500)) {
+      const d = 4.42 * (1 + .43 * _sstep(2100, 4166, ms));
+      P.top.position.y = z + 5.64;
+      flat(P.top, d / 3.4, 1.5 * d / 3.4);
+      P.top.material.opacity = .6 * K(NB.topLight);
+    }
+    if (on(P.mark, 333, NB_END)) { flat(P.mark, 7 * K(NB.markSize)); P.mark.material.opacity = .85 * K(NB.markAlpha); }
+    if (on(P.cracks, 333, NB_END)) { flat(P.cracks, 7 * K(NB.markSize)); P.cracks.material.opacity = K(NB.markGlow) * K(NB.markAlpha); }
+  }
+  const _nbOrder = [];
+  let _nbClock = 0;
+  function syncNukeBlasts(dt) {   // live frames: they age in game time
+    _nbClock += dt;
+    for (const b of nukeBlasts) { b.t += dt; if (b.t * 1000 + NB_LEAD >= NB_END) _nbDispose(b); }
+    nukeBlasts = nukeBlasts.filter(b => b.parts);
+    _nbCapTex.offset.x = -.47 * _nbClock;    // the cap's fire rolls round it
+    _nbStemTex.offset.y = -.46 * _nbClock;   // the stem's fire runs up it
+    _nbRingTex.offset.x = .3 * _nbClock;
+    _nbSmokeTex.offset.x = -.09 * _nbClock;
+    _nbSmoke.n = _nbFire.n = 0;
+    const lit = 1 - .75 * _dnLitF;
+    for (const b of nukeBlasts) { const ms = b.t * 1000 + NB_LEAD; _nbPose(b, ms); _nbSprites(b, ms, lit); }
     // smoke back to front (normal blending): reorder the buffers by view depth
-    const S = _mushSmoke, N = S.n, v = camera.matrixWorldInverse.elements;
+    const S = _nbSmoke, N = S.n, v = camera.matrixWorldInverse.elements;
     if (N > 1) {
-      _mushOrder.length = 0;
-      for (let i = 0; i < N; i++) _mushOrder.push([v[2] * S.pos[i * 3] + v[6] * S.pos[i * 3 + 1] + v[10] * S.pos[i * 3 + 2], i]);
-      _mushOrder.sort((a, b) => a[0] - b[0]);
+      _nbOrder.length = 0;
+      for (let i = 0; i < N; i++) _nbOrder.push([v[2] * S.pos[i * 3] + v[6] * S.pos[i * 3 + 1] + v[10] * S.pos[i * 3 + 2], i]);
+      _nbOrder.sort((a, b) => a[0] - b[0]);
       const pos = S.pos.slice(0, N * 3), col = S.col.slice(0, N * 3), size = S.size.slice(0, N), alpha = S.alpha.slice(0, N);
-      _mushOrder.forEach(([, i], j) => {
+      _nbOrder.forEach(([, i], j) => {
         for (let c = 0; c < 3; c++) { S.pos[j * 3 + c] = pos[i * 3 + c]; S.col[j * 3 + c] = col[i * 3 + c]; }
         S.size[j] = size[i]; S.alpha[j] = alpha[i];
       });
     }
-    for (const sys of [_mushSmoke, _mushFire]) {
+    for (const sys of [_nbSmoke, _nbFire]) {
       const geo = sys.points.geometry;
       geo.setDrawRange(0, sys.n);
       for (const k of ['position', 'aColor', 'aSize', 'aAlpha']) geo.attributes[k].needsUpdate = true;
     }
   }
+  function clearNukeBlasts() { nukeBlasts.forEach(_nbDispose); nukeBlasts = []; syncNukeBlasts(0); }
 
   // ── Kill / upgrade ────────────────────────────────────────────────────────
   // Zerg blood: Zergling, Roach — fresh → dried
@@ -3529,14 +3750,7 @@ const G = (() => {
     // Beams fade
     beams.forEach(b=>{
       b.life-=dt;
-      if(b.isShock){
-        // Shockwave ring expands outward (scale, not geometry rebuild)
-        const prog = 1-(b.life/b.startLife);
-        b.mesh.scale.setScalar(Math.max(0.2, prog*18));
-        b.mesh.material.opacity = Math.max(0,(b.life/b.startLife)*0.7);
-      } else {
-        b.mesh.material.opacity=Math.max(0,b.life/.5*.8);
-      }
+      b.mesh.material.opacity=Math.max(0,b.life/.5*.8);
       if(b.life<=0) _removeBeam(b);
     });
     beams=beams.filter(b=>b.life>0);
@@ -3710,7 +3924,7 @@ const G = (() => {
     updateFlare(dt);            // before the lights: they follow its strength (and the nuke light's)
     updateNukeLight(dt);
     updateDayNight(dt);
-    syncMushrooms(dt);
+    syncNukeBlasts(dt);
     tutorialTick();
     // Update floating damage numbers
     floatTexts.forEach(f=>{ f.life-=dt*1000; f.y+=dt*0.8; });
@@ -3726,7 +3940,7 @@ const G = (() => {
     clearScheduler();        // drop pending wave countdown / Viking / missile launches / nuke (runs their cleanup)
     removeViking();
     vMissiles=[]; mBlasts=[]; syncBlasts(0); GLOW_LIGHTS.glowCount.value=0;
-    mushrooms=[]; syncMushrooms(0);
+    clearNukeBlasts();
     _nukeLightT=-1; if(_nukeLight) _nukeLight.intensity=0;
     clearFlare();            // the flare and the nuke light go: relights the scene at the true night factor
     _crateCbs=null; waveCrates=0;   // the crate on its way went with the Viking / marines; a stale wait would stall the next game
