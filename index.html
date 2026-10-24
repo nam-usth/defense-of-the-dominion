@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="css/hud.css?v=21">
+<link rel="stylesheet" href="css/hud.css?v=22">
 </head>
 <body>
 <!-- Icon sprite (24×24, stroke icons unless .solid) -->
@@ -102,7 +102,7 @@
         <div class="upg-chip" id="upg-conc"  title="Concussive Shells" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-explosiveshrapnelshells.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
         <div class="upg-chip" id="upg-snipe" title="Snipe" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-ui-lazertargetingsystem.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
         <div class="upg-chip" id="upg-sensor" title="Sensor Tower" style="display:none"><svg class="ico"><use href="#i-sensor"/></svg><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
-        <div class="upg-chip" id="upg-superstim" title="Super Stimpack" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-superstimppack.png" alt=""></div>
+        <div class="upg-chip" id="upg-superstim" title="Super Stimpack" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-superstimppack.png" alt=""><div class="uc-pips"><span class="upg-pip"></span><span class="upg-pip"></span><span class="upg-pip"></span></div></div>
         <div class="upg-chip maxed" id="upg-endless" title="Endless reinforcements" style="display:none"><svg class="ico"><use href="#i-endless"/></svg><span class="uc-n" id="upg-endless-n"></span></div>
         <div class="upg-chip" id="upg-shrike" title="Shrike turret" style="display:none"><img class="ico" src="assets/ui/btn-upgrade-terran-hisecautotracking.png" alt=""></div>
       </div>
@@ -146,7 +146,7 @@
           <span class="cmd-key">4</span><span class="cmd-pips" id="cmd-ammo-lv"><i></i><i></i><i></i></span>
           <img class="ico" id="cmd-ammo-ico" src="assets/ui/btn-upgrade-terran-magrailmunitions.png" alt=""><span class="cmd-label">AMMO</span><span class="cmd-cost" id="cmd-ammo-cost"></span>
         </div>
-        <div class="cmd-btn" id="cmd-stim" data-cmd="stim" onclick="G.doStim()">
+        <div class="cmd-btn" id="cmd-stim" data-cmd="stim" onclick="G.doStim()" oncontextmenu="G.toggleStimAuto();return false">
           <span class="cmd-key">T</span><svg class="ico" id="cmd-stim-svg"><use href="#i-stim"/></svg><img class="ico" id="cmd-stim-img" src="assets/ui/btn-upgrade-terran-superstimppack.png" alt="" hidden><span class="cmd-label">STIM</span>
           <div class="cmd-cd" id="cmd-stim-cd"></div>
         </div>
@@ -233,7 +233,7 @@
               <kbd>HOLD</kbd><span>Full auto (empties the magazine fast)</span>
               <kbd>R</kbd><span>Airstrike + resupply — when out of ammo</span>
               <kbd>N</kbd><span>Nuke (wave 5+)</span>
-              <kbd>T</kbd><span>Stimpack (six Marines in the bunker)</span>
+              <kbd>T</kbd><span>Stimpack (six Marines in the bunker; fewer with Super Stimpack's tiers)</span>
               <kbd>B</kbd><span>Roster: hire units, research (pauses)</span>
               <kbd>1 2 3 4</kbd><span>Upgrade damage · armor · bunker · ammo</span>
               <kbd>WHEEL  + −</kbd><span>Zoom in on the bunker / out</span>
@@ -317,8 +317,8 @@
 <!-- Game: classic scripts sharing globals — keep this order. Bump ?v= when a file changes. -->
 <script src="js/lib/obj-loader.js?v=2"></script>
 <script src="js/radial-fog.js?v=2"></script>
-<script src="js/config.js?v=17"></script>
+<script src="js/config.js?v=18"></script>
 <script src="js/model-loader.js?v=8"></script>
-<script src="js/game.js?v=39"></script>
+<script src="js/game.js?v=41"></script>
 </body>
 </html>

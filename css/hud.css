@@ -197,6 +197,14 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .cmd-cd.on{display:flex}
 .cmd-btn.stim-on{border-color:#ff5a3a;box-shadow:0 0 12px rgba(255,90,58,.75),inset 0 1px 0 rgba(255,190,170,.4)}
 .cmd-btn.stim-on .ico{color:#ff8a6a}
+/* SC2's autocast mark (Super Stimpack, right-click STIM): two gold dashes with fading tails running round
+   the border — a turning conic gradient, masked to a 2 px ring (the button's clip-path cuts its corners) */
+@property --ac-a{syntax:'<angle>';inherits:false;initial-value:0deg}
+.cmd-btn.autocast::after{content:'';position:absolute;inset:0;padding:2px;pointer-events:none;
+  background:conic-gradient(from var(--ac-a),transparent 0 40deg,rgba(255,208,64,.15) 60deg,#ffe080 110deg,transparent 112deg 220deg,rgba(255,208,64,.15) 240deg,#ffe080 290deg,transparent 292deg);
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;
+  filter:drop-shadow(0 0 3px #ffb000);animation:autocast 1.6s linear infinite}
+@keyframes autocast{to{--ac-a:360deg}}
 .cmd-btn.empty-slot{cursor:default;background:linear-gradient(180deg,#0a1524,#060d18);border-color:#16283c;box-shadow:none}
 .cmd-btn.empty-slot:hover{border-color:#16283c;box-shadow:none;background:linear-gradient(180deg,#0a1524,#060d18)}
 

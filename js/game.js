@@ -286,8 +286,12 @@ const G = (() => {
   const SENSOR_SHOW_DARK = 0.6, SENSOR_BLIP_FADE = 0.15;
   const UPGRADE_DEF = {
     superstim:  { cost:[250,150], unit:'marine',   name:'Super Stimpack', icon:UI_ICONS.superstim,
-                  desc:"Nova's Marines: Stimpack costs no HP and repairs the bunker while it lasts (stacks with the hull's self-repair)",
-                  tiers:[] },
+                  desc:"Nova's Marines: Stimpack costs no HP and repairs the bunker while it lasts (stacks with the hull's self-repair). Its tiers lower the Marines Stimpack needs: 6 → 4 → 2 → 1",
+                  tiers:[
+                    { cost:[200, 80],  desc:'Stimpack Lv.1 — needs 4 Marines' },
+                    { cost:[320,130],  desc:'Stimpack Lv.2 — needs 2 Marines' },
+                    { cost:[500,200],  desc:'Stimpack Lv.3 — needs 1 Marine (MAX)' },
+                  ]},
     concussive: { cost:[300,75],  unit:'marauder', name:'Concussive Shell', icon:UI_ICONS.concussive,
                   desc:'Marauder blasts slow harder: to 40% speed (from 70%) for 2.5s (from 1.5s)',
                   tiers:[
@@ -319,6 +323,7 @@ const G = (() => {
   let snipeReady = [];                // per ghost, in roster order: _gameT when it may snipe again
   let concussiveUnlocked = false;
   let superStimUnlocked = false;   // Super Stimpack research (Marines)
+  let superStimLvl = 0;            // its tiers: each lowers the Marines Stimpack needs (CFG.stim_marines)
   // Endless armory: purchases of each kind (see CFG.armory_*)
   let armory = { hp: 0, dmg: 0, ammo: 0, cd: 0 };
   const ARMORY_DEF = {
@@ -545,25 +550,39 @@ const G = (() => {
   function shrikeOverdrive() { return hpLvl >= 3 && roster.length === 6 && roster.every(u => u === 'marine'); }
   let _shrikeOD = false;
 
-  // Stimpack (T): a full Marine squad (6/6) can stim, as in SC2 — for 11 s the
-  // Marines fire 50% faster (an extra round every other volley, no extra ammo),
-  // at the SC2 price of 10 HP per Marine, paid by the bunker.
+  // Stimpack (T): as in SC2 the Marines and Marauders stim — for 11 s they fire 50%
+  // faster (an extra round or grenade every other volley, no extra ammo), at the SC2
+  // price of 10 HP per Marine and 20 per Marauder, paid by the bunker. It needs six
+  // Marines in the bunker; Super Stimpack's tiers bring that down to 4, 2, 1.
   const STIM_COLOR = 0xff6a3a;
   let stimT = 0, _stimVolley = 0;
-  function stimUnlocked() { return roster.length === 6 && roster.every(u => u === 'marine'); }
-  function stimCost() { return superStimUnlocked ? 0 : CFG.stim_hp * roster.length; }   // Super Stimpack: free
-  function doStim() {
+  const _count = t => roster.filter(u => u === t).length;
+  function stimNeed() { return CFG.stim_marines[Math.max(0, Math.min(3, superStimLvl))]; }
+  function stimUnlocked() { return _count('marine') >= stimNeed(); }
+  function stimCost() { return superStimUnlocked ? 0 : CFG.stim_hp * _count('marine') + CFG.stim_hp_marauder * _count('marauder'); }   // Super Stimpack: free
+  let stimAuto = false;   // Super Stimpack autocast (right-click STIM): stims as the bunker fires
+  function doStim(autocast = false) {   // autocast: quietly, only if it can
     if (phase !== 'playing' || isPaused()) return;
+    if (autocast === true && (wavePhase !== 'combat' || !stimUnlocked() || stimT > 0 || stimCost() > 0)) return;
     if (wavePhase !== 'combat') { setStatus('Stimpack only during a wave'); SFX.play('deny'); return; }
-    if (!stimUnlocked()) { setStatus('Stimpack needs a full Marine squad (6/6)'); SFX.play('deny'); return; }
+    if (!stimUnlocked()) { setStatus(`Stimpack needs ${stimNeed()} Marines in the bunker`); SFX.play('deny'); return; }
     if (stimT > 0) { setStatus('Already stimmed!'); return; }
     const cost = stimCost();
     if (cost && bunkerHp <= cost) { setStatus('Not enough HP to stim'); SFX.play('deny'); return; }
     bunkerHp -= cost; stimT = CFG.stim_duration; _stimVolley = 0;
+    if (autocast === true) { SFX.play('stim'); updateHUD(); return; }   // as SC2's autocast: no word, the stim sound
+    const who = _count('marauder') ? 'Marines and Marauders' : 'Marines';
     setStatus(superStimUnlocked
-      ? `Super Stimpack! Marines fire 50% faster, bunker repair +${Math.round(repairRate())} HP/s for ${CFG.stim_duration} s`
-      : `Stimpack! Marines fire 50% faster for ${CFG.stim_duration} s (−${cost} HP)`);
+      ? `Super Stimpack! ${who} fire 50% faster, bunker repair +${Math.round(repairRate())} HP/s for ${CFG.stim_duration} s`
+      : `Stimpack! ${who} fire 50% faster for ${CFG.stim_duration} s (−${cost} HP)`);
     SFX.play('stim');
+    updateHUD();
+  }
+  // Right-click STIM, as SC2's autocast: with Super Stimpack (free) it stims whenever the bunker fires
+  function toggleStimAuto() {
+    if (!superStimUnlocked) { setStatus('Autocast needs the Super Stimpack research'); SFX.play('deny'); return; }
+    stimAuto = !stimAuto;
+    setStatus(stimAuto ? 'Stimpack autocast on — it stims as you fire' : 'Stimpack autocast off');
     updateHUD();
   }
   function updateShrike(dt) {
@@ -2292,7 +2311,7 @@ const G = (() => {
   // Endless armory: cost of the next purchase of a kind (+30% each), the cooldown factor,
   // and buying (Endless only, any time — the roster button pulses between waves when one is affordable)
   function armoryCost(key){
-    const [m,g]=ARMORY_DEF[key].cost, k=CFG.armory_growth**armory[key];
+    const [m,g]=ARMORY_DEF[key].cost, k=(key==='ammo'?CFG.armory_ammo_growth:CFG.armory_growth)**armory[key];
     return [Math.round(m*k/5)*5, Math.round(g*k/5)*5];
   }
   function armoryCdMult(n=armory.cd){ return Math.max(CFG.armory_cd_min, CFG.armory_cd**n); }
@@ -2356,37 +2375,41 @@ const G = (() => {
 
   function shoot(tx,tz){
     if(shootCD>0||wavePhase!=='combat'||ammo<=0)return;
+    if(stimAuto&&stimT<=0) doStim(true);                // autocast: the volley that finds it ready stims first
     ammo--; shootCD=.1;
     const n=roster.length||1;
     const stimExtra=stimT>0&&_stimVolley++%2===0;      // stimmed: +1 round every other volley (+50%)
-    const mTargets=[], blastR=MG_RADIUS[concussiveLvl]; // this volley's Marauder targets
+    // where the blasts already on their way land: the grenades in flight, then this volley's
+    const mTargets=bullets.filter(b=>b.alive&&b.unitType==='marauder').map(b=>b.aim), blastR=MG_RADIUS[concussiveLvl];
     roster.forEach((utype,i)=>{
       let atx=tx, atz=tz;
-      // Marauders pick their own targets: the nearest enemy of any kind in sight (at night: lit, or a
-      // Sensor Tower blip), each one outside the blasts of the volley's other Marauders while there is
-      // one; none in sight: the click, as everyone else
+      // Marauders pick their own targets among the enemies in sight (at night: lit, or a Sensor Tower
+      // blip): the nearest one not slowed yet and outside the blasts on their way, else the nearest not
+      // slowed, else the nearest outside them, else the nearest; none in sight: the click, as everyone else
       const mar=utype==='marauder';
       if(mar){
-        let best=null, bd=0, near=null, nd=0;
+        const pick=[null,null,null,null], pd=[0,0,0,0];
         for(const e of allEnemies()){
           if(e.dead||!(e.mesh.visible||_sensed(e))) continue;
           const q=e.mesh.position, d=Math.hypot(q.x,q.z);
-          if(!near||d<nd){ near=e; nd=d; }
-          if(!mTargets.some(t=>Math.hypot(t[0]-q.x,t[1]-q.z)<blastR)&&(!best||d<bd)){ best=e; bd=d; }
+          const tier=(slowedEnemies.has(e.mesh.uuid)?2:0)+(mTargets.some(t=>Math.hypot(t[0]-q.x,t[1]-q.z)<blastR)?1:0);
+          if(!pick[tier]||d<pd[tier]){ pick[tier]=e; pd[tier]=d; }
         }
-        best=best||near;
+        const best=pick.find(e=>e);
         if(best){ atx=best.mesh.position.x; atz=best.mesh.position.z; mTargets.push([atx,atz]); }
       }
       // Each unit fires through its own slit on the wall facing its target
       // (slits fan out ~11° apart); the round leaves from the slit toward the aim point.
       const p=bunkerPort(Math.atan2(atz,atx)+(i-(n-1)/2)*0.2);
-      const blt=makeBulletTyped(atx,atz,(i-(n-1)/2)*.006,utype,p.x,p.y,p.z,mar?0.15:AIM_Y);
-      if(mar){ blt.range=Math.min(18,Math.hypot(atx-p.x,atz-p.z)); blt.trail=[]; }   // the grenade comes down on its target
-      bullets.push(blt);
-      if(utype==='marine'&&stimT>0){
-        blt.color=STIM_COLOR;
-        if(stimExtra){ const b2=makeBulletTyped(atx,atz,(i-(n-1)/2)*.006+.02,utype,p.x,p.y+.05,p.z); b2.color=STIM_COLOR; bullets.push(b2); }
-      }
+      const fire=(spread,dy)=>{
+        const b=makeBulletTyped(atx,atz,spread,utype,p.x,p.y+dy,p.z,mar?0.15:AIM_Y);
+        if(mar){ b.range=Math.min(18,Math.hypot(atx-p.x,atz-p.z)); b.trail=[]; b.aim=[atx,atz]; }   // the grenade comes down on its target
+        if(utype==='marine'&&stimT>0) b.color=STIM_COLOR;
+        bullets.push(b);
+        return b;
+      };
+      const blt=fire((i-(n-1)/2)*.006,0);
+      if(stimExtra&&utype!=='ghost') fire((i-(n-1)/2)*.006+.02,.05);   // stimmed Marines and Marauders
       muzzleFlash(p.x,p.y,p.z,blt.vx/blt.speed,blt.vz/blt.speed,UNIT_DEF[utype].bulletColor,utype==='marauder');
     });
     new Set(roster).forEach(u=>SFX.play(u));            // one gunshot voice per unit type
@@ -2771,7 +2794,7 @@ const G = (() => {
       { id:'upg-conc',  lvl:concussiveLvl, show:concussiveUnlocked },
       { id:'upg-snipe', lvl:snipeLvl,      show:snipeUnlocked },
       { id:'upg-sensor', lvl:sensorLvl,    show:sensorLvl>=1 },
-      { id:'upg-superstim', lvl:3,         show:superStimUnlocked },   // single research: shown as maxed
+      { id:'upg-superstim', lvl:superStimLvl, show:superStimUnlocked },
       { id:'upg-shrike',    lvl:3,         show:hpLvl>=3 },            // Shrike turret (hull Lv3)
     ];
     chips.forEach(c => {
@@ -2906,8 +2929,9 @@ const G = (() => {
     const nukeLocked=wave<CFG.nuke_wave, nukeReady=!nukeLocked&&nukeCD===0&&!_nukeInFlight;
     const stimOn=stimT>0, stimReady=stimUnlocked()&&!stimOn&&(!stimCost()||bunkerHp>stimCost())&&wavePhase==='combat';
     _cmdState('cmd-stim',{disabled:!stimReady&&!stimOn, ready:stimReady,
-      cd:stimOn?stimT/CFG.stim_duration:!stimUnlocked()?1:0, cdText:stimOn?Math.ceil(stimT):!stimUnlocked()?'6M':''});
+      cd:stimOn?stimT/CFG.stim_duration:!stimUnlocked()?1:0, cdText:stimOn?Math.ceil(stimT):!stimUnlocked()?stimNeed()+'M':''});
     $('cmd-stim')?.classList.toggle('stim-on',stimOn);
+    $('cmd-stim')?.classList.toggle('autocast',stimAuto);   // SC2's autocast mark (css)
     $('cmd-roster')?.classList.toggle('ready',gameMode==='endless'&&wavePhase!=='combat'&&phase==='playing'&&armoryAffordable());   // Endless: shop before the next wave
     _cmdState('cmd-nuke',{disabled:!nukeReady, ready:nukeReady,
       cd:nukeLocked?1:nukeCD>0?nukeCD/nukeCooldown():0, cdText:nukeLocked?'W'+CFG.nuke_wave:nukeCD>0?Math.ceil(nukeCD):''});
@@ -2938,7 +2962,7 @@ const G = (() => {
   // ── Command card tooltips (live: cost, level, why it is disabled) ─────────
   const CMD_INFO = {
     air:    { t:'AIRSTRIKE', k:'R', d:'A Viking bombs every enemy cluster and drops an ammo crate by the bunker — your reload once the magazine is empty.' },
-    stim:   { t:'STIMPACK', k:'T', d:'Unlocked by a full Marine squad (6/6). For 11 s the Marines fire 50% faster (an extra round every other volley, no extra ammo). Costs 10 HP per Marine, paid by the bunker — free and repairing with the Super Stimpack research.' },
+    stim:   { t:'STIMPACK', k:'T', d:'Unlocked by six Marines in the bunker (fewer with Super Stimpack\'s tiers: 4, 2, 1). For 11 s the Marines and Marauders fire 50% faster (an extra round every other volley, no extra ammo). Costs 10 HP per Marine and 20 per Marauder, paid by the bunker — free and repairing with the Super Stimpack research, which also lets you right-click it for autocast: it stims whenever you fire (a gold light runs round the button).' },
     nuke:   { t:'NUKE', k:'N', d:'Tactical nuke on the centre of the swarm after a 2-second warning. Wipes out everything in a huge radius.' },
     roster: { t:'BUNKER ROSTER', k:'B', d:'Hire Marines, Marauders and Ghosts (6 slots) and research their upgrades. In Endless its armory sells more HP, damage, ammo and shorter strike / nuke cooldowns. The game pauses while it is open.' },
     view:   { t:'RESET VIEW', k:'HOME', d:'Back to the overview. Mouse wheel or + / − zooms in on the bunker; Insert / Delete rotate the view 90°.' },
@@ -2978,12 +3002,13 @@ const G = (() => {
       else { warn='READY'; ok=true; }
     }
     if(_tipCmd==='stim'){
-      if(!stimUnlocked()) warn='Needs 6 Marines in the bunker ('+roster.filter(u=>u==='marine').length+'/6)';
+      if(!stimUnlocked()) warn='Needs '+stimNeed()+' Marines in the bunker ('+_count('marine')+'/'+stimNeed()+')';
       else if(stimT>0) warn='Stimmed — '+Math.ceil(stimT)+' s left';
       else if(stimCost()&&bunkerHp<=stimCost()) warn='Not enough HP ('+stimCost()+' needed)';
       else if(superStimUnlocked&&wavePhase==='combat') { warn='READY — Super Stimpack: no HP cost, repairs the bunker'+(hpLvl>=3?' (stacks with self-repair)':''); ok=true; }
       else if(wavePhase!=='combat') warn='Only during a wave';
       else { warn='READY'; ok=true; }
+      if(superStimUnlocked) warn+=stimAuto?'<br>Autocast ON — stims as you fire (right-click: off)':'<br>Right-click: autocast';
     }
     if(_tipCmd==='nuke'){
       if(wave<CFG.nuke_wave) warn='Unlocks at wave '+CFG.nuke_wave;
@@ -3766,7 +3791,7 @@ const G = (() => {
     armor:  'The bunker takes less damage from bites and acid. Three levels.',
     hp:     '+250 max HP per level. Level 3 adds a Shrike auto-turret and self-repair.',
     ammo:   '+10 rounds in the magazine per level.',
-    stim:   `With six Marines in the bunker: ${CFG.stim_duration} s of 50% faster fire, paid with a little bunker HP.`,
+    stim:   `With six Marines in the bunker (fewer with Super Stimpack's tiers): ${CFG.stim_duration} s of 50% faster fire for the Marines and Marauders, paid with a little bunker HP.`,
   };
   const _tutLeft = () => _tut.on && TUT_STEPS.some(s => !s.tour && !_tut.seen.has(s.id));
   // In priority order; `after` = shown only once that one has been seen; `keys` = the
@@ -3788,7 +3813,7 @@ const G = (() => {
     { id:'hull', when:()=>wavePhase==='combat'&&bunkerHp<maxHp*0.5, focus:['#hp-bar'], title:'BUNKER DAMAGED',
       text:'Below half HP the bunker burns — if it falls, the game is lost. Armor reduces the damage; bunker hull level 3 mounts a Shrike turret and repairs itself.' },
     { id:'stim', when:()=>wavePhase==='combat'&&stimUnlocked()&&stimT<=0, focus:['#cmd-stim'], keys:['t'], title:'STIMPACK',
-      text:`Six Marines can stim: press <kbd>T</kbd> or click STIM. For ${CFG.stim_duration} s they fire 50% faster, for ${CFG.stim_hp} HP per Marine from the bunker (free with the Super Stimpack research).` },
+      text:`Your squad can stim: press <kbd>T</kbd> or click STIM. For ${CFG.stim_duration} s the Marines and Marauders fire 50% faster, for ${CFG.stim_hp} HP per Marine and ${CFG.stim_hp_marauder} per Marauder from the bunker (free with the Super Stimpack research).` },
   ];
   const _tut = (() => {
     try { const d = JSON.parse(_store.get(TUT_KEY) || 'null'); if (d && Array.isArray(d.seen)) return { on: d.on !== false, seen: new Set(d.seen.filter(id => TUT_STEPS.some(s => s.id === id))) }; } catch (e) {}   // ids of removed hints drop out
@@ -3958,7 +3983,7 @@ const G = (() => {
         <b>AMMO</b><span>After each wave a Marine fetches a supply crate that refills the magazine. Out of ammo mid-wave? <kbd>R</kbd> calls a Viking: it fires missiles into the swarm and drops an ammo crate — one crate covers the wave.</span>
         <b>MONEY</b><span>Kills and cleared waves pay minerals and gas. Spend them on upgrades <kbd>1</kbd>–<kbd>4</kbd> (damage, armor, hull, ammo) and on units in the roster <kbd>B</kbd>, which pauses the game.</span>
         <b>UNITS</b><span>The bunker has 6 slots. Marine (1 slot): all-round. Marauder (2): aims itself at the nearest enemies; its grenade blasts an area, slowing all in it, double damage to Armored. Ghost (2): bonus damage to Light, researches auto-Snipe.</span>
-        <b>POWERS</b><span><kbd>N</kbd> nuke from wave ${CFG.nuke_wave}. <kbd>T</kbd> Stimpack with six Marines. Bunker hull level 3: Shrike auto-turret and self-repair.</span>
+        <b>POWERS</b><span><kbd>N</kbd> nuke from wave ${CFG.nuke_wave}. <kbd>T</kbd> Stimpack with six Marines (fewer with Super Stimpack's tiers), for Marines and Marauders. Bunker hull level 3: Shrike auto-turret and self-repair.</span>
         <b>ZERG</b><span>Zerglings: fast, Light, bite the hull. Roaches from wave ${CFG.roach_wave}: Armored, spit acid from range. From wave ${CFG.metabolic_wave} the Zerglings run faster.</span>
       </div>
       ${_KEYS_HTML}
@@ -4109,6 +4134,7 @@ const G = (() => {
       minerals -= m; gas -= g;
       if (key === 'concussive') concussiveLvl = tier + 1;
       if (key === 'snipe')      snipeLvl      = tier + 1;
+      if (key === 'superstim')  superStimLvl  = tier + 1;
       if (key === 'sensor')     sensorLvl     = tier + 1;
       setStatus(td.desc);
     }
@@ -4242,7 +4268,7 @@ const G = (() => {
     const upgRow = document.getElementById('upgrade-row');
     upgRow.innerHTML = '';
     Object.entries(UPGRADE_DEF).forEach(([key, def]) => {
-      const [unlocked, curTierLvl] = { concussive: [concussiveUnlocked, concussiveLvl], snipe: [snipeUnlocked, snipeLvl], superstim: [superStimUnlocked, 0],
+      const [unlocked, curTierLvl] = { concussive: [concussiveUnlocked, concussiveLvl], snipe: [snipeUnlocked, snipeLvl], superstim: [superStimUnlocked, superStimLvl],
                                        sensor: [sensorLvl > 0, sensorLvl] }[key];
       const hasUnit    = !def.unit || roster.includes(def.unit);   // the Sensor Tower needs no unit
       const cls        = def.unit || key;
@@ -4254,7 +4280,7 @@ const G = (() => {
       if (unlocked) {
         if (key === 'snipe')      statusLine = `CD: ${(SNIPE_CD[snipeLvl]/1000).toFixed(1)}s | tier ${snipeLvl}/3`;
         if (key === 'concussive') statusLine = `Slow 40% for 2.5s | blast radius ${MG_RADIUS[concussiveLvl].toFixed(1)} | tier ${concussiveLvl}/3`;
-        if (key === 'superstim')  statusLine = `Stim: no HP cost, +${CFG.superstim_heal} HP/s to the bunker for ${CFG.stim_duration} s (stacks with self-repair)`;
+        if (key === 'superstim')  statusLine = `Stim: no HP cost, +${CFG.superstim_heal} HP/s to the bunker | needs ${stimNeed()} Marine${stimNeed() > 1 ? 's' : ''} | tier ${superStimLvl}/3`;
         if (key === 'sensor')     statusLine = `Blips out to ${SENSOR_RANGE[sensorLvl]} | tier ${sensorLvl}/3`;
       }
 
@@ -4295,7 +4321,7 @@ const G = (() => {
     if (gameMode === 'endless') {
       const head = document.createElement('div');
       head.className = 'armory-head';
-      head.innerHTML = 'ENDLESS ARMORY <span>spend the surplus — each purchase costs 30% more</span>';
+      head.innerHTML = 'ENDLESS ARMORY <span>spend the surplus — each purchase costs 30% more (ammo 15%)</span>';
       upgRow.appendChild(head);
       const grid = document.createElement('div');
       grid.className = 'armory-grid';
@@ -4409,6 +4435,8 @@ const G = (() => {
     concussiveUnlocked = false;
     snipeUnlocked = false;
     superStimUnlocked = false;
+    superStimLvl = 0;
+    stimAuto = false;
     snipeLvl = 0;
     concussiveLvl = 0;
     sensorLvl = 0;
@@ -4704,7 +4732,7 @@ const G = (() => {
       bunkerHp, maxHp, ammo, maxAmmo,
       dmgLvl, armorLvl, hpLvl, ammoLvl,
       roster: [...roster],
-      concussiveUnlocked, snipeUnlocked, concussiveLvl, snipeLvl, superStimUnlocked, sensorLvl,
+      concussiveUnlocked, snipeUnlocked, concussiveLvl, snipeLvl, superStimUnlocked, superStimLvl, stimAuto, sensorLvl,
       armory: { ...armory }, endlessSteps,
       gfxQuality,
       wavePhase, gameT: _gameT, victoryAchieved, gameMode,
@@ -4766,6 +4794,8 @@ const G = (() => {
       roster = [...d.roster];
       concussiveUnlocked = !!d.concussiveUnlocked; snipeUnlocked = !!d.snipeUnlocked; superStimUnlocked = !!d.superStimUnlocked;
       concussiveLvl = d.concussiveLvl || 0; snipeLvl = d.snipeLvl || 0; sensorLvl = d.sensorLvl || 0;   // older saves: no Sensor Tower
+      superStimLvl = Math.max(0, Math.min(3, d.superStimLvl || 0));                                      // ... nor Super Stimpack tiers
+      stimAuto = superStimUnlocked && !!d.stimAuto;
       armory = { hp: 0, dmg: 0, ammo: 0, cd: 0, ...(d.armory || {}) };   // HP / ammo purchases are already in maxHp / maxAmmo
       snipeReady = roster.filter(u => u === 'ghost').map(() => 0);
       // Survival clock, victory and cooldowns (absent in older saves → defaults)
@@ -4798,7 +4828,7 @@ const G = (() => {
 
   _syncSoundUI();
   showTitle();
-  return {start, buy, buyArmory, skipAssetWait, doAirstrike, doNuke, doStim, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
+  return {start, buy, buyArmory, skipAssetWait, doAirstrike, doNuke, doStim, toggleStimAuto, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
           saveGame, loadGame, toggleDayNight, setVolume, setMuted, setMusic, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode,
           showHowTo, tutDismiss, tutNext, tutBack, tutSkip, startTour, setTutorial, replayTutorial, menuTab};
 })();

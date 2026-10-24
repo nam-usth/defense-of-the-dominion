@@ -4,7 +4,8 @@ const CFG = {
   base_ammo: 30,
   victory_wave: 15,           // campaign: clearing this wave wins and unlocks Endless
   airstrike_cd: 20, nuke_cd: 15, nuke_wave: 5, roach_wave: 4,
-  stim_duration: 11, stim_hp: 10,   // SC2 Stimpack: 11 s, 10 HP per Marine (paid by the bunker)
+  stim_duration: 11, stim_hp: 10, stim_hp_marauder: 20,   // SC2 Stimpack: 11 s, 10 HP per Marine, 20 per Marauder (paid by the bunker)
+  stim_marines: [6, 4, 2, 1],       // Marines in the bunker Stimpack needs: base, then per Super Stimpack tier
   superstim_heal: 6,                // Super Stimpack (Nova's Marines): no HP cost, repairs the bunker 6 HP/s while active
   metabolic_wave: 8, metabolic_boost: 1.6,   // Metabolic Boost: from wave 8 Zerglings grow wings and run 60% faster (SC2: 4.13 → 6.58)
   webby_wave: 12,                   // the boosted Zerglings' "webby" collection skin
@@ -13,9 +14,9 @@ const CFG = {
   // swarm keeps growing — per wave +5% damage, +60 max HP, +10% repair, +2 rounds
   endless_dmg: 0.05, endless_hp: 60, endless_repair: 0.10, endless_ammo: 2,
   // Endless armory (roster panel, Endless only): repeatable purchases for the surplus
-  // minerals and gas — each one costs 30% more than the last of its kind.
-  // Per purchase: +150 max HP · +10% damage · +6 rounds · strike and nuke cooldowns ×0.9 (down to 40%)
-  armory_growth: 1.3, armory_hp: 150, armory_dmg: 0.10, armory_ammo: 6, armory_cd: 0.9, armory_cd_min: 0.4,
+  // minerals and gas — each one costs 30% more than the last of its kind (ammo: 15%, so more can be bought).
+  // Per purchase: +150 max HP · +10% damage · +15 rounds (half a starting magazine) · strike and nuke cooldowns ×0.9 (down to 40%)
+  armory_growth: 1.3, armory_ammo_growth: 1.15, armory_hp: 150, armory_dmg: 0.10, armory_ammo: 15, armory_cd: 0.9, armory_cd_min: 0.4,
   dmg_costs:   [[100,20],[160,32],[256,51]],
   armor_costs: [[125,30],[200,48],[320,77]],
   hp_costs:    [[150,40],[255,68],[434,116]],
