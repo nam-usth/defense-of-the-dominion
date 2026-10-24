@@ -179,8 +179,9 @@ const G = (() => {
       crate:    t => tone(t, .16, 440, 880, .12, 'sine'),
       snipe:    t => { tone(t, .25, 1600, 300, .16, 'sine'); noise(t, .08, 3500, 3000, .16, 'highpass'); },
       rocket:   t => { noise(t, .45, 900, 2600, .2, 'bandpass', 1.5); tone(t, .1, 160, 70, .12, 'sine'); },   // Viking missile off the rail
+      mblast:   t => { noise(t, .26, 1400, 110, .32, 'lowpass', .8); tone(t, .22, 90, 38, .3, 'sine'); },      // a punisher grenade bursts
     };
-    const MIN_GAP = { hit: .045, bite: .22, spit: .07, acid: .06, marine: .03, marauder: .05, ghost: .05, shrike: .05, zdie: .035, rdie: .06, boom: .07, rocket: .06 };
+    const MIN_GAP = { hit: .045, bite: .22, spit: .07, acid: .06, marine: .03, marauder: .05, ghost: .05, shrike: .05, zdie: .035, rdie: .06, boom: .07, rocket: .06, mblast: .06 };
     function play(name) {
       if (!ctx || muted || ctx.state !== 'running' || !SOUNDS[name]) return;
       const t = ctx.currentTime, gap = MIN_GAP[name];
@@ -280,16 +281,19 @@ const G = (() => {
   };
   // Sensor Tower blip range per level (world units from the bunker centre); the night's lit edge is 9
   const SENSOR_RANGE = [0, 10.75, 12.5, 16];
+  // Within its range a Zerg is its blip only (not which kind) until the night leaves it this dark
+  // (_nightDark); the blip fades out over the last stretch before, so the two never overlap
+  const SENSOR_SHOW_DARK = 0.6, SENSOR_BLIP_FADE = 0.15;
   const UPGRADE_DEF = {
     superstim:  { cost:[250,150], unit:'marine',   name:'Super Stimpack', icon:UI_ICONS.superstim,
                   desc:"Nova's Marines: Stimpack costs no HP and repairs the bunker while it lasts (stacks with the hull's self-repair)",
                   tiers:[] },
     concussive: { cost:[300,75],  unit:'marauder', name:'Concussive Shell', icon:UI_ICONS.concussive,
-                  desc:'Marauder hits slow the target to 40% speed for 2.5s — single target',
+                  desc:'Marauder blasts slow harder: to 40% speed (from 70%) for 2.5s (from 1.5s)',
                   tiers:[
-                    { cost:[250, 80],  desc:'AOE Lv.1 — slow blast radius 1.5' },
-                    { cost:[400,130],  desc:'AOE Lv.2 — radius 2.2' },
-                    { cost:[600,200],  desc:'AOE Lv.3 — radius 3.0 (MAX)' },
+                    { cost:[250, 80],  desc:'AOE Lv.1 — blast radius 1.5 → 2.0' },
+                    { cost:[400,130],  desc:'AOE Lv.2 — radius 2.6' },
+                    { cost:[600,200],  desc:'AOE Lv.3 — radius 3.2 (MAX)' },
                   ]},
     snipe:      { cost:[250,100], unit:'ghost',    name:'Snipe', icon:UI_ICONS.snipe,
                   desc:'Ghost auto-snipes highest-threat enemy (8s CD)',
@@ -306,8 +310,10 @@ const G = (() => {
   };
   // Snipe CD per level (ms): base + 3 tiers
   const SNIPE_CD   = [8000, 6000, 4000, 2500];
-  // Concussive AOE radius per level (units): 0 = single target
-  const CONC_RADIUS = [0, 1.5, 2.2, 3.0];
+  // Marauder punisher grenades: the blast radius (base, then per Concussive Shell AOE tier); the rest of
+  // the blast takes MG_SPLASH of the round's damage; everyone in it slows to MG_SLOW of their speed for
+  // MG_SLOW_DUR s ([1]: Concussive Shells)
+  const MG_RADIUS = [1.5, 2.0, 2.6, 3.2], MG_SPLASH = 0.5, MG_SLOW = [0.7, 0.4], MG_SLOW_DUR = [1.5, 2.5];
 
   let roster = ['marine','marine'];   // start with 2 marines (2 slots used)
   let snipeReady = [];                // per ghost, in roster order: _gameT when it may snipe again
@@ -1012,34 +1018,14 @@ const G = (() => {
     m[o+8] = sy*cp*L; m[o+9] = -sp*L; m[o+10] = cy*cp*L; m[o+11] = 0;
     m[o+12] = p.x;    m[o+13] = p.y;  m[o+14] = p.z;     m[o+15] = 1;
   }
-  // Marauder rounds are SC2 punisher grenades (MarauderMissile.m3: body +
-  // fireball, modelled nose along +Z like the tracers). Its texture was not
-  // extracted, so the body gets plain gunmetal and the fireball an additive glow.
-  const MISSILE_CAP = 128;
-  let _missileIMs = null;
-  function _missileParts() {
-    if (_missileIMs || !ModelLoader.isReady('marauderMissile')) return _missileIMs;
-    const body = new THREE.MeshStandardMaterial({ color: 0x6b7078, metalness: .6, roughness: .35, emissive: 0x301000 });
-    const glow = new THREE.MeshBasicMaterial({ color: 0xff9a3a, transparent: true, opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
-    const t = ModelLoader.clone('marauderMissile');
-    t.position.set(0, 0, 0);                      // centred on the round, not stood on the ground
-    t.traverse(ch => { if (ch.isMesh) ch.material = ch.name === 'region_1' ? glow : body; });
-    _missileIMs = bakeTemplate(t).map(p => {
-      const im = new THREE.InstancedMesh(p.geo, p.mat, MISSILE_CAP);
-      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      im.frustumCulled = false; im.castShadow = p.mat === body; im.count = 0;
-      scene.add(im);
-      return im;
-    });
-    return _missileIMs;
-  }
+  // Marauder rounds (punisher grenades) are drawn as the Viking's missiles are (syncMissiles)
   function syncBullets() {
     const m = _bulletIM.instanceMatrix.array, c = _bulletIM.instanceColor.array;
     const H = _haloIM.instanceMatrix.array, HC = _haloIM.instanceColor.array, P = _poolIM.instanceMatrix.array, PC = _poolIM.instanceColor.array;
-    const mis = _missileParts(), night = _dnFactor;
-    let n = 0, nm = 0, nh = 0;
+    const night = _dnFactor;
+    let n = 0, nh = 0;
     for (const b of bullets) {
-      if (!b.alive) continue;
+      if (!b.alive || b.unitType === 'marauder') continue;
       if (nh < BULLET_CAP) {   // halo along the round; pool flat on the ground under it
         const o = nh * 16, p = b.mesh.position;
         _writeBulletMatrix(H, o, b, 1);
@@ -1050,11 +1036,6 @@ const G = (() => {
         P[o+12] = p.x;    P[o+13] = .03; P[o+14] = p.z;  P[o+15] = 1;
         _tmpCol.setHex(b.color); _tmpCol.toArray(HC, nh * 3); _tmpCol.toArray(PC, nh * 3);
         nh++;
-      }
-      if (mis && b.unitType === 'marauder') {
-        if (nm < MISSILE_CAP) for (const im of mis) _writeBulletMatrix(im.instanceMatrix.array, nm * 16, b, 1);
-        nm++;
-        continue;
       }
       if (n >= BULLET_CAP) continue;
       _writeBulletMatrix(m, n * 16, b, b.len || 1);
@@ -1068,7 +1049,6 @@ const G = (() => {
     _poolIM.material.opacity = .3 * night;
     _haloIM.count = nh; _poolIM.count = night > .01 ? nh : 0;
     for (const im of [_haloIM, _poolIM]) { im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; }
-    if (mis) for (const im of mis) { im.count = Math.min(nm, MISSILE_CAP); im.instanceMatrix.needsUpdate = true; }
   }
 
   // ── Firing ports & muzzle flashes ───────────────────────────────────────
@@ -1123,24 +1103,31 @@ const G = (() => {
   const PARTICLE_VS = `
     attribute float aSize; attribute float aAlpha; attribute vec3 aColor;
     uniform float uScale;
-    varying float vAlpha; varying vec3 vColor; varying float vFogD;
+    varying float vAlpha; varying vec3 vColor; varying vec2 vFogXZ;
     void main() {
       vAlpha = aAlpha; vColor = aColor;
-      vFogD = length( ( modelMatrix * vec4( position, 1.0 ) ).xz );   // radial, like the scene fog
+      vFogXZ = ( modelMatrix * vec4( position, 1.0 ) ).xz;   // radial, like the scene fog
       vec4 mv = modelViewMatrix * vec4( position, 1.0 );
       gl_PointSize = aSize * uScale / -mv.z;
       gl_Position = projectionMatrix * mv;
     }`;
   const PARTICLE_FS = `
-    varying float vAlpha; varying vec3 vColor; varying float vFogD;
+    varying float vAlpha; varying vec3 vColor; varying vec2 vFogXZ;
     #ifdef USE_FOG
       uniform float fogNear; uniform float fogFar;
+      uniform vec4 glowPos[ 8 ]; uniform vec4 glowCol[ 8 ]; uniform int glowCount;   // small lights (radial-fog.js)
     #endif
     void main() {
       float d = length( gl_PointCoord - 0.5 ) * 2.0;
       float a = vAlpha * ( 1.0 - smoothstep( 0.15, 1.0, d ) ); // soft round sprite
       #ifdef USE_FOG
-        a *= 1.0 - smoothstep( fogNear, fogFar, vFogD );      // fade out in the night fog
+        float lift = 0.0;                                     // fade out in the night fog, except near a small light
+        for ( int i = 0; i < 8; i ++ ) {
+          if ( i >= glowCount ) break;
+          float gr = glowPos[ i ].w;
+          lift = max( lift, glowCol[ i ].a * ( 1.0 - smoothstep( 0.35 * gr, gr, length( vFogXZ - glowPos[ i ].xz ) ) ) );
+        }
+        a *= 1.0 - smoothstep( fogNear, fogFar, length( vFogXZ ) ) * ( 1.0 - lift );
       #endif
       if ( a < 0.004 ) discard;
       gl_FragColor = vec4( vColor, a );
@@ -1271,6 +1258,12 @@ const G = (() => {
   const VM_FLIGHT = 0.6, VM_RUN = 4;                 // s from the tube to the target; run ahead before the dive
   const VM_LEN = 0.13, VM_TAIL = 0.5 * VM_LEN;       // its length; centre → nozzle
   const VM_STREAK = 0.25;                            // the light streak covers the last this-many seconds of the path
+  // a Marauder's grenade is drawn as this missile, a little larger, with its flame and a shorter streak
+  // (it is faster); its blast on the ground lasts MG_BLAST_DUR s
+  const MG_LEN = 0.16, MG_STREAK = 0.12, MG_BLAST_DUR = 0.55;
+  // A grenade in flight is a small weak light (reach MG_LIGHT_R) that lifts the night around it, so the
+  // Zerg it passes show in the dark; its burst lights the blast for MG_BURST_LIGHT s, fading
+  const MG_LIGHT_R = 2.4, MG_LIGHT_I = 0.9, MG_BURST_LIGHT = 0.35;
   // the SC2 model's launchers: the two long tubes either side of the nose, muzzles at
   // (±0.2, 0.09, 0.91) in its normalised space (+z = nose); the procedural stand-in uses the same points
   const VM_MUZZLE = [0.2, 0.09, 0.91];
@@ -1296,7 +1289,7 @@ const G = (() => {
     });
     return _mergeGeos([body, nose, ...fins]);
   })();
-  const VM_CAP = 32, STREAK_CAP = 32 * 24;
+  const VM_CAP = 96, STREAK_CAP = 96 * 24;   // Viking missiles and Marauder grenades
   function _vmIM(geo, mat, cap, renderOrder) {
     const im = new THREE.InstancedMesh(geo, mat, cap);
     im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -1313,7 +1306,12 @@ const G = (() => {
   const _streakGeo = new THREE.CylinderGeometry(1, 1, 1, 6);
   const _streakGlowIM = _vmIM(_streakGeo, _vmFlameMat(0xff8a3a, .55), STREAK_CAP, 2);
   const _streakCoreIM = _vmIM(_streakGeo, _vmFlameMat(0xfff0c0, .95), STREAK_CAP, 3);
-  for (const im of [_streakGlowIM, _streakCoreIM])
+  // a concussive shell's flame and streak burn icy blue (as StarCraft II draws it)
+  const _mgFlameGlowIM = _vmIM(_vmFlameGeo, _vmFlameMat(0x2f8cff, .55), VM_CAP, 2);
+  const _mgFlameCoreIM = _vmIM(_vmFlameGeo, _vmFlameMat(0xdff2ff, .95), VM_CAP, 3);
+  const _mgStreakGlowIM = _vmIM(_streakGeo, _vmFlameMat(0x2f8cff, .55), STREAK_CAP, 2);
+  const _mgStreakCoreIM = _vmIM(_streakGeo, _vmFlameMat(0xdff2ff, .95), STREAK_CAP, 3);
+  for (const im of [_streakGlowIM, _streakCoreIM, _mgStreakGlowIM, _mgStreakCoreIM])
     im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(STREAK_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
 
   function fireVikingMissile(tgt) {
@@ -1356,41 +1354,166 @@ const G = (() => {
     }
   }
   const _vmM = new THREE.Matrix4(), _vmX = new THREE.Vector3(), _vmY = new THREE.Vector3(), _vmZ = new THREE.Vector3(), _vmUp = new THREE.Vector3(0, 1, 0);
-  function syncVikingMissiles() {
-    let n = 0, ns = 0;
-    for (const v of vMissiles) {
-      if (n >= VM_CAP) break;
-      const side = Math.abs(v.dir.y) < .99 ? _vmX.crossVectors(_vmUp, v.dir).normalize() : _vmX.set(1, 0, 0);
-      const up = _vmY.crossVectors(v.dir, side);
-      _vmM.makeBasis(_vmZ.copy(side).multiplyScalar(VM_LEN), up.clone().multiplyScalar(VM_LEN), v.dir.clone().multiplyScalar(VM_LEN)).setPosition(v.p);
+  const _mgDir = new THREE.Vector3();
+  // Missiles (Viking and Marauder), on their own axes (z along the flight), with the rocket's exhaust
+  // flame from the nozzle and a light streak along the recent path; all scale with the missile's length.
+  // Orange, or icy blue for a concussive shell
+  const _fire = [
+    { fg: _vmFlameGlowIM, fc: _vmFlameCoreIM, sg: _streakGlowIM, sc: _streakCoreIM, nf: 0, ns: 0 },
+    { fg: _mgFlameGlowIM, fc: _mgFlameCoreIM, sg: _mgStreakGlowIM, sc: _mgStreakCoreIM, nf: 0, ns: 0 },
+  ];
+  function syncMissiles() {
+    let n = 0;
+    for (const F of _fire) F.nf = F.ns = 0;
+    const put = (p, dir, len, trail, streakDur, F) => {
+      if (n >= VM_CAP) return;
+      const sk = len / VM_LEN;
+      const side = Math.abs(dir.y) < .99 ? _vmX.crossVectors(_vmUp, dir).normalize() : _vmX.set(1, 0, 0);
+      const up = _vmY.crossVectors(dir, side);
+      _vmM.makeBasis(_vmZ.copy(side).multiplyScalar(len), up.clone().multiplyScalar(len), dir.clone().multiplyScalar(len)).setPosition(p);
       _vmBodyIM.setMatrixAt(n, _vmM);
       const flick = 0.85 + 0.15 * Math.sin(_gameT * 70 + n * 1.7);
-      const nozzle = v.p.clone().addScaledVector(v.dir, -VM_TAIL);
-      for (const [im, len, w] of [[_vmFlameGlowIM, .45 * flick, .05], [_vmFlameCoreIM, .25 * flick, .02]]) {
-        _vmM.makeBasis(side.clone().multiplyScalar(w), v.dir.clone().multiplyScalar(-len), up.clone().multiplyScalar(w))
-          .setPosition(nozzle.clone().addScaledVector(v.dir, -len / 2));
-        im.setMatrixAt(n, _vmM);
+      const nozzle = p.clone().addScaledVector(dir, -0.5 * len);
+      for (const [im, fl, w] of [[F.fg, .45 * sk * flick, .05 * sk], [F.fc, .25 * sk * flick, .02 * sk]]) {
+        _vmM.makeBasis(side.clone().multiplyScalar(w), dir.clone().multiplyScalar(-fl), up.clone().multiplyScalar(w))
+          .setPosition(nozzle.clone().addScaledVector(dir, -fl / 2));
+        im.setMatrixAt(F.nf, _vmM);
       }
-      // the light streak along its recent path: thin cylinders, dimming and narrowing with age
-      for (let k = 0; k + 1 < v.trail.length && ns < STREAK_CAP; k++) {
-        const A = v.trail[k], B = v.trail[k + 1];
+      F.nf++;
+      // the light streak: thin cylinders, dimming and narrowing with age
+      for (let k = 0; k + 1 < trail.length && F.ns < STREAK_CAP; k++) {
+        const A = trail[k], B = trail[k + 1];
         const d = new THREE.Vector3(B[0] - A[0], B[1] - A[1], B[2] - A[2]), L = d.length();
         if (L < 1e-4) continue;
-        const kk = Math.max(0, Math.min(1, 1 - (_gameT - B[3]) / VM_STREAK));
+        const kk = Math.max(0, Math.min(1, 1 - (_gameT - B[3]) / streakDur));
         const s = Math.abs(d.y) < .99 * L ? new THREE.Vector3().crossVectors(d, _vmUp).normalize() : new THREE.Vector3(1, 0, 0);
         const u = new THREE.Vector3().crossVectors(s, d).normalize();
         const mid = new THREE.Vector3((A[0] + B[0]) / 2, (A[1] + B[1]) / 2, (A[2] + B[2]) / 2);
-        for (const [im, w] of [[_streakGlowIM, .04 * (.4 + .6 * kk)], [_streakCoreIM, .014]]) {
+        for (const [im, w] of [[F.sg, .04 * sk * (.4 + .6 * kk)], [F.sc, .014 * sk]]) {
           _vmM.makeBasis(s.clone().multiplyScalar(w), d, u.clone().multiplyScalar(w)).setPosition(mid);
-          im.setMatrixAt(ns, _vmM);
-          _tmpCol.setRGB(kk, kk, kk); im.setColorAt(ns, _tmpCol);
+          im.setMatrixAt(F.ns, _vmM);
+          _tmpCol.setRGB(kk, kk, kk); im.setColorAt(F.ns, _tmpCol);
         }
-        ns++;
+        F.ns++;
       }
       n++;
+    };
+    for (const v of vMissiles) put(v.p, v.dir, VM_LEN, v.trail, VM_STREAK, _fire[0]);
+    for (const b of bullets)
+      if (b.alive && b.unitType === 'marauder') put(b.mesh.position, _mgDir.set(b.vx, b.vy, b.vz).normalize(), MG_LEN, b.trail, MG_STREAK, _fire[concussiveUnlocked ? 1 : 0]);
+    _vmBodyIM.count = n; _vmBodyIM.instanceMatrix.needsUpdate = true;
+    for (const F of _fire) {
+      for (const im of [F.fg, F.fc]) { im.count = F.nf; im.instanceMatrix.needsUpdate = true; }
+      for (const im of [F.sg, F.sc]) { im.count = F.ns; im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; }
     }
-    for (const im of [_vmBodyIM, _vmFlameGlowIM, _vmFlameCoreIM]) { im.count = n; im.instanceMatrix.needsUpdate = true; }
-    for (const im of [_streakGlowIM, _streakCoreIM]) { im.count = ns; im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; }
+  }
+
+  // ── Marauder grenade blasts ───────────────────────────────────────────────
+  // A punisher grenade bursts at `at`: the enemy it struck (if any) already took the round's damage;
+  // everyone else within the blast radius takes MG_SPLASH of it (double vs Armored, as the round),
+  // and all of them, struck one too, are slowed (harder with Concussive Shells). Drawn: a ball of
+  // light with a few sparks, over a soft glow on the ground (syncBlasts)
+  let mBlasts = [];
+  const MG_HEART = [0xfff0c0, 0xe8f6ff], MG_GLOW = [0xffa040, 0x5cb0ff], MG_DEEP = [0xc03000, 0x1a50e0];   // warm, concussive blue
+  function marauderBlast(at, struck, dmg0, enemies) {
+    const def = UNIT_DEF.marauder, R = MG_RADIUS[concussiveLvl], sl = concussiveUnlocked ? 1 : 0, killed = [];
+    for (const o of enemies) {
+      if (o.dead) continue;
+      const q = o.mesh.position, dx = q.x - at.x, dz = q.z - at.z;
+      if (o !== struck && dx * dx + dz * dz > R * R) continue;
+      slowedEnemies.set(o.mesh.uuid, { until: _gameT + MG_SLOW_DUR[sl], factor: MG_SLOW[sl] });
+      if (o === struck) continue;
+      const bonus = def.bonusVs.some(t => (o.attrs || []).includes(t)) ? def.bonusMult : 1;
+      o.hp -= dmg0 * def.dmgMult * bonus * MG_SPLASH;
+      o.flash = 0.08;
+      if (o.hp <= 0) killed.push(o);
+    }
+    if (mBlasts.length >= BLAST_CAP) mBlasts.shift();
+    mBlasts.push({ x: at.x, z: at.z, r: R, t: 0, blue: sl === 1 });
+    // the burst: a small ball of light, white-hot at the heart in a wider soft glow, shrinking as it
+    // fades, and a few sparks — icy blue for a concussive shell (as StarCraft II draws it), else warm
+    emitParticle(_glow, at.x, .4, at.z, 0, .3, 0, .26, .85, .3, 1, MG_HEART[sl], MG_GLOW[sl], 0, 0, 0);
+    emitParticle(_glow, at.x, .4, at.z, 0, .2, 0, .34, 1.7, .7, .45, MG_GLOW[sl], MG_DEEP[sl], 0, 0, 0);
+    const rnd = Math.random;
+    for (let i = 0; i < 6; i++) {
+      const a = rnd() * Math.PI * 2, v = 1.4 + rnd() * 1.4;
+      emitParticle(_glow, at.x, .4, at.z, Math.cos(a) * v, .8 + rnd() * .8, Math.sin(a) * v, .2 + rnd() * .12, .12, .04, .9, MG_HEART[sl], MG_GLOW[sl], 3, 2, 0);
+    }
+    SFX.play('mblast');
+    for (const o of killed) killEnemy(o, true);
+  }
+  // Its light on the ground: a soft glow over the blast radius with no edge, swelling out in the
+  // first moment and dying away
+  const BLAST_CAP = 48;
+  const _blastWashTex = (() => {   // an even soft disk that dies away to nothing, no rim
+    const N = 64, c = document.createElement('canvas'); c.width = c.height = N;
+    const g = c.getContext('2d'), img = g.createImageData(N, N);
+    for (let j = 0; j < N; j++)
+      for (let i = 0; i < N; i++) {
+        const x = (i + .5) / N * 2 - 1, y = (j + .5) / N * 2 - 1, r = Math.hypot(x, y), o = (j * N + i) * 4;
+        img.data[o] = img.data[o + 1] = img.data[o + 2] = 255;
+        img.data[o + 3] = Math.round(255 * (1 - THREE.MathUtils.smoothstep(r, .25, 1)));
+      }
+    g.putImageData(img, 0, 0);
+    return new THREE.CanvasTexture(c);
+  })();
+  const _blastWashIM = (() => {
+    const im = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), Object.assign(_glowMat(), { map: _blastWashTex }), BLAST_CAP);
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(BLAST_CAP * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    im.frustumCulled = false; im.count = 0; im.renderOrder = 1;
+    scene.add(im);
+    return im;
+  })();
+  function syncBlasts(dt) {   // game time: frozen while paused
+    for (const bl of mBlasts) bl.t += dt;
+    mBlasts = mBlasts.filter(bl => bl.t < MG_BLAST_DUR);
+    mBlasts.forEach((bl, i) => {
+      const k = bl.t / MG_BLAST_DUR, r = bl.r * (.5 + .5 * THREE.MathUtils.smoothstep(k, 0, .2)), fade = (1 - k) * (1 - k);
+      _vmM.makeScale(2.3 * r, 1, 2.3 * r).setPosition(bl.x, .04, bl.z);
+      _blastWashIM.setMatrixAt(i, _vmM);
+      _blastWashIM.setColorAt(i, _tmpCol.setHex(bl.blue ? 0x2f7cff : 0xff7a2a).multiplyScalar(.5 * fade));
+    });
+    _blastWashIM.count = mBlasts.length;
+    _blastWashIM.instanceMatrix.needsUpdate = true; _blastWashIM.instanceColor.needsUpdate = true;
+  }
+  // This frame's small lights (GLOW_LIGHTS, radial-fog.js): the bursts of the last MG_BURST_LIGHT s
+  // first (brighter, wider: the blast), then grenades in flight; weak by day, at full strength at night
+  function syncGlows() {
+    const P = GLOW_LIGHTS.glowPos.value, C = GLOW_LIGHTS.glowCol.value, k = .35 + .65 * _dnFactor;
+    let n = 0;
+    const add = (x, y, z, hex, i, r, reveal) => {
+      if (n >= 8) return;
+      _tmpCol.setHex(hex).multiplyScalar(i * k);
+      P.set([x, y, z, r], n * 4); C.set([_tmpCol.r, _tmpCol.g, _tmpCol.b, reveal], n * 4);
+      n++;
+    };
+    for (let i = mBlasts.length - 1; i >= 0; i--) {   // newest first
+      const bl = mBlasts[i], f = 1 - bl.t / MG_BURST_LIGHT;
+      if (f > 0) add(bl.x, .5, bl.z, bl.blue ? 0x4a9cff : 0xff8a3a, 2.2 * f * f, bl.r + 1, f);
+    }
+    const col = concussiveUnlocked ? 0x4a9cff : 0xff8a3a;
+    for (const b of bullets)
+      if (b.alive && b.unitType === 'marauder') { const p = b.mesh.position; add(p.x, p.y, p.z, col, MG_LIGHT_I, MG_LIGHT_R, .9); }
+    GLOW_LIGHTS.glowCount.value = n;
+  }
+  // how much the night hides a Zerg there (0 in full light, 1 black): the radial fog as the shader
+  // draws it (radial-fog.js), less what a small light lifts
+  function _nightDark(x, z) {
+    const P = GLOW_LIGHTS.glowPos.value, C = GLOW_LIGHTS.glowCol.value;
+    let lift = 0;
+    for (let i = 0; i < GLOW_LIGHTS.glowCount.value; i++) {
+      const r = P[i * 4 + 3];
+      lift = Math.max(lift, C[i * 4 + 3] * (1 - _sstep(.35 * r, r, Math.hypot(x - P[i * 4], z - P[i * 4 + 2]))));
+    }
+    return _sstep(scene.fog.near, scene.fog.far, Math.hypot(x, z)) * (1 - lift);
+  }
+  // near enough a small light to show in the dark
+  function _glowLit(x, z) {
+    const P = GLOW_LIGHTS.glowPos.value, C = GLOW_LIGHTS.glowCol.value;
+    for (let i = 0; i < GLOW_LIGHTS.glowCount.value; i++)
+      if (C[i * 4 + 3] > .3 && Math.hypot(x - P[i * 4], z - P[i * 4 + 2]) < .8 * P[i * 4 + 3]) return true;
+    return false;
   }
 
   // targets: [{x, z, e}] — e = lead enemy of the cluster (may be undefined)
@@ -2236,25 +2359,29 @@ const G = (() => {
     ammo--; shootCD=.1;
     const n=roster.length||1;
     const stimExtra=stimT>0&&_stimVolley++%2===0;      // stimmed: +1 round every other volley (+50%)
+    const mTargets=[], blastR=MG_RADIUS[concussiveLvl]; // this volley's Marauder targets
     roster.forEach((utype,i)=>{
       let atx=tx, atz=tz;
-      // Marauder bonus vs Armored — auto-aim toward nearest Armored enemy
-      if(utype==='marauder'){
-        const armoredTarget = allEnemies()
-          .filter(e=>!e.dead && e.attrs && e.attrs.includes('armored'))
-          .reduce((best,e)=>{
-            const d=e.mesh.position.length();
-            return (!best||d<best.dist)?{e,dist:d}:best;
-          }, null)?.e;
-        if(armoredTarget){
-          atx=armoredTarget.mesh.position.x;
-          atz=armoredTarget.mesh.position.z;
+      // Marauders pick their own targets: the nearest enemy of any kind in sight (at night: lit, or a
+      // Sensor Tower blip), each one outside the blasts of the volley's other Marauders while there is
+      // one; none in sight: the click, as everyone else
+      const mar=utype==='marauder';
+      if(mar){
+        let best=null, bd=0, near=null, nd=0;
+        for(const e of allEnemies()){
+          if(e.dead||!(e.mesh.visible||_sensed(e))) continue;
+          const q=e.mesh.position, d=Math.hypot(q.x,q.z);
+          if(!near||d<nd){ near=e; nd=d; }
+          if(!mTargets.some(t=>Math.hypot(t[0]-q.x,t[1]-q.z)<blastR)&&(!best||d<bd)){ best=e; bd=d; }
         }
+        best=best||near;
+        if(best){ atx=best.mesh.position.x; atz=best.mesh.position.z; mTargets.push([atx,atz]); }
       }
       // Each unit fires through its own slit on the wall facing its target
       // (slits fan out ~11° apart); the round leaves from the slit toward the aim point.
       const p=bunkerPort(Math.atan2(atz,atx)+(i-(n-1)/2)*0.2);
-      const blt=makeBulletTyped(atx,atz,(i-(n-1)/2)*.006,utype,p.x,p.y,p.z);
+      const blt=makeBulletTyped(atx,atz,(i-(n-1)/2)*.006,utype,p.x,p.y,p.z,mar?0.15:AIM_Y);
+      if(mar){ blt.range=Math.min(18,Math.hypot(atx-p.x,atz-p.z)); blt.trail=[]; }   // the grenade comes down on its target
       bullets.push(blt);
       if(utype==='marine'&&stimT>0){
         blt.color=STIM_COLOR;
@@ -2914,7 +3041,7 @@ const G = (() => {
     const fogRange = _dnFactor > 0.1 ? scene.fog.far : Infinity, fogNear = scene.fog.near;
 
     allEnemies().forEach(e => {
-      if(e.dead) return;
+      if(e.dead || !e.mesh.visible) return;   // none on a Zerg hidden under its Sensor Tower blip (its bar and badge would tell which kind)
       ctx.globalAlpha = 1;
       // Cull if enemy is beyond night fog range
       if (fogRange < Infinity) {
@@ -2991,7 +3118,7 @@ const G = (() => {
     return sensorLvl >= 1 && !e.dead && !e.mesh.visible && Math.hypot(p.x, p.z) <= SENSOR_RANGE[sensorLvl];
   }
   // The ring per level: a soft band with a brighter core (the glow texture's centre
-  // column gives the profile across it) and 12 triangles, tips toward the bunker
+  // column gives the profile across it) and 12 small equilateral triangles, tips toward the bunker
   const _sensorRings = [], _sensorRingMat = Object.assign(_glowMat(), { color: new THREE.Color(0xff503c) });
   function _sensorRing(lvl) {
     if (_sensorRings[lvl]) return _sensorRings[lvl];
@@ -3007,8 +3134,9 @@ const G = (() => {
       }
     };
     band(0.45); band(0.12);   // glow, core
+    const side = 0.5, h = side * Math.sqrt(3) / 2;   // equilateral, its centre on the ring
     for (let k = 0; k < 12; k++) {
-      const a = k * Math.PI / 6, c = Math.cos(a), s = Math.sin(a), rBase = R + 0.35, rTip = R - 0.6, hw = 0.32;
+      const a = k * Math.PI / 6, c = Math.cos(a), s = Math.sin(a), rBase = R + h / 3, rTip = R - 2 * h / 3, hw = side / 2;
       vtx(c * rBase - s * hw, s * rBase + c * hw, 0.5);
       vtx(c * rBase + s * hw, s * rBase - c * hw, 0.5);
       vtx(c * rTip, s * rTip, 0.5);
@@ -3059,10 +3187,11 @@ const G = (() => {
     }
     if (phase !== 'playing' || sensorLvl < 1) { _blipIM.count = 0; return; }
     // the blips come in with the ring (fresh research), and each fades in as it crosses into
-    // range and out as it nears the lit edge (where its Zerg appears) instead of popping
+    // range and out only as its Zerg comes out of the dark (well inside the lit edge, where the
+    // fog still left it black, or in a grenade's light): gone just as the Zerg shows (the enemy
+    // loop), so no gap, and no Zerg seen under its blip
     const blipsA = Math.max(0, Math.min(1, _sensorRingA[sensorLvl] / Math.max(0.1, _dnFactor)));
-    const range = SENSOR_RANGE[sensorLvl], litEdge = scene.fog.far * 1.05;   // the enemies' visibility edge (loop)
-    const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const range = SENSOR_RANGE[sensorLvl];
     // the screen's up direction on the ground: the camera's up and forward axes, flattened (no roll)
     const e = camera.matrixWorld.elements;
     _blipF.set(e[4] - e[8], 0, e[6] - e[10]);
@@ -3073,9 +3202,9 @@ const G = (() => {
     const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 1000 * Math.PI * 2 * 1.5), s = 1.4 * (0.94 + 0.06 * pulse);
     let n = 0;
     for (const en of allEnemies()) {
-      if (n >= BLIP_CAP || !_sensed(en)) continue;
+      if (n >= BLIP_CAP || en.dead) continue;
       const p = en.mesh.position, d = Math.hypot(p.x, p.z);
-      const a = blipsA * sstep(litEdge, litEdge + 0.8, d) * (1 - sstep(range - 0.8, range, d));
+      const a = blipsA * _sstep(SENSOR_SHOW_DARK, SENSOR_SHOW_DARK + SENSOR_BLIP_FADE, _nightDark(p.x, p.z)) * (1 - _sstep(range - 0.8, range, d));
       if (a < 0.01) continue;
       // the glyph's top (the quad's -z: the canvas top, flipped up the plane) → F, its x → the screen's right
       _blipM.set(_blipR.x * s, 0, -_blipF.x * s, p.x,
@@ -3375,9 +3504,11 @@ const G = (() => {
       if(e.flash>0) e.flash-=dt;
       const ex=e.mesh.position.x,ez=e.mesh.position.z;
       const d=Math.sqrt(ex*ex+ez*ez);
-      // Hide enemy mesh when beyond night fog range
+      // Hide enemy mesh when beyond night fog range (a grenade's light shows it too); within a Sensor
+      // Tower's range it is its blip only (not which kind) until the night leaves it SENSOR_SHOW_DARK dark
       if (_nightFogFar < Infinity) {
-        e.mesh.visible = d < _nightFogFar * 1.05; // slight buffer so pop-in is smooth
+        const blip = sensorLvl >= 1 && d <= SENSOR_RANGE[sensorLvl];
+        e.mesh.visible = blip ? _nightDark(ex, ez) < SENSOR_SHOW_DARK : d < _nightFogFar * 1.05 || _glowLit(ex, ez); // slight buffer so pop-in is smooth
       } else {
         e.mesh.visible = true;
       }
@@ -3443,10 +3574,10 @@ const G = (() => {
         b.mesh.position.y+=b.vy*_fs;
         if(b.mesh.position.y<0.12){ b.mesh.position.y=0.12; b.vy=0; _orientBullet(b); } // past the aim point: skim the ground
       }
-      if(b.unitType==='marauder'&&_missileIMs){        // punisher grenade: fire trail from its tail
-        const p=b.mesh.position, k=.35/(Math.hypot(b.vx,b.vy,b.vz)||1);
-        emitParticle(_glow,p.x-b.vx*k,p.y-b.vy*k,p.z-b.vz*k,(Math.random()-.5)*.4,Math.random()*.3,(Math.random()-.5)*.4,.16,.28,.08,.95,0xffa040,0xc02000,0,1,0);
-        emitParticle(_smoke,p.x-b.vx*k*1.5,p.y-b.vy*k*1.5,p.z-b.vz*k*1.5,(Math.random()-.5)*.3,.35,(Math.random()-.5)*.3,.55,.16,.5,.5,0x9a9488,0x55524c,-.1,.6,1);
+      if(b.unitType==='marauder'){                     // punisher grenade: its light streak (the flame is drawn; smoke
+        const p=b.mesh.position, k=.5*MG_LEN/(Math.hypot(b.vx,b.vy,b.vz)||1);   // puffs, one a frame at its speed, dotted the path)
+        b.trail.push([p.x-b.vx*k,p.y-b.vy*k,p.z-b.vz*k,_gameT]);
+        while(b.trail.length>2&&_gameT-b.trail[0][3]>MG_STREAK) b.trail.shift();
       }
       let e=null, tBest=2;
       for(const c of _enemyList){
@@ -3472,30 +3603,17 @@ const G = (() => {
           floatTexts.push({x:e.mesh.position.x,y:e.mesh.position.y+1.2,z:e.mesh.position.z,
             txt:Math.round(actualDmg).toString(),life:900,maxLife:900,
             color:bonus>1?'#ff6600':'#ffffff'});
-          // Concussive shell slow (marauder upgrade)
-          if(b.unitType==='marauder'&&concussiveUnlocked){
-            const slowUntil = _gameT+2.5;
-            slowedEnemies.set(e.mesh.uuid,{until:slowUntil,factor:0.4});
-            // AOE slow if concussiveLvl >= 1
-            const aoeR = CONC_RADIUS[concussiveLvl];
-            if(aoeR > 0){
-              _enemyList.forEach(other=>{
-                if(other.dead||other===e) return;
-                const dx=other.mesh.position.x-e.mesh.position.x;
-                const dz=other.mesh.position.z-e.mesh.position.z;
-                if(dx*dx+dz*dz <= aoeR*aoeR)
-                  slowedEnemies.set(other.mesh.uuid,{until:slowUntil,factor:0.4});
-              });
-              spawnParts(e.mesh.position.clone(),0x4488ff,10);
-            }
-          }
+          if(b.unitType==='marauder') marauderBlast(b.mesh.position,e,baseDmg,_enemyList);   // the rest of the blast, and the slow
           const vl=Math.hypot(b.vx,b.vz)||1;
           bloodFx(e,b.mesh.position,b.vx/vl,b.vz/vl);
           b.alive=false;
           if(e.hp<=0) killEnemy(e,true);
         }
       }
-      if(b.alive&&b.dist>18) b.alive=false;
+      if(b.alive&&b.dist>=(b.range||18)){
+        if(b.unitType==='marauder') marauderBlast(b.mesh.position,null,baseDmg,_enemyList);   // came down on its target point
+        b.alive=false;
+      }
     });
     bullets=bullets.filter(b=>b.alive);
     syncBullets();
@@ -3522,7 +3640,9 @@ const G = (() => {
     syncUnitLamps();          // their chest lamps at night
     updateViking(dt);
     updateVikingMissiles(dt);
-    syncVikingMissiles();
+    syncMissiles();             // the Viking's and the Marauders' grenades
+    syncBlasts(dt);
+    syncGlows();                // their light (the bursts' and the grenades')
     checkBunkerHover(dt);
     ghostSnipeTick(dt);
     updateShrike(dt);
@@ -3545,7 +3665,7 @@ const G = (() => {
   function clearEntities(){
     clearScheduler();        // drop pending wave countdown / Viking / missile launches / nuke (runs their cleanup)
     removeViking();
-    vMissiles=[]; syncVikingMissiles();
+    vMissiles=[]; mBlasts=[]; syncBlasts(0); GLOW_LIGHTS.glowCount.value=0;
     mushrooms=[]; syncMushrooms(0);
     _nukeLightT=-1; if(_nukeLight) _nukeLight.intensity=0;
     clearFlare();            // the flare and the nuke light go: relights the scene at the true night factor
@@ -3560,7 +3680,7 @@ const G = (() => {
       if(e.mesh) scene.remove(e.mesh);
     });
     zerglings=[];roaches=[];bullets=[];beams=[];crates=[];marines=[];spawnQueue=[];corpses=[];acids=[];
-    syncBullets(); syncEnemyPools(); syncAcids(); syncUnitLamps();
+    syncBullets(); syncMissiles(); syncEnemyPools(); syncAcids(); syncUnitLamps();
   }
 
   // ── Victory / defeat ──────────────────────────────────────────────────────
@@ -3662,7 +3782,7 @@ const G = (() => {
     { id:'roster', after:'cleared', when:()=>wave>=2&&wavePhase!=='combat', focus:['#cmd-roster'], keys:['b'], title:'BUNKER ROSTER',
       text:'Between waves is a good moment to press <kbd>B</kbd>: hire more units into the bunker\'s free slots — every one of them fires with each volley.' },
     { id:'roach', when:()=>roaches.some(r=>!r.dead), title:'ROACHES',
-      text:'Roaches are <b>Armored</b> and spit acid from range. Marauders lock onto the nearest Armored enemy and deal it double damage; armor (<kbd>2</kbd>) cuts the damage the bunker takes.' },
+      text:'Roaches are <b>Armored</b> and spit acid from range. Marauders deal Armored enemies double damage; armor (<kbd>2</kbd>) cuts the damage the bunker takes.' },
     { id:'nuke', when:()=>wave>=CFG.nuke_wave&&wavePhase==='combat'&&nukeCD<=0&&!_nukeInFlight, focus:['#cmd-nuke'], keys:['n'], title:'NUKE READY',
       text:`From wave ${CFG.nuke_wave}, press <kbd>N</kbd> or click NUKE: a Ghost marks the middle of the swarm and the warhead wipes out everything in the blast. It recharges after each launch.` },
     { id:'hull', when:()=>wavePhase==='combat'&&bunkerHp<maxHp*0.5, focus:['#hp-bar'], title:'BUNKER DAMAGED',
@@ -3837,7 +3957,7 @@ const G = (() => {
         <b>FIRE</b><span>Click the ground: every unit inside the bunker fires one volley at that spot, for one round. Hold the button for full auto — it empties the magazine fast.</span>
         <b>AMMO</b><span>After each wave a Marine fetches a supply crate that refills the magazine. Out of ammo mid-wave? <kbd>R</kbd> calls a Viking: it fires missiles into the swarm and drops an ammo crate — one crate covers the wave.</span>
         <b>MONEY</b><span>Kills and cleared waves pay minerals and gas. Spend them on upgrades <kbd>1</kbd>–<kbd>4</kbd> (damage, armor, hull, ammo) and on units in the roster <kbd>B</kbd>, which pauses the game.</span>
-        <b>UNITS</b><span>The bunker has 6 slots. Marine (1 slot): all-round. Marauder (2): locks onto the nearest Armored enemy, double damage to it. Ghost (2): bonus damage to Light, researches auto-Snipe.</span>
+        <b>UNITS</b><span>The bunker has 6 slots. Marine (1 slot): all-round. Marauder (2): aims itself at the nearest enemies; its grenade blasts an area, slowing all in it, double damage to Armored. Ghost (2): bonus damage to Light, researches auto-Snipe.</span>
         <b>POWERS</b><span><kbd>N</kbd> nuke from wave ${CFG.nuke_wave}. <kbd>T</kbd> Stimpack with six Marines. Bunker hull level 3: Shrike auto-turret and self-repair.</span>
         <b>ZERG</b><span>Zerglings: fast, Light, bite the hull. Roaches from wave ${CFG.roach_wave}: Armored, spit acid from range. From wave ${CFG.metabolic_wave} the Zerglings run faster.</span>
       </div>
@@ -4100,7 +4220,8 @@ const G = (() => {
       el.className = `ushop ${type}`;
       // Generated from UNIT_DEF so the text can't drift from the numbers again
       const bonusNote = (def.dmgMult !== 1 ? `×${def.dmgMult} dmg` : 'balanced')
-        + (def.bonusVs.length ? `, +${Math.round((def.bonusMult - 1) * 100)}% vs ${def.bonusVs.join('/')}` : ', no bonus');
+        + (def.bonusVs.length ? `, +${Math.round((def.bonusMult - 1) * 100)}% vs ${def.bonusVs.join('/')}` : ', no bonus')
+        + (type === 'marauder' ? ', blast slows the area' : '');
       el.innerHTML = `
         <div class="ushop-name ${type}">${def.name}</div>
         <div class="ushop-slot">${def.slots} slot${def.slots>1?'s':''}</div>
@@ -4132,7 +4253,7 @@ const G = (() => {
       let statusLine = def.desc;
       if (unlocked) {
         if (key === 'snipe')      statusLine = `CD: ${(SNIPE_CD[snipeLvl]/1000).toFixed(1)}s | tier ${snipeLvl}/3`;
-        if (key === 'concussive') statusLine = concussiveLvl===0 ? 'Single target' : `AOE radius ${CONC_RADIUS[concussiveLvl].toFixed(1)} | tier ${concussiveLvl}/3`;
+        if (key === 'concussive') statusLine = `Slow 40% for 2.5s | blast radius ${MG_RADIUS[concussiveLvl].toFixed(1)} | tier ${concussiveLvl}/3`;
         if (key === 'superstim')  statusLine = `Stim: no HP cost, +${CFG.superstim_heal} HP/s to the bunker for ${CFG.stim_duration} s (stacks with self-repair)`;
         if (key === 'sensor')     statusLine = `Blips out to ${SENSOR_RANGE[sensorLvl]} | tier ${sensorLvl}/3`;
       }

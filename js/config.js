@@ -63,9 +63,6 @@ const ASSETS = {
                stride: 2.25 * 0.667 * SC2_SCALE,
                tex: { diffuse: TERRAN_DIR + 'ghost_diffuse.dds' } },
   nukeMissile: { glb: TERRAN_DIR + 'nuke_missile.glb', unitScale: SC2_SCALE * 0.52, tex: { diffuse: TERRAN_DIR + 'nuke_missile.dds' } },
-  // Marauder punisher grenade (body + fireball); its texture is not extracted, so
-  // game.js gives it plain materials. Drawn 2× its SC2 size to read at this zoom.
-  marauderMissile: { glb: TERRAN_DIR + 'marauder_missile.glb', unitScale: SC2_SCALE * 2 },
   viking:   { obj: TERRAN_DIR + 'viking.obj', scale: 2.25, rotY: -Math.PI/2,
                tex: { diffuse: TERRAN_DIR + 'viking_diffuse.jpg', emissive: TERRAN_DIR + 'viking_emissive.jpg' } },
   // Zerglings by wave tier: base · Metabolic Boost (wave 8+, winged) · its webby skin (wave 12+).
@@ -100,7 +97,7 @@ const LOAD_STAGES = [
   ['bunker'],
   ['zergling', 'marine'],
   ['roach', 'viking', 'nukeMissile'],
-  ['marauder', 'marauderMissile', 'ghost', 'zergling_upgrade', 'roach_ex1a', 'shrike', 'zergling_webby', 'roach_ex3'],
+  ['marauder', 'ghost', 'zergling_upgrade', 'roach_ex1a', 'shrike', 'zergling_webby', 'roach_ex3'],
 ];
 // Roach acid (SC2: range 4, one spit every 2 game s = 1.43 s). The Roach stops
 // when the hull is in range and plays its Attack animation; the acid leaves
