@@ -4515,12 +4515,13 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   const _achSum = () => `${achCount()} / ${ACH.length} earned · ${achPoints()} / ${ACH_TOTAL} points`;
   const _achTotalsHTML = () => `<div class="ach-tot">${_achSum()}</div><div class="ach-bar"><i style="width:${achPoints() / ACH_TOTAL * 100}%"></i></div>`;
   // Toasts: one box under the top bar, one at a time, 4.6 s each on real time (CSS + setTimeout), so they
-  // show over the roster, the menu and the results; the chime as each first shows
+  // show over the roster, the menu and the results; the chime as each first shows. A hidden page stops
+  // the clock (no toast runs out unseen, no chime from a background tab): back, the toast starts again
   let _toasts = [], _toastTimer = 0;
   function _toastShow() {
     const el = $('ach-toast'), a = _achDef(_toasts[0]);
     clearTimeout(_toastTimer); el.classList.remove('on');
-    if (!a) return;                             // the queue is empty
+    if (!a || document.hidden) return;          // the queue is empty; hidden: shown when the page is back
     el.innerHTML = `<div class="at-box">${_achIconHTML(a, true)}<div class="at-txt"><div class="at-k"></div><b>${a.name}</b><span>${a.desc}</span></div>` +
       `<div class="at-pts"><b>${a.points}</b><span>${_achDate(_ach.earned[a.id])}</span></div></div>`;
     _toastKick();
@@ -4529,6 +4530,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     _toastTimer = setTimeout(() => { _toasts.shift(); _toastShow(); }, 4600);
   }
   function _toastKick() { const k = document.querySelector('#ach-toast .at-k'); if (k) k.textContent = 'ACHIEVEMENT EARNED' + (_toasts.length > 1 ? ` · ${_toasts.length - 1} MORE` : ''); }
+  document.addEventListener('visibilitychange', _toastShow);
   // Title → ACHIEVEMENTS: the totals, a tab per category (how many earned), the category's rows in an
   // area sized for the largest category (the card keeps its height on every tab), BACK
   let _achTab = 0;
