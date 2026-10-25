@@ -4407,24 +4407,38 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   ].map(([id, name, desc, cat, points, icon, stat = '', goal = 0, hidden = false]) => ({ id, name, desc, cat, points, icon, stat, goal, hidden }));
   const ACH_TOTAL = ACH.reduce((p, a) => p + a.points, 0);
   const _achDef = id => ACH.find(a => a.id === id);
-  const _ach = (() => {                         // a new player: nothing earned
-    const b = { earned: {}, stats: {}, dirty: false };
+  function _achRead() {                         // the stored record (a new player: nothing earned)
+    const b = { earned: {}, stats: {} };
     try {
       const d = JSON.parse(_store.get(ACH_KEY) || 'null') || {};
       for (const [id, t] of Object.entries(d.earned || {})) if (_achDef(id)) b.earned[id] = +t > 0 ? +t : 1;   // ids of removed achievements drop out
       for (const [k, n] of Object.entries(d.stats || {})) if (isFinite(n)) b.stats[k] = +n;
     } catch (e) {}
     return b;
-  })();
+  }
+  const _ach = Object.assign(_achRead(), { dirty: false });
+  _ach.base = { ..._ach.stats };                // the stats as last read or written: this page has added stats - base since
   // This game's facts the rules need (saved with the game): cheated also covers legacy, a save from
   // before achievements whose past is unknown; usedSupport = an airstrike or nuke called; hiredOther =
   // a Marauder or Ghost hired. _runAch: earned this game (the results); _waveHurt: a bite or acid this wave
   const _newRun = () => ({ cheated: false, legacy: false, usedSupport: false, hiredOther: false });
   let _run = _newRun(), _runAch = [], _waveHurt = false, _airRunKills = 0;
-  function _achSave() { _ach.dirty = false; _store.set(ACH_KEY, JSON.stringify({ earned: _ach.earned, stats: _ach.stats })); }
+  // Another tab of the game writes the same record: fold what is stored now into this page's copy, never
+  // write over it. Earned: either's (the earlier date); stats: the stored ones plus what this page added
+  function _achMerge(d) {
+    for (const [id, t] of Object.entries(d.earned)) if (!(_ach.earned[id] <= t)) _ach.earned[id] = t;
+    for (const k of new Set([...Object.keys(d.stats), ...Object.keys(_ach.stats)])) _ach.stats[k] = (d.stats[k] || 0) + (_ach.stats[k] || 0) - (_ach.base[k] || 0);
+    _ach.base = { ...d.stats };
+  }
+  function _achSave() {
+    _achMerge(_achRead());
+    _ach.dirty = false; _ach.base = { ..._ach.stats };
+    _store.set(ACH_KEY, JSON.stringify({ earned: _ach.earned, stats: _ach.stats }));
+  }
   function achFlush() { if (_ach.dirty) _achSave(); }
   addEventListener('pagehide', achFlush);       // the web has no shutdown hook
   document.addEventListener('visibilitychange', () => { if (document.hidden) achFlush(); });
+  addEventListener('storage', e => { if (e.key === ACH_KEY) { _achMerge(_achRead()); _achRedraw(); } });   // another tab earned or counted something
   const achCount = () => Object.keys(_ach.earned).length;
   const achPoints = () => ACH.reduce((p, a) => p + (_ach.earned[a.id] ? a.points : 0), 0);
   function _achUnlock(id) {
