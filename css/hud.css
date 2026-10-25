@@ -529,7 +529,7 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .ach-res-off{margin:-4px 0 14px;font-size:13px;font-weight:700;letter-spacing:.3px;color:var(--danger)}
 /* Top bar: CHEATS / OLD SAVE while this game earns none */
 .tb-cheat{flex-shrink:0;color:var(--danger);border-color:#8a3a32;background:rgba(255,90,79,.12)}
-@media (max-width:1100px){ #tv-cheat{display:none} }
+@media (max-width:1200px){ #tv-cheat{display:none} }   /* narrower, it squeezed the status line to a few letters */
 /* Cheat console: the gate's second line; the help list in the console itself */
 #cheat-wrap{width:min(360px,calc(100% - 24px))}   /* the gate line fits on one line */
 #cheat-msg{white-space:pre-wrap}
