@@ -79,8 +79,9 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 #holo-scan{position:absolute;left:0;right:0;height:14px;z-index:2;pointer-events:none;top:-14px;
   background:linear-gradient(180deg,transparent,rgba(85,222,255,.16),transparent);animation:holoScan 3.4s linear infinite}
 @keyframes holoScan{0%{top:-14px}100%{top:100%}}
-#holo-status{position:absolute;top:3px;left:0;right:0;text-align:center;z-index:3;font-size:10px;font-weight:700;letter-spacing:1.5px;
-  color:#44ff88;text-shadow:0 0 6px currentColor;pointer-events:none}
+#holo-status{position:absolute;top:2px;left:0;right:0;width:max-content;margin:0 auto;padding:0 5px;text-align:center;z-index:3;font-size:10px;font-weight:700;letter-spacing:1.5px;
+  color:#44ff88;text-shadow:0 0 6px currentColor;pointer-events:none;
+  background:rgba(4,16,28,.9);border:1px solid rgba(46,128,180,.45)}   /* on a dark plate: the gold hologram (hull 2-3) swallowed the gold letters */
 #holo-tier{position:absolute;bottom:4px;left:0;right:0;display:flex;gap:4px;justify-content:center;z-index:3;pointer-events:none}
 .ht-dot{width:6px;height:6px;border-radius:50%;border:1px solid rgba(95,155,205,.5);background:rgba(20,40,60,.7);transition:all .25s}
 .ht-dot.on{background:#66ddff;border-color:#9be7ff;box-shadow:0 0 6px #66ddff,0 0 10px #3aaaff}
@@ -105,9 +106,13 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .cc-armor .ico{color:#8fc3f0;font-size:13px}
 .bar{position:relative;height:16px;background:linear-gradient(180deg,#05090e,#0a1018);border:1px solid #233a52;box-shadow:inset 0 0 5px rgba(0,0,0,.7);overflow:hidden}
 .bar .fill{position:absolute;left:0;top:0;bottom:0;width:100%;transition:width .25s,background-color .4s}
-.bar .ticks{position:absolute;inset:0;pointer-events:none}
-.bar .bar-l{position:absolute;left:7px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700;letter-spacing:1.5px;color:rgba(255,255,255,.8);text-shadow:0 1px 2px #000}
-.bar .bar-v{position:absolute;right:7px;top:50%;transform:translateY(-50%);font-family:var(--num);font-size:12px;color:#fff;text-shadow:0 1px 2px #000,0 0 4px #000}
+.bar .ticks{position:absolute;inset:0;pointer-events:none;   /* none under the label or the value (they cut through the letters): --ml / --mr set by game.js */
+  -webkit-mask:linear-gradient(90deg,transparent var(--ml,0px),#000 0 calc(100% - var(--mr,0px)),transparent 0);mask:linear-gradient(90deg,transparent var(--ml,0px),#000 0 calc(100% - var(--mr,0px)),transparent 0)}
+/* a dark 1px outline under the drop shadow: white reads on the light amber fill as it does on the green */
+.bar .bar-l{position:absolute;left:7px;top:50%;transform:translateY(-50%);font-size:11px;font-weight:700;letter-spacing:1.5px;color:rgba(255,255,255,.8);
+  text-shadow:0 1px 2px #000,-1px 0 rgba(0,0,0,.67),1px 0 rgba(0,0,0,.67),0 -1px rgba(0,0,0,.67),0 1px rgba(0,0,0,.67)}
+.bar .bar-v{position:absolute;right:7px;top:50%;transform:translateY(-50%);font-family:var(--num);font-size:12px;color:#fff;
+  text-shadow:0 1px 2px #000,0 0 4px #000,-1px 0 rgba(0,0,0,.67),1px 0 rgba(0,0,0,.67),0 -1px rgba(0,0,0,.67),0 1px rgba(0,0,0,.67)}
 #hp-bar .fill{background-color:#2fd35a;background-image:linear-gradient(180deg,rgba(255,255,255,.32),transparent 45%,rgba(0,0,0,.18));box-shadow:0 0 8px rgba(40,220,90,.4)}
 #hp-bar.mid .fill{background-color:#e2a21b;box-shadow:0 0 8px rgba(230,160,30,.4)}
 #hp-bar.low .fill{background-color:#e2392e;box-shadow:0 0 8px rgba(230,60,40,.5)}
@@ -178,6 +183,7 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .cmd-btn img.ico,.cmd-btn.ready img.ico{font-size:32px;filter:none;border:1px solid rgba(140,200,255,.35);border-radius:2px}   /* SC2 button art */
 .cmd-label{font-size:11px;font-weight:700;letter-spacing:1px;line-height:12px;color:#a8d4ff;text-shadow:0 0 6px rgba(80,170,255,.4)}
 .cmd-key{position:absolute;top:2px;left:4px;font-family:var(--num);font-size:10px;line-height:12px;color:#ffd27a;text-shadow:0 0 3px #000}
+#cmd-view .cmd-key{left:3px;padding:0 1px;border-radius:2px;background:rgba(11,26,46,.94)}   /* HOME runs over the icon: on a dark tab over its corner, not across its border */
 .cmd-cost{position:absolute;bottom:2px;left:0;right:0;display:flex;justify-content:center;gap:5px;font-family:var(--num);font-size:10px;line-height:11px}
 .cmd-cost .m{color:var(--mineral)} .cmd-cost .g{color:var(--gas)}
 .cmd-cost.short .m.no,.cmd-cost.short .g.no{color:var(--danger)}
@@ -256,6 +262,7 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .rs.gh{width:85px;background:rgba(70,20,140,.35);border:1px solid #9152e0;color:#d6b0ff}
 .rs.em{width:40px;background:rgba(255,255,255,.03);border:1px dashed rgba(255,255,255,.2);color:rgba(255,255,255,.25)}
 .rs-lbl{font-size:9px;font-weight:600;letter-spacing:1px;opacity:.75}
+.rs.m .rs-lbl{letter-spacing:0}   /* MARINE filled its 40px tile: no letter spacing, clear of the border */
 .rs-rem{position:absolute;top:0;right:0;padding:1px 4px;font-size:12px;color:#ff8a80;display:none;cursor:pointer}
 .rs-rem:hover{color:#fff;background:rgba(255,60,60,.35)}
 .rs:hover .rs-rem{display:block}
@@ -403,8 +410,8 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .ov-btn:disabled{cursor:not-allowed;filter:saturate(.2) brightness(.6)}
 .ov-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}   /* title: HOW TO PLAY | SETTINGS */
 @media (max-width:520px){ .ov-pair{grid-template-columns:1fr} }
-.ov-row{display:flex;gap:8px}
-.ov-row .ov-btn{justify-content:center;text-align:center}
+.ov-row{display:flex;flex-wrap:wrap;gap:8px}   /* a phone: the buttons stack instead of running off the card */
+.ov-row .ov-btn{justify-content:center;text-align:center;width:auto;flex:1 1 auto}   /* the same padding on both (in halves, CONTINUE · ENDLESS filled its button edge to edge) */
 .ov-row .ov-btn .ob-t{font-size:17px;letter-spacing:2px;white-space:nowrap}
 .ov-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:0 0 16px}
 .ov-stat{padding:6px 4px;background:rgba(10,24,42,.8);border:1px solid #1d3a5a}
