@@ -168,6 +168,8 @@ const G = (() => {
       boom:     t => { noise(t, .7, 1200, 55, .75, 'lowpass', .7); tone(t, .6, 62, 30, .55, 'sine'); },
       nukeWarn: t => { for (let i = 0; i < 4; i++) { tone(t + i * .5, .14, 880, 860, .09); tone(t + i * .5 + .2, .14, 660, 650, .07); } },
       nukeBoom: t => { noise(t, 2.2, 2200, 38, 1.0, 'lowpass', .6); tone(t, 2.0, 48, 24, .9, 'sine'); noise(t + .05, .5, 4000, 900, .35, 'highpass'); },
+      nukeShock: t => { noise(t, 1.0, 3200, 45, .8, 'lowpass', .6); noise(t, .3, 5000, 900, .4, 'highpass'); tone(t, 2.2, 46, 21, .8, 'sine'); tone(t + .02, .8, 90, 35, .35, 'triangle'); },   // the shock front passing the bunker: a crack, then a deep thud
+      nukeRumble: t => { for (let i = 0; i < 5; i++) noise(t + i * .75, 1.1, 520 * .8 ** i, 60, .4 * .78 ** i, 'lowpass', .4); tone(t, 4.5, 31, 20, .35, 'sine'); },   // the long rumble after it (a noise voice lasts ~1 s: chained)
       wave:     t => { tone(t, .55, 110, 108, .07, 'sawtooth'); tone(t, .55, 165, 162, .06, 'sawtooth'); tone(t + .3, .5, 220, 218, .05, 'sawtooth'); },
       clear:    t => { [523, 659, 784, 1046].forEach((fq, i) => tone(t + i * .09, .16, fq, fq, .12, 'sine')); },
       bite:     t => { tone(t, .08, 230, 140, .1, 'triangle'); noise(t, .06, 420, 300, .14); },
@@ -181,7 +183,8 @@ const G = (() => {
       rocket:   t => { noise(t, .45, 900, 2600, .2, 'bandpass', 1.5); tone(t, .1, 160, 70, .12, 'sine'); },   // Viking missile off the rail
       mblast:   t => { noise(t, .26, 1400, 110, .32, 'lowpass', .8); tone(t, .22, 90, 38, .3, 'sine'); },      // a punisher grenade bursts
     };
-    const MIN_GAP = { hit: .045, bite: .22, spit: .07, acid: .06, marine: .03, marauder: .05, ghost: .05, shrike: .05, zdie: .035, rdie: .06, boom: .07, rocket: .06, mblast: .06 };
+    const MIN_GAP = { hit: .045, bite: .22, spit: .07, acid: .06, marine: .03, marauder: .05, ghost: .05, shrike: .05, zdie: .035, rdie: .06, boom: .07, rocket: .06, mblast: .06,
+      nukeShock: .4, nukeRumble: 1 };   // blasts stacked by cheats: one shock, one rumble
     function play(name) {
       if (!ctx || muted || ctx.state !== 'running' || !SOUNDS[name]) return;
       const t = ctx.currentTime, gap = MIN_GAP[name];
@@ -1756,8 +1759,67 @@ const G = (() => {
     g.setAttribute('uv', new THREE.Float32BufferAttribute([0,0, 1,1, 1,0, 0,0, 0,1, 1,1], 2));
     return g;
   })();
+  // The bunker blocks the lamp, its light and its pool (the desktop's spotSeen): it stands as a vertical cylinder fitted
+  // to its walls (centre xz, radius, top: fitBunkerOccluder), and the lamp does not reach a point whose segment to it
+  // passes through the cylinder below its top. The rim is soft (a lamp is not a point; a hard edge would crawl) and lies
+  // just inside the cylinder: nothing the segment misses is dimmed. On or inside it (the hull, the ground at its foot)
+  // the half facing the lamp is lit (N·L decides) and the far half is not: some of that ground shows past the hull's
+  // foot. A lamp inside it (a unit stepping out) lights nothing outside.
+  const _lampOcc = { value: new THREE.Vector4(0, 0, 1.5, 1.6) };   // until the model is in
+  GLOW_LIGHTS.lampOcc = _lampOcc;   // every material gets it with the small lights' uniforms (radial-fog.js)
+  const _SPOT_SEEN = `uniform vec4 lampOcc;
+float spotSeenW( vec3 p, vec3 l ) {   // world space
+  float R = lampOcc.z;
+  vec2 a = p.xz - lampOcc.xy, d = l.xz - p.xz;
+  float t = clamp( - dot( a, d ) / max( dot( d, d ), 1e-6 ), 0.0, 1.0 );   // the segment's closest approach to the axis
+  if ( mix( p.y, l.y, t ) > lampOcc.w ) return 1.0;                        // it passes over the top
+  float s = smoothstep( R - 0.4, R, length( a + d * t ) );
+  if ( dot( a, a ) < R * R ) s = max( s, smoothstep( -0.25, 0.15, dot( a, d ) * inversesqrt( max( dot( d, d ), 1e-6 ) ) ) );
+  return s;
+}
+`;
+  // The lights' loops run in view space: spotSeen() takes the point and the lamp back to world space. Spot light 0 is
+  // the lamp (the scene's only one). Phong and Standard light per pixel, Lambert (rocks, stand-ins) per vertex.
+  // Patched once, before any material compiles.
+  THREE.ShaderChunk.lights_pars_begin += `
+#if NUM_SPOT_LIGHTS > 0
+${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec3 o = viewMatrix[ 3 ].xyz; return spotSeenW( ( p - o ) * r, ( l - o ) * r ); }
+#endif`;
+  [['lights_fragment_begin', 'getSpotDirectLightIrradiance( spotLight, geometry, directLight );', 'spotLight'],
+   ['lights_lambert_vertex', 'getSpotDirectLightIrradiance( spotLights[ i ], geometry, directLight );', 'spotLights[ i ]']].forEach(([k, call, sl]) => {
+    if (!THREE.ShaderChunk[k].includes(call)) console.warn(`Lamp: three.js ${k} has changed, the bunker does not block the lamp`);
+    THREE.ShaderChunk[k] = THREE.ShaderChunk[k].replace(call, `${call}
+		#if UNROLLED_LOOP_INDEX == 0
+		directLight.color *= spotSeen( geometry.position, ${sl}.position );
+		#endif`);
+  });
+  // The cylinder (the desktop's fitBunkerOccluder): the walls' mean half-width below 60% of the height (the roof's
+  // overhang left out) and the hull's top. The Neosteel frame counts once it shows; the turret blocks nothing.
+  function fitBunkerOccluder() {
+    const v = new THREE.Vector3(), pts = [];
+    bunkerModelRoot.updateMatrixWorld(true);
+    bunkerModelRoot.traverseVisible(ch => {
+      if (!ch.isMesh || !ch.geometry?.attributes.position) return;
+      const p = ch.geometry.attributes.position;
+      for (let i = 0; i < p.count; i++) { v.fromBufferAttribute(p, i).applyMatrix4(ch.matrixWorld); pts.push(v.x, v.y, v.z); }
+    });
+    let top = 0, hx = 0, hz = 0;
+    for (let i = 1; i < pts.length; i += 3) top = Math.max(top, pts[i]);
+    for (let i = 0; i < pts.length; i += 3) if (pts[i + 1] < 0.6 * top) { hx = Math.max(hx, Math.abs(pts[i])); hz = Math.max(hz, Math.abs(pts[i + 2])); }
+    if (top > 0 && hx > 0 && hz > 0) _lampOcc.value.set(0, 0, 0.5 * (hx + hz), top);
+  }
   const _lampBeamIM = new THREE.InstancedMesh(_beamGeo2, new THREE.MeshBasicMaterial({ color: 0xf2f6ff, map: _beamTex, transparent: true,
     blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false }), LAMP_CAP);   // white LEDs
+  // the bunker's shadow cuts the pool as it cuts the light: each pool's lamp stands over its near end, at the height of
+  // the instance's y scale (the quad is flat)
+  _lampBeamIM.material.onBeforeCompile = sh => {
+    sh.vertexShader = 'varying vec3 vPoolW, vPoolL;\n' + sh.vertexShader.replace('#include <fog_vertex>', `#include <fog_vertex>
+      vPoolW = ( modelMatrix * instanceMatrix * vec4( transformed, 1.0 ) ).xyz;
+      vPoolL = ( modelMatrix * instanceMatrix * vec4( 0.0, 1.0, 0.0, 1.0 ) ).xyz;`);
+    sh.fragmentShader = 'varying vec3 vPoolW, vPoolL;\n' + _SPOT_SEEN + sh.fragmentShader.replace('#include <dithering_fragment>',
+      '#include <dithering_fragment>\n  gl_FragColor.a *= spotSeenW( vPoolW, vPoolL );');
+  };
+  _lampBeamIM.material.customProgramCacheKey = () => 'lampPool';
   _lampBeamIM.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
   _lampBeamIM.frustumCulled = false; _lampBeamIM.count = 0; _lampBeamIM.renderOrder = 1;
   scene.add(_lampBeamIM);
@@ -1790,9 +1852,9 @@ const G = (() => {
       }
       _lampP.set(0, h, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p);
       _putSprite(_lampFx, _lampP.x, _lampP.y, _lampP.z, 0.6, _lampGlowCol, 0.35 * _dnFactor);
-      // one pool of light on the ground for the pod
+      // one pool of light on the ground for the pod (its y scale: the lamp's height, for the bunker's shadow)
       _lampP.set(0, 0, LAMP_FRONT).applyAxisAngle(_lampUp, rot).add(p).setY(.025);
-      _lampBeamIM.setMatrixAt(n, _lampM.compose(_lampP, _lampQ.setFromAxisAngle(_lampUp, rot), _lampS.set(3.6, 1, 5.0)));
+      _lampBeamIM.setMatrixAt(n, _lampM.compose(_lampP, _lampQ.setFromAxisAngle(_lampUp, rot), _lampS.set(3.6, h, 5.0)));
       n++;
     }
     _lampBeamIM.material.opacity = 0.55 * _dnFactor;   // over the ground the spot light lights too
@@ -2018,6 +2080,10 @@ const G = (() => {
     // ── Phase 3: DETONATION (2.0s) ──────────────────────────────────────
     function detonate() {
       SFX.play('nukeBoom');
+      // The shock front (33 u/s at ground zero, slowing to 15 past the kill radius: the desktop's
+      // nk::frontT) reaches the bunker: a crack and a deep thud, then a long rumble
+      const toBunker = Math.min(Math.hypot(tx, tz), 29.99);
+      after(-0.9 * Math.log(1 - toBunker / 30), () => { SFX.play('nukeShock'); after(0.3, () => SFX.play('nukeRumble')); });
       // The blast, timed from SC2's (flash star, glows, shock ring and bubble, dust ring, fire
       // ring, stem, cap, smoke rings, scorch), and its light (at night it lights the field)
       nukeBlasts.push({x: tx, z: tz, t: 0, parts: _nbMake(tx, tz)});
@@ -2061,7 +2127,7 @@ const G = (() => {
   // SC2's (NB.light): dark until the detonation frame, full in ~0.3 s, held to ~2 s, gone by
   // 4 s: a warm white point light at the blast, and at night the dark lifts toward
   // NUKE_LIGHT_F (fog far ≈ 40: past the spawn ring) — _dnEffFactor.
-  const NUKE_LIGHT_DUR = 4, NUKE_LIGHT_F = 0.35;
+  const NUKE_LIGHT_DUR = 4, NUKE_LIGHT_F = 0.32;
   let _nukeLightT = -1;          // seconds since the blast (game time); -1 = none
   function _nukeLightK() { return _nukeLightT < 0 ? 0 : _nbKey(NB.light, _nukeLightT * 1000 + NB_LEAD); }
   function updateNukeLight(dt) {   // live frames only, before updateDayNight (the lights follow it)
@@ -2441,6 +2507,7 @@ const G = (() => {
     if (shrikeRoot) shrikeRoot.visible = hpLvl >= 3;
     _fireSpots = null; // the frame changes the surface the fire sits on
     _portCache.clear(); // ...and where the firing slits are
+    fitBunkerOccluder(); // ...and what blocks the crate runner's lamp
     updatePortraitBunker(); // sync hologram portrait
   }
 
