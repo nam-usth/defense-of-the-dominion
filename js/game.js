@@ -1761,10 +1761,11 @@ const G = (() => {
   })();
   // The bunker blocks the lamp, its light and its pool (the desktop's spotSeen): it stands as a vertical cylinder fitted
   // to its walls (centre xz, radius, top: fitBunkerOccluder), and the lamp does not reach a point whose segment to it
-  // passes through the cylinder below its top. The rim is soft (a lamp is not a point; a hard edge would crawl) and lies
-  // just inside the cylinder: nothing the segment misses is dimmed. On or inside it (the hull, the ground at its foot)
-  // the half facing the lamp is lit (N·L decides) and the far half is not: some of that ground shows past the hull's
-  // foot. A lamp inside it (a unit stepping out) lights nothing outside.
+  // passes through the cylinder below its top. The rim is soft (a lamp is not a point; a hard edge would crawl) and
+  // straddles the wall as on the desktop (the hull reaches past the fitted radius along its long side), but it spares the
+  // ground at the wall's foot whose segment heads away from the axis: it fades in over the segment's first 0.05 of dip
+  // toward it (no seam where the segment turns tangent). On or inside the cylinder (the hull, the ground at its foot) the
+  // half facing the lamp is lit (N·L decides) and the far half is not. A lamp well inside it lights nothing outside.
   const _lampOcc = { value: new THREE.Vector4(0, 0, 1.5, 1.6) };   // until the model is in
   GLOW_LIGHTS.lampOcc = _lampOcc;   // every material gets it with the small lights' uniforms (radial-fog.js)
   const _SPOT_SEEN = `uniform vec4 lampOcc;
@@ -1773,9 +1774,9 @@ float spotSeenW( vec3 p, vec3 l ) {   // world space
   vec2 a = p.xz - lampOcc.xy, d = l.xz - p.xz;
   float t = clamp( - dot( a, d ) / max( dot( d, d ), 1e-6 ), 0.0, 1.0 );   // the segment's closest approach to the axis
   if ( mix( p.y, l.y, t ) > lampOcc.w ) return 1.0;                        // it passes over the top
-  float s = smoothstep( R - 0.4, R, length( a + d * t ) );
-  if ( dot( a, a ) < R * R ) s = max( s, smoothstep( -0.25, 0.15, dot( a, d ) * inversesqrt( max( dot( d, d ), 1e-6 ) ) ) );
-  return s;
+  if ( dot( a, a ) < R * R ) return smoothstep( -0.25, 0.15, dot( a, d ) * inversesqrt( max( dot( d, d ), 1e-6 ) ) );
+  float c = length( a + d * t );
+  return mix( 1.0, smoothstep( R - 0.25, R + 0.15, c ), smoothstep( 0.0, 0.05, length( a ) - c ) );
 }
 `;
   // The lights' loops run in view space: spotSeen() takes the point and the lamp back to world space. Spot light 0 is
