@@ -3656,7 +3656,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     // already up covers; none free (a burst on one Zergling), the row whose texts fade first, and they
     // go at once: the hits stack up instead of running together
     if(floatTexts.length>0){
-      chCtx.textAlign='center'; chCtx.textBaseline='middle';
+      chCtx.textAlign='center'; chCtx.textBaseline='middle'; chCtx.lineJoin='round';   // (a miter's spikes stood over the M of MISS)
       chCtx.font='15px "Share Tech Mono", Consolas, monospace';
       const W2=W/2, H2=gameH/2, FT_ROWS=2, m=chCtx.measureText('0');   // more rows made a tall column over every Zerg under fire
       const h=m.fontBoundingBoxAscent+m.fontBoundingBoxDescent||15, step=.8*h, placed=[];   // digits fill ~0.8 of the line
@@ -3684,7 +3684,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         chCtx.fillStyle=f.color;
         chCtx.fillText(f.txt,sx,cy);
       });
-      chCtx.globalAlpha=1; chCtx.textAlign='left'; chCtx.textBaseline='alphabetic';
+      chCtx.globalAlpha=1; chCtx.textAlign='left'; chCtx.textBaseline='alphabetic'; chCtx.lineJoin='miter';
     }
     if(phase!=='playing')return;
     const px=mx*W,py=my*gameH;
