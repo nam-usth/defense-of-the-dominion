@@ -455,3 +455,101 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 #tut-ring::after{content:'';position:absolute;inset:-6px;border:2px solid rgba(255,210,74,.9);animation:tutRing 1.1s ease-out infinite}
 @keyframes tutRing{from{opacity:.9;transform:scale(1)}to{opacity:0;transform:scale(1.12)}}
 .tut-open #cmd-tip{display:none}   /* on narrow screens the tooltip column covered the hint */
+
+/* ── Achievements ── */
+/* One as StarCraft II lists it (title list, menu, results): the icon in its frame | a blue panel with
+   the name, what to do and a lifetime stat's bar | the points box. --rh: the row height (66 by default) */
+.ach-ico{position:relative;flex-shrink:0;display:flex;align-items:center;justify-content:center;width:100%;height:100%;
+  background:linear-gradient(180deg,#0c1624,#070d16);border:1px solid #1d3a5a;clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px)}
+.ach-ico.got{background:linear-gradient(180deg,#2a2208,#141005);border-color:#8a6a10}
+.ach-ico img{position:absolute;inset:3px;width:calc(100% - 6px);height:calc(100% - 6px);object-fit:contain;filter:grayscale(1) brightness(.8);opacity:.43}   /* locked: grey, dimmed */
+.ach-ico.got img{filter:none;opacity:1}
+.ach-ico .ico{width:55%;height:55%;color:#3d5672}
+.ach-ico.got .ico{color:var(--gold);filter:drop-shadow(0 0 4px rgba(255,200,60,.45))}
+.ach-ico b{position:absolute;font-size:28px;font-weight:700;color:#6a86a6;text-shadow:0 0 6px #000}   /* a hidden one: ? */
+.ach-row{display:flex;gap:6px;min-height:var(--rh,66px);text-align:left}
+.ach-row>.ach-ico{width:var(--rh,66px);height:var(--rh,66px)}
+.ach-main{flex:1;min-width:0;position:relative;display:flex;flex-direction:column;justify-content:center;padding:3px 12px 7px 14px;
+  background:linear-gradient(180deg,rgba(150,205,255,.055),transparent 42%),linear-gradient(180deg,#10233f,#08142a);border:1px solid #23436a;
+  clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+.ach-row.got .ach-main{background:linear-gradient(180deg,rgba(150,205,255,.13),transparent 42%),linear-gradient(180deg,#1f4f96,#0d2552);border-color:#4d8ee0;box-shadow:inset 0 0 16px rgba(46,124,255,.3)}
+.ach-main b{font-size:18px;font-weight:700;letter-spacing:.5px;line-height:1.15;color:#9fb8d3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ach-main span{margin-top:1px;font-size:13px;font-weight:500;line-height:1.2;color:#5f7fa6}
+.ach-row.got .ach-main b{color:#fff} .ach-row.got .ach-main span{color:#8fc4ff}
+.ach-prog{position:absolute;left:14px;right:12px;bottom:4px;height:4px;background:#061022}
+.ach-prog i{display:block;height:100%;background:linear-gradient(90deg,#2f6dff,#7fc0ff)}
+.ach-pts{width:96px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  background:linear-gradient(180deg,#0a1729,#050d18);border:1px solid #23436a;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
+.ach-row.got .ach-pts{background:linear-gradient(180deg,#0f2a55,#071733);border-color:#4d8ee0}
+.ach-pts b{font-size:clamp(30px,calc(var(--rh,66px) * .58),38px);font-weight:700;line-height:1;letter-spacing:1px;color:#3e5a7c}
+.ach-pts span{margin-top:2px;font-size:11px;font-weight:700;letter-spacing:1.5px;color:#4c6683;white-space:nowrap}
+.ach-row.got .ach-pts b{color:#eaf4ff;text-shadow:0 0 12px rgba(90,160,255,.55)}
+.ach-row.got .ach-pts span{letter-spacing:.5px;color:#9fc4f0}
+/* totals: the count in gold over a gold bar */
+.ach-tot{font-size:15px;font-weight:700;letter-spacing:1px;color:var(--gold)}
+.ach-bar{height:4px;margin:6px 0 10px;background:#0b1828}
+.ach-bar i{display:block;height:100%;background:linear-gradient(90deg,#8a6a10,var(--gold))}
+/* Title → ACHIEVEMENTS: the wide card, a tab per category, the rows in an area sized for the largest
+   category (they shrink to 50 px so the card fits 720 px) */
+.ov-card.wide{width:min(840px,calc(100% - 24px))}
+.ov-card.wide .ach-tot{margin-top:2px}
+.ov-card.wide .ach-bar{width:min(420px,100%);height:5px;margin:6px auto 14px;border:1px solid #1d3a5a}
+.ach-tabs{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:12px}
+.ach-tab{display:flex;align-items:center;justify-content:center;gap:8px;height:32px;padding:0 4px;cursor:pointer;color:#9fb8d3;font-size:13px;font-weight:700;letter-spacing:1.5px;white-space:nowrap;
+  background:linear-gradient(180deg,#0c1a2c,#08121f);border:1px solid #1d3a5a;clip-path:polygon(6px 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%,0 6px);transition:all .12s}
+.ach-tab:hover{color:#e2f1ff;background:rgba(46,111,192,.2)}
+.ach-tab.active{color:#fff;background:linear-gradient(90deg,rgba(46,111,192,.6),rgba(24,66,122,.25));border-color:var(--edge-hi)}
+.ach-tab .num{font-family:var(--num);font-size:12px;letter-spacing:0;color:var(--muted)}
+.ach-tab .num.all{color:var(--gold)}
+.ach-list{--rh:clamp(50px,calc((100vh - 290px) / var(--n) - 6px),66px);display:flex;flex-direction:column;gap:6px;min-height:calc(var(--n) * (var(--rh) + 6px) - 6px)}
+@media (max-height:760px){ .ov-modes:has(> :nth-child(6)) .ov-btn{padding-top:6px;padding-bottom:6px} }   /* title with CONTINUE and LOAD GAME too: still no scrolling at 720 px */
+.ov-row.ach-back{justify-content:center;margin-top:12px}
+.ach-back .ov-btn{width:min(260px,100%)}
+/* Menu → ACHIEVEMENTS: the icon grid spanning the page, the hovered one as a row */
+.menu-tab[data-tab=achievements]{letter-spacing:.5px}   /* the longest label: at 2px it overflowed the tab */
+#menu-ach .ach-off{margin:0 0 8px;font-weight:600;color:var(--danger)}
+.menu-note.ach-warn{color:var(--warn)}
+.ach-grid{display:grid;grid-template-columns:repeat(9,1fr);gap:7px;margin-bottom:4px}
+.ach-cell{display:block;aspect-ratio:1;padding:0;border:none;background:none;cursor:default}
+.ach-cell .ach-ico b{font-size:22px}
+.ach-cell:hover,.ach-cell:focus-visible{outline:none;filter:brightness(1.3) drop-shadow(0 0 3px var(--edge-hi))}
+#menu-ach-row{--rh:64px}
+/* Results: earned this game, and the cheat line */
+.ach-res{--rh:64px;display:flex;flex-direction:column;gap:6px;margin:-4px 0 14px}
+.ach-res-h{font-size:11px;font-weight:700;letter-spacing:2.5px;color:#c8a640}
+.ach-res-n{font-size:12px;font-weight:700;letter-spacing:.5px;color:#c8a640}
+.ach-res-off{margin:-4px 0 14px;font-size:13px;font-weight:700;letter-spacing:.3px;color:var(--danger)}
+/* Top bar: CHEATS / OLD SAVE while this game earns none */
+.tb-cheat{flex-shrink:0;color:var(--danger);border-color:#8a3a32;background:rgba(255,90,79,.12)}
+@media (max-width:1100px){ #tv-cheat{display:none} }
+/* Cheat console: the gate's second line; the help list in the console itself */
+#cheat-wrap{width:min(360px,calc(100% - 24px))}   /* the gate line fits on one line */
+#cheat-msg{white-space:pre-wrap}
+#cheat-msg.list{white-space:pre;max-height:min(440px,calc(100vh - 200px));overflow:auto;line-height:1.5}
+#cheat-msg.list b{font-weight:400;color:var(--warn)}
+#cheat-wrap.wide{width:min(520px,calc(100% - 24px))}
+/* Toast: one box under the top bar, 4.6 s on real time: a 0.25 s slide down 18 px, a 0.45 s fade */
+#ach-toast{position:absolute;top:42px;left:50%;z-index:60;width:min(560px,calc(100% - 24px));display:none;pointer-events:none;
+  transform:translateX(-50%);filter:drop-shadow(0 0 9px rgba(255,200,60,.3))}
+#ach-toast.on{display:block;animation:achToast 4.6s linear both}
+@keyframes achToast{0%{opacity:0;transform:translate(-50%,-18px);animation-timing-function:ease-out}5.43%{opacity:1;transform:translate(-50%,0)}90.2%{opacity:1}100%{opacity:0;transform:translate(-50%,0)}}
+.at-box{display:flex;align-items:center;gap:12px;height:72px;padding:8px 0 8px 8px;
+  background:linear-gradient(180deg,rgba(150,205,255,.13),transparent 42%),linear-gradient(180deg,rgba(31,79,150,.97),rgba(13,37,82,.97));border:1px solid var(--gold);
+  clip-path:polygon(10px 0,100% 0,100% calc(100% - 10px),calc(100% - 10px) 100%,0 100%,0 10px)}
+.at-box>.ach-ico{width:56px;height:56px}
+.at-txt{flex:1;min-width:0;display:flex;flex-direction:column;text-align:left}
+.at-k{font-size:11px;font-weight:700;letter-spacing:2.5px;color:var(--gold)}
+.at-txt b{font-size:19px;font-weight:700;letter-spacing:.5px;line-height:1.15;color:#fff}
+.at-txt span{margin-top:1px;font-size:13px;font-weight:500;color:#8fc4ff}
+.at-k,.at-txt b,.at-txt span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.at-pts{width:92px;flex-shrink:0;align-self:stretch;display:flex;flex-direction:column;align-items:center;justify-content:center;border-left:1.5px solid rgba(77,142,224,.8)}
+.at-pts b{font-size:38px;font-weight:700;line-height:1;letter-spacing:1px;color:#eaf4ff;text-shadow:0 0 12px rgba(90,160,255,.55)}
+.at-pts span{margin-top:2px;font-size:11px;font-weight:700;letter-spacing:.5px;color:#9fc4f0;white-space:nowrap}
+@media (max-width:620px){   /* phone: narrower points boxes, the tabs on two rows */
+  .ov-card.wide{padding:18px 12px 14px}
+  .ach-tabs{grid-template-columns:repeat(3,1fr)}
+  .ach-pts{width:68px} .ach-pts b{font-size:26px}
+  .ach-main{padding:4px 8px 8px 10px} .ach-main b{font-size:16px}
+  .ach-grid{gap:4px}
+  .at-box{gap:9px} .at-pts{width:64px} .at-pts b{font-size:28px}
+}
