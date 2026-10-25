@@ -3924,10 +3924,6 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     const r = wx.rain, s = Math.max(0, Math.min(1, (r - 0.35) / 0.35));
     return r < 0.05 ? 0 : RAIN_MISS[0] + (RAIN_MISS[1] - RAIN_MISS[0]) * s * s * (3 - 2 * s);
   }
-  function missText(e) {              // a round the rain spoiled: MISS in rain blue, apart from the white and orange hits
-    if(floatTexts.length>=60) floatTexts.shift();
-    floatTexts.push({x:e.mesh.position.x,y:e.mesh.position.y+1.2,z:e.mesh.position.z,txt:'MISS',life:900,maxLife:900,color:'#8cd8ff'});
-  }
   function setWeather(on) {           // Menu → Settings
     wxOn = !!on; _store.set(WX_KEY, wxOn ? '1' : '0');
     $('menu-wx-cb').checked = wxOn;
@@ -4204,7 +4200,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         const dx=ex-sx*t, dz=ez-sz*t, hitR=c.type==='r'?.75:.5;
         if(dx*dx+dz*dz<hitR*hitR&&t<tBest){ tBest=t; e=c; }  // keep the first one along the path
       }
-      if(e&&b.unitType!=='marauder'&&Math.random()<rainMiss()){ b.passed=e; missText(e); e=null; } // the rain spoils the aim: it flies on past
+      if(e&&b.unitType!=='marauder'&&Math.random()<rainMiss()){ b.passed=e; hitText(e,'MISS','#8cd8ff'); e=null; } // the rain spoils the aim: it flies on past, MISS in rain blue
       if(e){
         const t=tBest;
         {
