@@ -3882,7 +3882,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   // not saved. Menu → Settings switches it (stored, on by default).
   const WX_KEY = 'dotd_weather', RAIN_MISS = [0.05, 0.10];
   let wxOn = (() => { try { return localStorage.getItem(WX_KEY) !== '0'; } catch (e) { return true; } })();   // (_store is defined further down)
-  const wx = { sky: 'clear', hold: 0, afterRain: false, showerMax: 0, spell: 0, cloud: 0, rain: 0, wet: 0,
+  const wx = { sky: 'clear', hold: 0, afterRain: false, showerMax: 0, spell: 0, cloud: 0, rain: 0,
                windX: 0, windZ: 0, blownX: 0, blownZ: 0, fall: 0, t: 0 };   // spell: before a shower may turn · blown / fall: the drops (m)
   let _wxLitC = 0, _wxLitR = 0, _wxSaid = 'CLEAR';   // the cloud / rain the lights were last applied at · the sky last announced
   const _uni = (a, b) => a + Math.random() * (b - a);
@@ -3890,7 +3890,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   const wxName = () => wx.sky === 'rain' ? (wxHeavy() ? 'DOWNPOUR' : 'DRIZZLE') : wx.sky === 'overcast' ? 'OVERCAST' : 'CLEAR';
   function _wxWind(s) { const a = _uni(0, 6.2832); wx.windX = Math.cos(a) * s; wx.windZ = Math.sin(a) * s; }
   function wxReset() {               // a new game (and the title): clear and dry, the first change a while off
-    Object.assign(wx, { sky: 'clear', hold: _uni(45, 100), afterRain: false, showerMax: 0, spell: 0, cloud: 0, rain: 0, wet: 0, blownX: 0, blownZ: 0, fall: 0, t: 0 });
+    Object.assign(wx, { sky: 'clear', hold: _uni(45, 100), afterRain: false, showerMax: 0, spell: 0, cloud: 0, rain: 0, blownX: 0, blownZ: 0, fall: 0, t: 0 });
     _wxWind(1.2); _wxSaid = 'CLEAR';
     if (_wxLitC || _wxLitR) _applyDNLights(_dnLitF);
     syncRain();
@@ -3923,8 +3923,6 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     wx.rain += Math.max(-dt / 4, Math.min(dt / 6, (on && wx.sky === 'rain' && wx.cloud > 0.75 ? wx.showerMax * waver : 0) - wx.rain));
     wx.blownX += wx.windX * dt; wx.blownZ += wx.windZ * dt;
     wx.fall += (5 + 7 * wx.rain) * dt;  // a drizzle's fine drops fall at ~6 m/s, a downpour's at 12
-    // the ground: soaked after ~12 s of a downpour, dry a minute or two after (switched off: four times as fast)
-    wx.wet = wx.rain > 0.02 ? Math.min(1, wx.wet + dt * wx.rain / 12) : Math.max(0, wx.wet - dt * (on ? 1 : 4) / (50 + 70 * wx.cloud));
   }
   function updateWeather(dt) {        // a live frame: the sky, the light under it, the rain
     wxUpdate(dt);
@@ -3949,9 +3947,10 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     setStatus(wxOn ? 'Weather ON — clear skies, clouds, now and then rain' : 'Weather OFF — the sky clears');
   }
   // After _applyDNLights (day / night, a flare's or a nuke's lift): clouds dim the sun and grey it,
-  // flatten the ambient toward grey and dim it a little, hide part of the moon (the night's fill); a
-  // downpour darkens the day a little more and hazes the distance (the night's fog, which what the
-  // player sees follows, is left as it is). A clear sky changes nothing
+  // flatten the ambient toward grey and dim it a little, dim the fill as it fades at dusk; a downpour
+  // darkens the day a little more and hazes the distance. The night is left as it is: its fog is what
+  // the player sees by, and the web has no moon (the desktop's fill turns into one, which clouds hide
+  // in part; ours is off at night). A clear sky changes nothing
   const _wxHaze = new THREE.Color(0x3c4648);
   function _wxGrey(c, k) { const l = c.r * .299 + c.g * .587 + c.b * .114; c.r += (l - c.r) * k; c.g += (l - c.g) * k; c.b += (l - c.b) * k; }
   function _wxLights(f) {
@@ -4053,7 +4052,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     U.uLen.value = .2 + .35 * r; U.uWidth.value = .01 + .008 * r; U.uAlpha.value = .4 + .25 * r;
     U.uPx.value = 2 / (camera.projectionMatrix.elements[5] * Math.max(1, _logH * renderer.getPixelRatio()));   // world size of a pixel per unit of distance
     U.uWind.value.set(wx.windX, wx.windZ); U.uBlown.value.set(mod(wx.blownX, 52), mod(wx.blownZ, 52));   // (the box repeats: no jump)
-    // lit by the sky, the sun through the clouds and the moon; near the bunker at night they glint in its
+    // lit by the sky, the sun through the clouds and the day's fill; near the bunker at night they glint in its
     // light's own colour, 1.32 × at full night (desktop: .3 × its lamp's 4.4). 5.5: the lamp at full night
     // (_applyDNLights): change the two together
     const L = U.uLight.value.copy(_ambientLight.color).multiplyScalar(_ambientLight.intensity);
