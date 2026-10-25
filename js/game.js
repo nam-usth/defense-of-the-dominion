@@ -4433,6 +4433,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     _achSave();                                 // at once: the toast must not be lost
     _runAch.push(id);
     _toasts.push(id); if (_toasts.length === 1) _toastShow(); else _toastKick();
+    if (phase !== 'playing') _achRedraw();      // under a card: the HUD tour run from the title, the list or the results
   }
   function _achAdd(key, n) {                    // a lifetime stat; earns the ones counting it at their goal
     const v = _ach.stats[key] = (_ach.stats[key] || 0) + n;
@@ -4497,7 +4498,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       `${a.goal && !got ? `<i class="ach-prog"><i style="width:${p / a.goal * 100}%"></i></i>` : ''}</div>` +
       `<div class="ach-pts"><b>${a.points}</b><span>${got ? _achDate(t) : a.goal ? _thousands(p) + '/' + _thousands(a.goal) : 'LOCKED'}</span></div></div>`;
   }
-  const _achTotalsHTML = () => `<div class="ach-tot">${achCount()} / ${ACH.length} earned · ${achPoints()} / ${ACH_TOTAL} points</div><div class="ach-bar"><i style="width:${achPoints() / ACH_TOTAL * 100}%"></i></div>`;
+  const _achSum = () => `${achCount()} / ${ACH.length} earned · ${achPoints()} / ${ACH_TOTAL} points`;
+  const _achTotalsHTML = () => `<div class="ach-tot">${_achSum()}</div><div class="ach-bar"><i style="width:${achPoints() / ACH_TOTAL * 100}%"></i></div>`;
   // Toasts: one box under the top bar, one at a time, 4.6 s each on real time (CSS + setTimeout), so they
   // show over the roster, the menu and the results; the chime as each first shows
   let _toasts = [], _toastTimer = 0;
@@ -4518,12 +4520,15 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   let _achTab = 0;
   function showAchievements() {
     if (phase !== 'menu') return;
+    _showCard(_achListHTML(), true);
+    achTab(_achTab);
+  }
+  function _achListHTML() {
     const most = Math.max(...ACH_CATS.map((c, i) => ACH.filter(a => a.cat === i).length));
-    _showCard(`<div class="ov-kicker">SERVICE RECORD</div>
+    return `<div class="ov-kicker">SERVICE RECORD</div>
       <div class="ov-title ov-title-sm">ACHIEVEMENTS</div>${_achTotalsHTML()}
       <div class="ach-tabs" id="ach-tabs" role="tablist"></div><div class="ach-list" id="ach-list" style="--n:${most}"></div>
-      <div class="ov-row ach-back"><button class="ov-btn" onclick="G.showTitle()"><svg class="ico"><use href="#i-home"/></svg><span class="ob-t">BACK</span></button></div>`, true);
-    achTab(_achTab);
+      <div class="ov-row ach-back"><button class="ov-btn" onclick="G.showTitle()"><svg class="ico"><use href="#i-home"/></svg><span class="ob-t">BACK</span></button></div>`;
   }
   function achTab(c) {
     if (!$('ach-list')) return;
@@ -4547,6 +4552,15 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     const c = e.target.closest && e.target.closest('.ach-cell');
     if (c && +c.dataset.i !== _achHover) { _achHover = +c.dataset.i; $('menu-ach-row').innerHTML = _achRowHTML(ACH[_achHover]); }
   }));
+  // The cards draw the counts once: an unlock under one (the HUD tour run from the title, the list or the
+  // results; another tab of the game) redraws them in place, the overlay left as it is
+  function _achRedraw() {
+    const sum = $('ov-ach-sum'); if (sum) sum.textContent = _achSum();   // the title's ACHIEVEMENTS button
+    if ($('ach-list')) { $('ov-card').innerHTML = _achListHTML(); achTab(_achTab); }
+    const st = document.querySelector('#ov-card .ov-stats');           // the results: earned this game
+    if (st) { document.querySelector('#ov-card .ach-res')?.remove(); st.insertAdjacentHTML('afterend', _achResHTML()); }
+    if (_menuOpen && _menuTab === 'achievements') _syncAchUI();
+  }
 
   // ── Tutorial: HUD tour + hints for new players ────────────────────────────
   // The first game opens with a HUD tour: the console and each command-card
@@ -4770,7 +4784,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         <button class="ov-btn" onclick="G.menuTab('settings');G.openMenu()"><svg class="ico"><use href="#i-gfx"/></svg>
           <span><span class="ob-t">SETTINGS</span><span class="ob-d">Graphics, sound, day/night</span></span></button></div>
         <button class="ov-btn gold" onclick="G.showAchievements()"><svg class="ico"><use href="#i-trophy"/></svg>
-          <span><span class="ob-t">ACHIEVEMENTS</span><span class="ob-d">${achCount()} / ${ACH.length} earned · ${achPoints()} / ${ACH_TOTAL} points</span></span></button>
+          <span><span class="ob-t">ACHIEVEMENTS</span><span class="ob-d" id="ov-ach-sum">${_achSum()}</span></span></button>
       </div>
       <div class="ov-load" id="ov-load"><div class="ol-bar"><i></i></div><span class="ol-t"></span><button class="ol-skip" onclick="G.skipAssetWait()">start now</button></div>
       ${_KEYS_HTML}<div class="ov-legal">${BLIZZARD_NOTICE}</div>`);
@@ -4812,6 +4826,12 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     document.querySelectorAll('#ov-card .ov-btn[data-play]').forEach(b => { b.disabled = !ready || b.dataset.locked === '1'; });
   }
   function skipAssetWait(){ _skipWait = true; _assetGate(); }
+  // earned this game (before any cheat): the best three as rows (most points, then the latest), then a count
+  function _achResHTML(){
+    const best=_runAch.slice().reverse().map(_achDef).filter(Boolean).sort((a,b)=>b.points-a.points).slice(0,3);
+    return best.length?`<div class="ach-res"><div class="ach-res-h">ACHIEVEMENTS EARNED · ${_runAch.length}</div>${best.map(_achRowHTML).join('')}
+        ${_runAch.length>best.length?`<div class="ach-res-n">+${_runAch.length-best.length} more — ACHIEVEMENTS on the title screen</div>`:''}</div>`:'';
+  }
   function showResults(victory,newlyUnlocked,newRecord){
     Music.play(victory ? 'victory' : 'defeat');
     const rk=getRank(kills), t=Math.floor(_gameT), camp=gameMode==='campaign';
@@ -4819,16 +4839,13 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
                  ['SCORE',score],['RANK',`<span style="color:${rk.color}">${rk.name}</span>`],['MODE',camp?'CAMPAIGN':'ENDLESS']];
     const sub=victory?`All ${CFG.victory_wave} waves held. The Dominion stands.`
       :camp?`Overrun on wave ${wave} of ${CFG.victory_wave}.`:`The swarm broke through on wave ${wave}.`;
-    // earned this game (before any cheat): the best three as rows (most points, then the latest), then a count
-    const best=_runAch.slice().reverse().map(_achDef).filter(Boolean).sort((a,b)=>b.points-a.points).slice(0,3);
     _showCard(`<div class="ov-kicker">${victory?'CAMPAIGN COMPLETE':camp?'CAMPAIGN':'ENDLESS MODE'}</div>
       <div class="ov-title ${victory?'victory':'defeat'}">${victory?'VICTORY':'BUNKER LOST'}</div>
       <div class="ov-sub">${sub}</div>
       ${newlyUnlocked?'<div class="ov-badge"><svg class="ico"><use href="#i-endless"/></svg>ENDLESS MODE UNLOCKED</div>':''}
       ${newRecord?'<div class="ov-badge">NEW ENDLESS RECORD</div>':''}
       <div class="ov-stats">${stats.map(([l,v])=>`<div class="ov-stat"><b>${v}</b><span>${l}</span></div>`).join('')}</div>
-      ${best.length?`<div class="ach-res"><div class="ach-res-h">ACHIEVEMENTS EARNED · ${_runAch.length}</div>${best.map(_achRowHTML).join('')}
-        ${_runAch.length>best.length?`<div class="ach-res-n">+${_runAch.length-best.length} more — ACHIEVEMENTS on the title screen</div>`:''}</div>`:''}
+      ${_achResHTML()}
       ${_run.cheated?`<div class="ach-res-off">${_run.legacy?'Loaded from a save made before achievements: none this game.':'A cheat turned achievements off for the rest of this game.'}</div>`:''}
       <div class="ov-row">${victory
         ?'<button class="ov-btn gold" onclick="G.continueEndless()"><svg class="ico"><use href="#i-endless"/></svg><span class="ob-t">CONTINUE · ENDLESS</span></button>'
