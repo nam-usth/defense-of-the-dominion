@@ -211,6 +211,8 @@ const G = (() => {
   // harder), as loud as the rain; it eases to a new level over ~0.6 s (desktop
   // RainBed). Through the effects' master gain (volume, mute). loop() feeds it
   // the rain while a game is on (paused too), else 0; a hidden page hears none.
+  // Its noise is made by prime() on a click (a game started with the weather
+  // on, the weather switched on), not in a frame at the first shower mid-fight.
   const RainBed = (() => {
     let gain = null, ticks = null, lvl = 0, aim = 0, next = 0;
     function build(ctx) {
@@ -232,7 +234,7 @@ const G = (() => {
     }
     function set(level, dt) {   // every frame: the rain (0..1)
       const ctx = SFX.context;
-      if (!ctx || (!gain && !(level > 0))) return;   // built at the first rain
+      if (!ctx || (!gain && !(level > 0))) return;   // not primed: built at the first rain
       if (!gain) build(ctx);
       const t = ctx.currentTime, target = document.hidden ? 0 : level;
       lvl += (target - lvl) * (1 - Math.exp(-dt / .6));
@@ -249,7 +251,8 @@ const G = (() => {
       const t = SFX.context.currentTime;
       gain.gain.cancelScheduledValues(t); gain.gain.setValueAtTime(0, t); aim = lvl = 0;
     });
-    return { set, get gain() { return gain; } };
+    function prime() { const ctx = SFX.context; if (ctx && !gain) build(ctx); }
+    return { set, prime, get gain() { return gain; } };
   })();
   // ── Music ─────────────────────────────────────────────────────────────────
   // The StarCraft soundtrack (MUSIC in config.js), streamed by an <audio>
@@ -3941,6 +3944,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   }
   function setWeather(on) {           // Menu → Settings
     wxOn = !!on; _store.set(WX_KEY, wxOn ? '1' : '0');
+    if (wxOn) RainBed.prime();
     $('menu-wx-cb').checked = wxOn;
     setStatus(wxOn ? 'Weather ON — clear skies, clouds, now and then rain' : 'Weather OFF — the sky clears');
   }
@@ -4874,6 +4878,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if(mode==='endless'&&gameMode!=='endless'&&!endlessUnlocked()) return; // replaying Endless never needs the flag
     if(mode==='campaign'||mode==='endless') gameMode=mode;
     SFX.ensure();             // start() always runs from a click — unlocks Web Audio
+    if(wxOn) RainBed.prime();
     Music.play('battle');
     achFlush();               // the last game's lifetime stats
     clearEntities();
