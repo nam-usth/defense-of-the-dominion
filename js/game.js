@@ -3920,26 +3920,28 @@ const G = (() => {
     for (let i = 0; i < n; i++) { pos.set([0, 0, i, 1, 0, i, 1, 1, i, 0, 1, i], i * 12); const v = i * 4; idx.set([v, v + 1, v + 2, v, v + 2, v + 3], i * 6); }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    geo.setDrawRange(0, 0);   // dry: an empty range, never hidden, so the program compiles with the first frame (not at the first shower, mid-fight)
     const m = new THREE.Mesh(geo, new THREE.ShaderMaterial({ uniforms: Object.assign(THREE.UniformsUtils.clone(THREE.UniformsLib.fog), _rainU, { uCount: { value: 0 } }),
       defines: { KIND: kind }, vertexShader: RAIN_VS, fragmentShader: RAIN_FS, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true }));
-    m.frustumCulled = false; m.renderOrder = kind ? 0 : 9; m.visible = false; scene.add(m);
+    m.frustumCulled = false; m.renderOrder = kind ? 0 : 9; scene.add(m);
     return m;
   };
   const _rainMeshes = [_rainMesh(RAIN_N.HIGH[0], 0), _rainMesh(RAIN_N.HIGH[1], 1)];
   function syncRain() {
-    const r = wx.rain, on = r >= 0.005;
-    _rainMeshes.forEach(m => { m.visible = on; });
-    if (!on) return;
+    const r = wx.rain;
+    if (r < 0.005) { _rainMeshes.forEach(m => m.geometry.setDrawRange(0, 0)); return; }
     const U = _rainU, mod = (v, m) => v - m * Math.floor(v / m);
     // a drizzle's drops: fine, short and faint; a downpour's: long streaks, thicker, brighter
     U.uFall.value = wx.fall; U.uTime.value = wx.t % 2048; U.uSpeed.value = 5 + 7 * r;
     U.uLen.value = .2 + .35 * r; U.uWidth.value = .01 + .008 * r; U.uAlpha.value = .4 + .25 * r;
     U.uPx.value = 2 / (camera.projectionMatrix.elements[5] * Math.max(1, _logH * renderer.getPixelRatio()));   // world size of a pixel per unit of distance
     U.uWind.value.set(wx.windX, wx.windZ); U.uBlown.value.set(mod(wx.blownX, 52), mod(wx.blownZ, 52));   // (the box repeats: no jump)
-    // lit by the sky, the sun through the clouds and the moon; warm near the bunker's light at night
+    // lit by the sky, the sun through the clouds and the moon; near the bunker at night they glint in its
+    // light's own colour, 1.32 × at full night (desktop: .3 × its lamp's 4.4). 5.5: the lamp at full night
+    // (_applyDNLights): change the two together
     const L = U.uLight.value.copy(_ambientLight.color).multiplyScalar(_ambientLight.intensity);
     L.add(_rainC.copy(_sunLight.color).multiplyScalar(.25 * _sunLight.intensity)).add(_rainC.copy(_fillLight.color).multiplyScalar(.3 * _fillLight.intensity));
-    U.uLampCol.value.setHex(0xffd2a0).multiplyScalar(.24 * _bunkerLight.intensity);
+    U.uLampCol.value.copy(_bunkerLight.color).multiplyScalar(1.32 / 5.5 * _bunkerLight.intensity);
     RAIN_N[gfxQuality].forEach((max, k) => {
       const m = _rainMeshes[k];
       m.material.uniforms.uCount.value = max * r; m.geometry.setDrawRange(0, 6 * Math.ceil(max * r));
