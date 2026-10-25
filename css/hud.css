@@ -512,7 +512,7 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 @media (max-height:800px){   /* title with a save (or both) and the asset-loading bar: still no scrolling at 720 px */
   .ov-modes:has(> :nth-child(5)){gap:6px} .ov-modes:has(> :nth-child(6)) .ov-btn{padding-top:4px;padding-bottom:4px} }
 .ov-row.ach-back{justify-content:center;margin-top:12px}
-.ach-back .ov-btn{width:min(260px,100%)}
+.ach-back .ov-btn{flex:0 1 auto;width:min(260px,100%)}   /* no grow (.ov-row .ov-btn fills the results' row) */
 /* Menu → ACHIEVEMENTS: the icon grid spanning the page, the hovered one as a row */
 .menu-tab[data-tab=achievements]{letter-spacing:.5px}   /* the longest label: at 2px it overflowed the tab */
 #menu-ach .ach-off{margin:0 0 8px;font-weight:600;color:var(--danger)}
