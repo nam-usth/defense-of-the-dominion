@@ -4406,6 +4406,7 @@ const G = (() => {
     clearEntities();
     closeRoster(); closeMenu(); closeCheat(); tutDismiss();
     phase='menu'; wavePhase='idle';
+    $('tv-cheat').hidden=true;   // no game on: no CHEATS chip (updateHUD does not run on the title)
     const unlocked=endlessUnlocked(), best=_bestEndless();
     const auto=_readSave(AUTO_KEY), manual=_readSave(SAVE_KEY);
     _showCard(`<div class="ov-kicker">TERRAN DOMINION · BUNKER DEFENSE</div>

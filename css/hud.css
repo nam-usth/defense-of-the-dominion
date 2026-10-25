@@ -502,7 +502,8 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .ach-tab .num{font-family:var(--num);font-size:12px;letter-spacing:0;color:var(--muted)}
 .ach-tab .num.all{color:var(--gold)}
 .ach-list{--rh:clamp(50px,calc((100vh - 290px) / var(--n) - 6px),66px);display:flex;flex-direction:column;gap:6px;min-height:calc(var(--n) * (var(--rh) + 6px) - 6px)}
-@media (max-height:760px){ .ov-modes:has(> :nth-child(6)) .ov-btn{padding-top:6px;padding-bottom:6px} }   /* title with CONTINUE and LOAD GAME too: still no scrolling at 720 px */
+@media (max-height:800px){   /* title with a save (or both) and the asset-loading bar: still no scrolling at 720 px */
+  .ov-modes:has(> :nth-child(5)){gap:6px} .ov-modes:has(> :nth-child(6)) .ov-btn{padding-top:4px;padding-bottom:4px} }
 .ov-row.ach-back{justify-content:center;margin-top:12px}
 .ach-back .ov-btn{width:min(260px,100%)}
 /* Menu → ACHIEVEMENTS: the icon grid spanning the page, the hovered one as a row */
