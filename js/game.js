@@ -203,6 +203,52 @@ const G = (() => {
       get volume() { return volume; },
     };
   })();
+  // ── Rain ambience ─────────────────────────────────────────────────────────
+  // A hiss of band-limited stereo noise (~0.3-4 kHz, each side its own) and the
+  // patter of near drops (short ticks panned at random, more of them as it rains
+  // harder), as loud as the rain; it eases to a new level over ~0.6 s (desktop
+  // RainBed). Through the effects' master gain (volume, mute). loop() feeds it
+  // the rain while a game is on (paused too), else 0; a hidden page hears none.
+  const RainBed = (() => {
+    let gain = null, ticks = null, lvl = 0, aim = 0, next = 0;
+    function build(ctx) {
+      const sr = ctx.sampleRate, buf = ctx.createBuffer(2, sr * 2, sr);   // 2 s of noise, looped
+      for (let c = 0; c < 2; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+      const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+      const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 300;
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 4000;
+      gain = ctx.createGain(); gain.gain.value = 0;
+      src.connect(hp); hp.connect(lp); lp.connect(gain); gain.connect(SFX.output);
+      src.start();
+      // 12 drop ticks (4 ms decay), each its own loudness and pan; through the same gain (0.28 × the rain)
+      ticks = Array.from({ length: 12 }, () => {
+        const n = Math.round(sr * .03), b = ctx.createBuffer(2, n, sr), pan = Math.random(), amp = (.3 + .7 * Math.random()) * .12 / .28;
+        const L = b.getChannelData(0), R = b.getChannelData(1);
+        for (let i = 0; i < n; i++) { const v = amp * (Math.random() * 2 - 1) * Math.exp(-i / (.004 * sr)); L[i] = v * (1 - pan); R[i] = v * pan; }
+        return b;
+      });
+    }
+    function set(level, dt) {   // every frame: the rain (0..1)
+      const ctx = SFX.context;
+      if (!ctx || (!gain && !(level > 0))) return;   // built at the first rain
+      if (!gain) build(ctx);
+      const t = ctx.currentTime, target = document.hidden ? 0 : level;
+      lvl += (target - lvl) * (1 - Math.exp(-dt / .6));
+      if (Math.abs(target - aim) > .004 || (target === 0 && aim !== 0)) { aim = target; gain.gain.setTargetAtTime(.28 * aim, t, .6); }
+      if (next < t) next = t;
+      if (lvl > .005) while (next < t + .1) {   // ticks at a Poisson rate of 20-180 a second
+        const s = ctx.createBufferSource(); s.buffer = ticks[Math.random() * ticks.length | 0];
+        s.connect(gain); s.start(next);
+        next -= Math.log(1 - Math.random()) / (20 + 160 * lvl);
+      }
+    }
+    document.addEventListener('visibilitychange', () => {   // (no frames while hidden: silence it here)
+      if (!document.hidden || !gain) return;
+      const t = SFX.context.currentTime;
+      gain.gain.cancelScheduledValues(t); gain.gain.setValueAtTime(0, t); aim = lvl = 0;
+    });
+    return { set, get gain() { return gain; } };
+  })();
   // ── Music ─────────────────────────────────────────────────────────────────
   // The StarCraft soundtrack (MUSIC in config.js), streamed by an <audio>
   // element: preload 'none', so nothing downloads before a track plays and it
@@ -3761,6 +3807,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if (scene.background) {
       scene.background.copy(scene.fog ? scene.fog.color : new THREE.Color(0x2a3a18));
     }
+    _wxLights(f);   // under the clouds (weather)
   }
 
   function _updateDNIndicator() {
@@ -3809,6 +3856,200 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     setStatus(dnEnabled ? 'Day/Night cycle ON — [Y] to toggle' : 'Day/Night cycle OFF');
   }
 
+  // ── Weather ──────────────────────────────────────────────────────────────
+  // The sky wanders at random between clear, clouded over and rain (desktop
+  // weather.cpp), on game time: live frames only. Rounds miss in the rain
+  // (rainMiss), the clouds dim and grey the light (_wxLights), the rain falls
+  // in a box over the field and is heard (RainBed). Every game starts clear;
+  // not saved. Menu → Settings switches it (stored, on by default).
+  const WX_KEY = 'dotd_weather', RAIN_MISS = [0.05, 0.10];
+  let wxOn = (() => { try { return localStorage.getItem(WX_KEY) !== '0'; } catch (e) { return true; } })();   // (_store is defined further down)
+  const wx = { sky: 'clear', hold: 0, afterRain: false, showerMax: 0, spell: 0, cloud: 0, rain: 0, wet: 0,
+               windX: 0, windZ: 0, blownX: 0, blownZ: 0, fall: 0, t: 0 };   // spell: before a shower may turn · blown / fall: the drops (m)
+  let _wxLitC = 0, _wxLitR = 0, _wxSaid = 'CLEAR';   // the cloud / rain the lights were last applied at · the sky last announced
+  const _uni = (a, b) => a + Math.random() * (b - a);
+  const wxHeavy = () => wx.showerMax >= 0.5;
+  const wxName = () => wx.sky === 'rain' ? (wxHeavy() ? 'DOWNPOUR' : 'DRIZZLE') : wx.sky === 'overcast' ? 'OVERCAST' : 'CLEAR';
+  function _wxWind(s) { const a = _uni(0, 6.2832); wx.windX = Math.cos(a) * s; wx.windZ = Math.sin(a) * s; }
+  function wxReset() {               // a new game (and the title): clear and dry, the first change a while off
+    Object.assign(wx, { sky: 'clear', hold: _uni(45, 100), afterRain: false, showerMax: 0, spell: 0, cloud: 0, rain: 0, wet: 0, blownX: 0, blownZ: 0, fall: 0, t: 0 });
+    _wxWind(1.2); _wxSaid = 'CLEAR';
+    if (_wxLitC || _wxLitR) _applyDNLights(_dnLitF);
+    syncRain();
+  }
+  function wxPour(hard) { wx.showerMax = hard ? _uni(0.7, 1) : _uni(0.15, 0.35); wx.spell = _uni(15, 30); }   // a downpour, or a drizzle
+  function wxSet(sky) {
+    wx.sky = sky; wx.afterRain = false;
+    if (sky === 'rain') {             // a drizzle or a downpour (even odds), its wind (harder in a downpour), how long it lasts
+      wxPour(Math.random() < 0.5);
+      _wxWind(wxHeavy() ? _uni(1.2, 3.2) : _uni(0.3, 1.2));
+      wx.hold = _uni(40, 90);
+    } else wx.hold = sky === 'clear' ? _uni(80, 170) : _uni(25, 45);
+  }
+  // Clear (80-170 s) → overcast (25-45 s) → a shower half the time (40-90 s), else clear; after a shower
+  // it stays overcast a while (20-40 s) and rains again a quarter of the time. Every 15-30 s a shower may
+  // turn from a drizzle to a downpour or back (two times in five). Off: the sky clears
+  function wxUpdate(dt) {
+    const on = wxOn;
+    wx.t += dt;
+    if (on && wx.sky === 'rain' && (wx.spell -= dt) <= 0) { if (Math.random() < 0.4) wxPour(!wxHeavy()); else wx.spell = _uni(15, 30); }
+    if (on && (wx.hold -= dt) <= 0) {
+      if (wx.sky === 'clear') { wx.sky = 'overcast'; wx.afterRain = false; wx.hold = _uni(25, 45); }
+      else if (wx.sky === 'overcast') wxSet(Math.random() < (wx.afterRain ? 0.25 : 0.5) ? 'rain' : 'clear');
+      else { wx.sky = 'overcast'; wx.afterRain = true; wx.hold = _uni(20, 40); }
+    }
+    // the clouds roll in (and out) over ~18 s; the rain starts once they are in, comes up over ~6 s
+    // and stops over ~4 s, wavering a little as it falls
+    wx.cloud += Math.max(-dt / 18, Math.min(dt / 18, (on && wx.sky !== 'clear' ? 1 : 0) - wx.cloud));
+    const waver = 0.88 + 0.12 * Math.sin(0.31 * wx.t) * Math.sin(0.13 * wx.t + 1);
+    wx.rain += Math.max(-dt / 4, Math.min(dt / 6, (on && wx.sky === 'rain' && wx.cloud > 0.75 ? wx.showerMax * waver : 0) - wx.rain));
+    wx.blownX += wx.windX * dt; wx.blownZ += wx.windZ * dt;
+    wx.fall += (5 + 7 * wx.rain) * dt;  // a drizzle's fine drops fall at ~6 m/s, a downpour's at 12
+    // the ground: soaked after ~12 s of a downpour, dry a minute or two after (switched off: four times as fast)
+    wx.wet = wx.rain > 0.02 ? Math.min(1, wx.wet + dt * wx.rain / 12) : Math.max(0, wx.wet - dt * (on ? 1 : 4) / (50 + 70 * wx.cloud));
+  }
+  function updateWeather(dt) {        // a live frame: the sky, the light under it, the rain
+    wxUpdate(dt);
+    const nm = wxName();
+    if (nm !== _wxSaid) {             // the player is told what the rain does to the aim (also after the rain cheat)
+      if (wx.sky === 'rain') setStatus(`${nm} — ${Math.round(100 * RAIN_MISS[+wxHeavy()])}% of rounds miss`);
+      else if (_wxSaid === 'DRIZZLE' || _wxSaid === 'DOWNPOUR') setStatus('The rain stops');
+      _wxSaid = nm;
+    }
+    if (wx.cloud !== _wxLitC || wx.rain !== _wxLitR) _applyDNLights(_dnLitF);
+    syncRain();
+  }
+  // 5% in a drizzle, 10% in a downpour, between the two as the rain grows (none in the last of it)
+  function rainMiss() {
+    const r = wx.rain, s = Math.max(0, Math.min(1, (r - 0.35) / 0.35));
+    return r < 0.05 ? 0 : RAIN_MISS[0] + (RAIN_MISS[1] - RAIN_MISS[0]) * s * s * (3 - 2 * s);
+  }
+  function missText(e) {              // a round the rain spoiled: MISS in rain blue, apart from the white and orange hits
+    if(floatTexts.length>=60) floatTexts.shift();
+    floatTexts.push({x:e.mesh.position.x,y:e.mesh.position.y+1.2,z:e.mesh.position.z,txt:'MISS',life:900,maxLife:900,color:'#8cd8ff'});
+  }
+  function setWeather(on) {           // Menu → Settings
+    wxOn = !!on; _store.set(WX_KEY, wxOn ? '1' : '0');
+    $('menu-wx-cb').checked = wxOn;
+    setStatus(wxOn ? 'Weather ON — clear skies, clouds, now and then rain' : 'Weather OFF — the sky clears');
+  }
+  // After _applyDNLights (day / night, a flare's or a nuke's lift): clouds dim the sun and grey it,
+  // flatten the ambient toward grey and dim it a little, hide part of the moon (the night's fill); a
+  // downpour darkens the day a little more and hazes the distance (the night's fog, which what the
+  // player sees follows, is left as it is). A clear sky changes nothing
+  const _wxHaze = new THREE.Color(0x3c4648);
+  function _wxGrey(c, k) { const l = c.r * .299 + c.g * .587 + c.b * .114; c.r += (l - c.r) * k; c.g += (l - c.g) * k; c.b += (l - c.b) * k; }
+  function _wxLights(f) {
+    const cl = _wxLitC = wx.cloud, rn = _wxLitR = wx.rain, cd = cl * (1 - f), haze = Math.max(0.35 * cl, rn);
+    if (!cl && !rn) return;
+    if (_ambientLight) { _wxGrey(_ambientLight.color, 0.5 * cd); _ambientLight.intensity *= (1 - 0.08 * cd) * (1 - 0.15 * rn * (1 - f)); }
+    if (_sunLight) { _wxGrey(_sunLight.color, 0.4 * cl); _sunLight.intensity *= (1 - 0.35 * cl) * (1 - 0.3 * rn); }
+    if (_fillLight) _fillLight.intensity *= 1 - 0.4 * cl * f;
+    if (scene.fog) {
+      scene.fog.near *= Math.pow(1 - 0.45 * haze, 1 - f); scene.fog.far *= Math.pow(1 - 0.35 * haze, 1 - f);
+      scene.fog.color.lerp(_wxHaze, 0.6 * cd);
+      if (scene.background) scene.background.copy(scene.fog.color);
+    }
+  }
+  // The rain: streaks falling through a box over the field (fixed in the world: they do not swim as the
+  // view turns) and small rings where drops hit the ground. Each drop is a quad placed in the vertex
+  // shader from its index (position.z; xy: the corner), so nothing is simulated on the CPU
+  const RAIN_N = { HIGH: [12000, 2000], LOW: [5000, 800] };   // streaks, splashes at full rain (fewer as it eases; many out of view)
+  const RAIN_VS = `
+    uniform float uFall, uTime, uSpeed, uLen, uWidth, uAlpha, uPx, uCount, fogNear, fogFar;
+    uniform vec2 uWind, uBlown;   // uBlown: how far the wind has carried the drops
+    uniform vec3 uLight, uLampCol;
+    varying vec2 vQ; varying float vA; varying vec3 vCol;
+    const float HALF = 26.0, TOP = 12.0;   // the box: the field, and the air over it to well under the overview camera
+    vec4 h41(float n) {
+      vec4 p = fract(vec4(n) * vec4(.1031, .1030, .0973, .1099));
+      p += dot(p, p.wzxy + 33.33);
+      return fract((p.xxyz + p.yzzw) * p.zywx);
+    }
+    void main() {
+      vec2 c = position.xy;
+      float id = position.z;
+      vec4 h = h41(id + 0.5);
+      float a = clamp(uCount - id, 0.0, 1.0);   // the last few fade as the rain eases
+      vec3 P;
+    #if KIND == 0
+      // a streak falls at its own pace, wraps from the ground back to the top and drifts with the wind
+      float pace = 0.85 + 0.3 * h.w;
+      float y = TOP - mod(uFall * pace + h.z * TOP, TOP);
+      vec2 xz = mod(h.xy * 2.0 * HALF + uBlown, 2.0 * HALF) - HALF;
+      vec3 dir = normalize(vec3(uWind.x, -uSpeed * pace, uWind.y));
+      P = vec3(xz.x, y, xz.y) - dir * (uLen * c.y);   // c.y: head (0) to tail (1)
+      vec3 toCam = cameraPosition - P, side = cross(dir, toCam);
+      float dist = length(toCam), w = max(uWidth, dist * uPx);   // never thinner than a pixel: fainter instead
+      P += side * ((c.x - 0.5) * w / max(length(side), 1e-4));
+      a *= uAlpha * uWidth / w * smoothstep(3.0, 8.0, dist);    // none close to the lens (the close-up stands in the rain)
+      vQ = vec2(c.x * 2.0 - 1.0, c.y);
+    #else
+      // a splash: a ring on the ground for 0.18 s, somewhere new each time
+      float period = 0.5 + 0.6 * h.w, cyc = uTime / period + h.z * 17.0, life = fract(cyc) * period / 0.18;
+      vec4 g = h41(id * 7.13 + floor(cyc) * 131.7);
+      float r = life < 1.0 ? 0.03 + 0.1 * sqrt(life) : 0.0;   // (spent: a point, nothing drawn)
+      P = vec3((g.x * 2.0 - 1.0) * HALF + (c.x * 2.0 - 1.0) * r, 0.025, (g.y * 2.0 - 1.0) * HALF + (c.y * 2.0 - 1.0) * r);
+      a *= 0.35 * (1.0 - life) * (1.0 - life);
+      vQ = c * 2.0 - 1.0;
+    #endif
+      a *= 1.0 - smoothstep(0.75 * HALF, HALF, max(abs(P.x), abs(P.z)));   // no edge to the box
+      a *= 1.0 - smoothstep(fogNear, fogFar, length(P.xz));                 // into the night's dark
+      float l = clamp(1.0 - length(P - vec3(0.0, 2.6, 0.0)) / 15.0, 0.0, 1.0);   // where the bunker's light catches them
+      vCol = uLight + uLampCol * l * l;
+      vA = a;
+      gl_Position = projectionMatrix * viewMatrix * vec4(P, 1.0);
+    }`;
+  const RAIN_FS = `
+    varying vec2 vQ; varying float vA; varying vec3 vCol;
+    void main() {
+    #if KIND == 0
+      float a = vA * (1.0 - vQ.x * vQ.x) * (1.0 - 0.75 * vQ.y);   // soft across, fading toward the tail
+    #else
+      float d = length(vQ);
+      float a = vA * smoothstep(0.45, 0.8, d) * (1.0 - smoothstep(0.8, 1.0, d));   // a thin ring
+    #endif
+      if (a < 0.003) discard;
+      gl_FragColor = vec4(vCol, a);
+    }`;
+  const _rainU = { uFall: { value: 0 }, uTime: { value: 0 }, uSpeed: { value: 5 }, uLen: { value: .2 }, uWidth: { value: .01 }, uAlpha: { value: .4 }, uPx: { value: .001 },
+                   uWind: { value: new THREE.Vector2() }, uBlown: { value: new THREE.Vector2() }, uLight: { value: new THREE.Color() }, uLampCol: { value: new THREE.Color() } };
+  const _rainC = new THREE.Color();
+  // kind 0: the streaks, after the other see-through things (they hang through the whole view);
+  // 1: the splashes, on the ground under them
+  const _rainMesh = (n, kind) => {
+    const pos = new Float32Array(n * 12), idx = new (n * 4 > 65535 ? Uint32Array : Uint16Array)(n * 6);
+    for (let i = 0; i < n; i++) { pos.set([0, 0, i, 1, 0, i, 1, 1, i, 0, 1, i], i * 12); const v = i * 4; idx.set([v, v + 1, v + 2, v, v + 2, v + 3], i * 6); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setIndex(new THREE.BufferAttribute(idx, 1));
+    geo.setDrawRange(0, 0);   // dry: an empty range, never hidden, so the program compiles with the first frame (not at the first shower, mid-fight)
+    const m = new THREE.Mesh(geo, new THREE.ShaderMaterial({ uniforms: Object.assign(THREE.UniformsUtils.clone(THREE.UniformsLib.fog), _rainU, { uCount: { value: 0 } }),
+      defines: { KIND: kind }, vertexShader: RAIN_VS, fragmentShader: RAIN_FS, transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: true }));
+    m.frustumCulled = false; m.renderOrder = kind ? 0 : 9; scene.add(m);
+    return m;
+  };
+  const _rainMeshes = [_rainMesh(RAIN_N.HIGH[0], 0), _rainMesh(RAIN_N.HIGH[1], 1)];
+  function syncRain() {
+    const r = wx.rain;
+    if (r < 0.005) { _rainMeshes.forEach(m => m.geometry.setDrawRange(0, 0)); return; }
+    const U = _rainU, mod = (v, m) => v - m * Math.floor(v / m);
+    // a drizzle's drops: fine, short and faint; a downpour's: long streaks, thicker, brighter
+    U.uFall.value = wx.fall; U.uTime.value = wx.t % 2048; U.uSpeed.value = 5 + 7 * r;
+    U.uLen.value = .2 + .35 * r; U.uWidth.value = .01 + .008 * r; U.uAlpha.value = .4 + .25 * r;
+    U.uPx.value = 2 / (camera.projectionMatrix.elements[5] * Math.max(1, _logH * renderer.getPixelRatio()));   // world size of a pixel per unit of distance
+    U.uWind.value.set(wx.windX, wx.windZ); U.uBlown.value.set(mod(wx.blownX, 52), mod(wx.blownZ, 52));   // (the box repeats: no jump)
+    // lit by the sky, the sun through the clouds and the moon; near the bunker at night they glint in its
+    // light's own colour, 1.32 × at full night (desktop: .3 × its lamp's 4.4). 5.5: the lamp at full night
+    // (_applyDNLights): change the two together
+    const L = U.uLight.value.copy(_ambientLight.color).multiplyScalar(_ambientLight.intensity);
+    L.add(_rainC.copy(_sunLight.color).multiplyScalar(.25 * _sunLight.intensity)).add(_rainC.copy(_fillLight.color).multiplyScalar(.3 * _fillLight.intensity));
+    U.uLampCol.value.copy(_bunkerLight.color).multiplyScalar(1.32 / 5.5 * _bunkerLight.intensity);
+    RAIN_N[gfxQuality].forEach((max, k) => {
+      const m = _rainMeshes[k];
+      m.material.uniforms.uCount.value = max * r; m.geometry.setDrawRange(0, 6 * Math.ceil(max * r));
+    });
+  }
+
   // ── Main loop ────────────────────────────────────────────────────────────
   function loop(){
     requestAnimationFrame(loop);
@@ -3816,6 +4057,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     updateCamera(dt); // also while paused: the player can look around
     placeSlotOverlay();
     if(_muzzleLight) _muzzleLight.intensity=Math.max(0,_muzzleLight.intensity-dt*45); // flash decays in ~60 ms
+    RainBed.set(phase==='playing'?wx.rain:0,dt); // heard while paused too, not under the title / results
     if(phase!=='playing'||isPaused()){
       // Game clock, survival timer and scheduled events are frozen here
       if(phase==='playing'){ syncEnemyPools(); syncBullets(); updateParticles(_glow,0); updateParticles(_smoke,0); }
@@ -3956,12 +4198,13 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       }
       let e=null, tBest=2;
       for(const c of _enemyList){
-        if(c.dead)continue;
+        if(c.dead||c===b.passed)continue;
         const ex=c.mesh.position.x-px, ez=c.mesh.position.z-pz;
         const t=Math.max(0,Math.min(1,(ex*sx+ez*sz)/sLen2)); // closest point on the segment
         const dx=ex-sx*t, dz=ez-sz*t, hitR=c.type==='r'?.75:.5;
         if(dx*dx+dz*dz<hitR*hitR&&t<tBest){ tBest=t; e=c; }  // keep the first one along the path
       }
+      if(e&&b.unitType!=='marauder'&&Math.random()<rainMiss()){ b.passed=e; missText(e); e=null; } // the rain spoils the aim: it flies on past
       if(e){
         const t=tBest;
         {
@@ -4022,6 +4265,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     updateCorpses(dt);
     updateFlare(dt);            // before the lights: they follow its strength (and the nuke light's)
     updateNukeLight(dt);
+    updateWeather(dt);          // likewise: the light under the clouds
     updateDayNight(dt);
     syncNukeBlasts(dt);
     tutorialTick();
@@ -4057,6 +4301,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     });
     zerglings=[];roaches=[];bullets=[];beams=[];crates=[];marines=[];spawnQueue=[];corpses=[];acids=[];
     syncBullets(); syncMissiles(); syncEnemyPools(); syncAcids(); syncUnitLamps();
+    wxReset();               // a new game (and the title) under a clear sky
   }
 
   // ── Victory / defeat ──────────────────────────────────────────────────────
@@ -4923,6 +5168,15 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         doNuke(true); after(2.2, ()=>doNuke(true)); after(4.4, ()=>doNuke(true));
       }
     },
+    'rain': {
+      desc: '🌧️ A downpour now (again: a drizzle, then clear)',
+      fn: () => {   // the clouds in at once (≥ .8): the downpour starts now; the status line follows (updateWeather)
+        if(!wxOn){ setStatus('Weather is off — Menu → Settings'); return; }
+        if(wx.sky!=='rain'){ wxSet('rain'); wxPour(true); wx.cloud=Math.max(wx.cloud,.8); }
+        else if(wxHeavy()) wxPour(false);
+        else wxSet('clear');
+      }
+    },
     'airstrike': {
       desc: '✈️ 5 consecutive airstrikes',
       fn: () => {
@@ -5076,6 +5330,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     // Sync day/night checkbox
     const cb = document.getElementById('menu-dn-cb');
     if (cb) cb.checked = dnEnabled;
+    $('menu-wx-cb').checked = wxOn;
   }
   function _syncSoundUI() {
     const cb = document.getElementById('menu-mute-cb'), vol = document.getElementById('menu-vol'), val = document.getElementById('menu-vol-val');
@@ -5208,5 +5463,5 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   showTitle();
   return {start, buy, buyArmory, skipAssetWait, doAirstrike, doNuke, doStim, toggleStimAuto, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
           saveGame, loadGame, toggleDayNight, setVolume, setMuted, setMusic, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode,
-          showHowTo, tutDismiss, tutNext, tutBack, tutSkip, startTour, setTutorial, replayTutorial, menuTab};
+          showHowTo, tutDismiss, tutNext, tutBack, tutSkip, startTour, setTutorial, replayTutorial, menuTab, setWeather};
 })();

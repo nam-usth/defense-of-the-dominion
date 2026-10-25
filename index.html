@@ -223,8 +223,12 @@
             </div>
             <div class="menu-section">
               <div class="menu-label">EXPERIMENTAL</div>
-              <label class="menu-check"><input type="checkbox" id="menu-dn-cb" onchange="G.toggleDayNight()">&#9728; / &#9789; DAY/NIGHT CYCLE</label>
-              <div class="menu-note">At night only the area around the bunker is visible — enemies appear when they come close. [Y] toggles.</div>
+              <div class="menu-row">
+                <label class="menu-check"><input type="checkbox" id="menu-dn-cb" onchange="G.toggleDayNight()">&#9728; / &#9789; DAY/NIGHT CYCLE</label>
+                <label class="menu-check"><input type="checkbox" id="menu-wx-cb" onchange="G.setWeather(this.checked)">WEATHER</label>
+              </div>
+              <div class="menu-note">At night only the area around the bunker is visible — enemies appear when they come close. [Y] toggles.
+                Weather: clear skies, clouds and now and then rain, which spoils the aim (5% of rounds miss in a drizzle, 10% in a downpour).</div>
             </div>
           </section>
           <section class="menu-page" data-page="controls" role="tabpanel">
