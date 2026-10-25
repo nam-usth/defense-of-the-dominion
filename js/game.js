@@ -182,6 +182,8 @@ const G = (() => {
       snipe:    t => { tone(t, .25, 1600, 300, .16, 'sine'); noise(t, .08, 3500, 3000, .16, 'highpass'); },
       rocket:   t => { noise(t, .45, 900, 2600, .2, 'bandpass', 1.5); tone(t, .1, 160, 70, .12, 'sine'); },   // Viking missile off the rail
       mblast:   t => { noise(t, .26, 1400, 110, .32, 'lowpass', .8); tone(t, .22, 90, 38, .3, 'sine'); },      // a punisher grenade bursts
+      achieve:  t => { [784, 988, 1175, 1568].forEach((fq, i) => tone(t + i * .07, .32 - i * .04, fq, fq, .1, 'sine'));   // an achievement: a rising G major arpeggio
+                       tone(t + .21, .5, 3136, 3136, .025, 'triangle'); noise(t + .18, .35, 6000, 9000, .05, 'highpass'); },   // over a soft shimmer
     };
     const MIN_GAP = { hit: .045, bite: .22, spit: .07, acid: .06, marine: .03, marauder: .05, ghost: .05, shrike: .05, zdie: .035, rdie: .06, boom: .07, rocket: .06, mblast: .06,
       nukeShock: .4, nukeRumble: 1 };   // blasts stacked by cheats: one shock, one rumble
@@ -641,6 +643,7 @@ const G = (() => {
     const od = shrikeOverdrive();
     if (od !== _shrikeOD) {
       _shrikeOD = od;
+      if (od) achState();
       if (od) setStatus('Six Marines — Shrike overdrive: rate of fire ×2.5!');
     }
     if (hpLvl < 3) { _shrikeTgt = null; return; }
@@ -1024,6 +1027,7 @@ const G = (() => {
         emitParticle(_glow, a.p.x, a.p.y, a.p.z, (Math.random() - .5) * .6, (Math.random() - .5) * .6, (Math.random() - .5) * .6, .3, .26, .05, .85, 0xb8ff40, 0x2c8a10, 2, 0, 0);
       if (a.t < ROACH_ACID.flight) return true;
       bunkerHp = Math.max(0, bunkerHp - a.dmg * arm);
+      _waveHurt = true;
       for (let i = 0; i < 9; i++)                                // splash + a puff of corrosive smoke
         emitParticle(_glow, a.p.x, a.p.y, a.p.z, (Math.random() - .5) * 5, Math.random() * 4 + 1, (Math.random() - .5) * 5, .45 + Math.random() * .25, .24, .06, 1, 0xc8ff50, 0x3a9a12, 18, .8, 0);
       emitParticle(_smoke, a.p.x, a.p.y, a.p.z, 0, .8, 0, 1.0, .5, 1.3, .45, 0x6a8a3a, 0x3a4a2a, -.2, .5, 1);
@@ -1512,6 +1516,7 @@ const G = (() => {
     }
     SFX.play('mblast');
     for (const o of killed) killEnemy(o, true);
+    achMultiKill('grenade', killed.length + (struck && !struck.dead && struck.hp <= 0 ? 1 : 0));   // + the one it hit
   }
   // Its light on the ground: a soft glow over the blast radius with no edge, swelling out in the
   // first moment and dying away
@@ -1917,7 +1922,9 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     makeBeam(tx,tz,col);
     SFX.play('boom');
     spawnParts(new THREE.Vector3(tx,.5,tz),col,22);
-    allEnemies().forEach(e=>{if(e.dead)return;const dx=e.mesh.position.x-tx,dz=e.mesh.position.z-tz;if(Math.sqrt(dx*dx+dz*dz)<r)killEnemy(e,true);});
+    let n=0;
+    allEnemies().forEach(e=>{if(e.dead)return;const dx=e.mesh.position.x-tx,dz=e.mesh.position.z-tz;if(Math.sqrt(dx*dx+dz*dz)<r){killEnemy(e,true);n++;}});
+    if(n) achMultiKill('strike', _airRunKills+=n);   // the airstrike's missiles so far
   }
   function randPos(){const r=8+Math.random()*4,a=Math.random()*Math.PI*2;return[Math.cos(a)*r,Math.sin(a)*r];}
 
@@ -1928,6 +1935,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     }
     if(vikingActive){setStatus('Viking already inbound!');return;}
     airCD=strikeCooldown(); waveAirs++;
+    _run.usedSupport=true; _airRunKills=0;   // its missiles' kills add up (AIR SUPERIORITY)
 
     const alive=allEnemies().filter(e=>!e.dead);
 
@@ -1978,6 +1986,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       }
       if(_nukeInFlight){ setStatus('Nuclear launch already in progress!'); return; }
       nukeCD=nukeCooldown();
+      _run.usedSupport=true;
     }
     waveNukes++;
     _nukeInFlight = true;
@@ -2152,6 +2161,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
           killed++;
         }
       });
+      achMultiKill('nuke', killed);
 
       setStatus(`Nuclear detonation — ${killed} unit${killed!==1?'s':''} annihilated. Bunker intact.`);
     }
@@ -2536,6 +2546,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       score+=e.reward.score; kills++; waveKills++;
       minerals+=e.reward.minerals; gas+=e.reward.gas;
       updateHUD();
+      achKill(kills);
     }
   }
 
@@ -2570,6 +2581,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     setStatus(s??'Unknown');
     SFX.play(minerals+gas<spent0?'buy':'deny');
     updateHUD();
+    achState();
   }
 
   // ── Wave ─────────────────────────────────────────────────────────────────
@@ -2588,6 +2600,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     spawnInterval = Math.max(0.4, 1.4 - wave * 0.08);
     spawnQueue = [...Array(zc).fill('z'), ...Array(rc).fill('r')].sort(() => Math.random() - 0.5);
     spawnTimer = 0; wavePhase = 'combat'; waveKills = 0; waveNukes = 0; waveAirs = 0; waveCrates = 0;
+    _waveHurt = false;
     const roachMsg = rc > 0 ? ` + ${rc} Roach${rc > 1 ? 'es' : ''}` : '';
     const boostMsg = wave === CFG.metabolic_wave ? ' — Metabolic Boost: Zerglings run faster!' : endlessWaves() ? ` — bunker reinforced ×${endlessWaves()}` : '';
     setStatus(finalWave
@@ -2598,6 +2611,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
 
   function waveCleared(){
     wavePhase='cleared';
+    achWaveCleared(gameMode==='endless', wave, _waveHurt, maxHp>0?bunkerHp/maxHp:0, dnEnabled&&_dnFactor>=.5);
     const bm=40+wave*15, bg=10+wave*5;
     minerals+=bm; gas+=bg; updateHUD();
     setStatus(`Wave ${wave} cleared! +◆${bm} +▲${bg} — ${gameMode==='endless'?'Armory open (B) · resupply incoming...':'Resupply incoming...'}`);
@@ -3228,6 +3242,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     set('tv-kills', kills);
     const t=Math.floor(_gameT); set('tv-time', Math.floor(t/60)+':'+String(t%60).padStart(2,'0'));
     set('tv-mode', camp ? 'CAMPAIGN' : 'ENDLESS'); $('tv-mode')?.classList.toggle('endless', !camp);
+    set('tv-cheat', _run.legacy ? 'OLD SAVE' : 'CHEATS'); $('tv-cheat').hidden = !(_run.cheated && phase !== 'menu');   // achievements off: a cheat, or a save from before them
     set('tv-rank', rk.name); const rkTop=$('tv-rank'); if(rkTop) rkTop.style.color=rk.color;
     // (tv-status is owned by setStatus)
 
@@ -4129,6 +4144,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         if(e.type==='r') roachAttack(e,dt,ex,ez);       // ranged: acid (damage lands on impact)
         else {                                          // melee: bites the hull
           bunkerHp=Math.max(0,bunkerHp-e.dmg*dt*arm); // HUD refresh handled by throttled tick
+          _waveHurt=true;
           let bite;
           if(e.attack){                                  // SC2 Attack animation on a loop; bites as the jaws close
             const t0=e.atkT; e.atkT+=dt*ANIM_SPEED/ZERGLING_BITE.anim;
@@ -4313,6 +4329,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   function _bestEndless() { try { return JSON.parse(_store.get(BEST_KEY) || 'null'); } catch (e) { return null; } }
 
   function gameOver(){
+    achFlush();
     if(phase!=='playing') return;          // several biters can drop the hull to 0 in one frame
     phase='gameover';
     let record=false;
@@ -4328,6 +4345,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if(victoryAchieved||phase!=='playing') return;
     victoryAchieved=true;
     score+=5000;                            // victory bonus
+    achVictory();
     const newly=!endlessUnlocked();
     _store.set(ENDLESS_KEY,'1');
     // Checkpoint = "Continue · Endless": CONTINUE on the title resumes in Endless,
@@ -4347,6 +4365,188 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     Music.play('battle');
     updateHUD();
   }
+
+  // ── Achievements ──────────────────────────────────────────────────────────
+  // What the player has earned across games, the lifetime stats some of them
+  // count, and the rules that unlock them (the desktop's achievements.cpp). One
+  // _store key, JSON {earned:{id: unix s}, stats:{kills, snipes}}. Unlocks are
+  // written at once; stats at a cleared wave, a new game, game over and when the
+  // page is hidden. A game in which a cheat code was used (or loaded from a save
+  // made before achievements) earns nothing and counts toward nothing.
+  const ACH_KEY = 'dotd_achievements', ACH_CATS = ['CAMPAIGN', 'ENDLESS', 'COMBAT', 'COMMAND', 'FEATS'];
+  const _GEN = RANKS[RANKS.length - 1];
+  // In display order. Points as StarCraft II's: 10 / 20 / 30 / 50. icon: 'svg:<sprite symbol>' or a file in assets/ui
+  const ACH = [   // id, name, what to do, category (ACH_CATS), points, icon, lifetime stat, its goal, hidden (??? until earned)
+    ['boot_camp', 'BOOT CAMP', 'Finish the HUD tour.', 0, 10, 'svg:help'],
+    ['first_blood', 'FIRST BLOOD', 'Kill your first Zerg.', 0, 10, 'svg:rank'],
+    ['wave5', 'HOLD THE LINE', 'Clear wave 5.', 0, 10, 'svg:campaign'],
+    ['wave10', 'DIG IN', 'Clear wave 10.', 0, 20, 'svg:campaign'],
+    ['victory', 'THE DOMINION STANDS', `Win the campaign: clear wave ${CFG.victory_wave}.`, 0, 30, 'svg:campaign'],
+    ['endless20', 'NO END IN SIGHT', 'Clear wave 20 in Endless.', 1, 20, 'svg:endless'],
+    ['endless25', 'THE SWARM GROWS', 'Clear wave 25 in Endless.', 1, 30, 'svg:endless'],
+    ['endless30', 'LEGEND OF KORHAL', 'Clear wave 30 in Endless.', 1, 50, 'svg:endless'],
+    ['kills100', 'EXTERMINATOR', 'Kill 100 Zerg in one game.', 2, 10, 'svg:rank'],
+    ['general', 'FOUR STARS', `Reach the rank of ${_GEN.name} in one game (${_GEN.kills} kills).`, 2, 20, 'svg:rank'],
+    ['kills1000', 'VETERAN', 'Kill 1,000 Zerg in all.', 2, 20, 'svg:rank', 'kills', 1000],
+    ['kills5000', 'HIVE BREAKER', 'Kill 5,000 Zerg in all.', 2, 50, 'svg:rank', 'kills', 5000],
+    ['nuke10', 'NUCLEAR OPTION', 'Kill 10 Zerg with one nuke.', 2, 20, 'nukes_coop.png'],
+    ['strike10', 'AIR SUPERIORITY', 'Kill 10 Zerg with one airstrike.', 2, 20, 'btn-progression-hornerhan-5-fleetcalldown.png'],
+    ['grenade5', 'SHRAPNEL', 'Kill 5 Zerg with one Marauder grenade.', 2, 20, 'btn-upgrade-terran-explosiveshrapnelshells.png'],
+    ['snipe50', 'ONE SHOT, ONE KILL', 'Kill 50 Zerg with Ghost snipes, in all.', 2, 20, 'btn-upgrade-terran-ui-lazertargetingsystem.png', 'snipes', 50],
+    ['maxed', 'FULLY UPGRADED', 'Max damage, armor, hull and ammo storage in one game.', 3, 20, 'btn-upgrade-terran-infantryweaponslevel3.png'],
+    ['shrike', 'SHRIKE ONLINE', 'Mount the Shrike turret: bunker hull level 3.', 3, 10, 'btn-upgrade-terran-hisecautotracking.png'],
+    ['overdrive', 'OVERDRIVE', 'Six Marines in a level 3 bunker: the Shrike in overdrive.', 3, 20, 'btn-upgrade-terran-hisecautotracking.png'],
+    ['combined', 'COMBINED ARMS', 'A Marine, a Marauder and a Ghost in the bunker at once.', 3, 10, 'svg:roster'],
+    ['superstim', 'SUPER SOLDIERS', 'Research all three Super Stimpack tiers.', 3, 20, 'btn-upgrade-terran-superstimppack.png'],
+    ['sensor3', 'EYES IN THE DARK', 'Research the Sensor Tower to level 3.', 3, 10, 'svg:sensor'],
+    ['untouchable', 'UNTOUCHABLE', 'Clear wave 5 or later with no Zerg damage to the bunker.', 4, 20, 'btn-upgrade-terran-buildingarmor.png'],
+    ['last_stand', 'LAST STAND', 'Clear a wave with the bunker below 10% HP.', 4, 20, 'btn-upgrade-terran-neosteelframe.png', '', 0, true],
+    ['night_watch', 'NIGHT WATCH', 'Clear a wave at night (Menu → Settings → day/night cycle).', 4, 10, 'svg:sensor'],
+    ['marines_only', 'BAND OF BROTHERS', 'Win the campaign without hiring a Marauder or a Ghost.', 4, 50, 'svg:roster'],
+    ['no_support', 'NO AIR SUPPORT', 'Win the campaign without calling an airstrike or a nuke.', 4, 50, 'svg:lock'],
+  ].map(([id, name, desc, cat, points, icon, stat = '', goal = 0, hidden = false]) => ({ id, name, desc, cat, points, icon, stat, goal, hidden }));
+  const ACH_TOTAL = ACH.reduce((p, a) => p + a.points, 0);
+  const _achDef = id => ACH.find(a => a.id === id);
+  const _ach = (() => {                         // a new player: nothing earned
+    const b = { earned: {}, stats: {}, dirty: false };
+    try {
+      const d = JSON.parse(_store.get(ACH_KEY) || 'null') || {};
+      for (const [id, t] of Object.entries(d.earned || {})) if (_achDef(id)) b.earned[id] = +t > 0 ? +t : 1;   // ids of removed achievements drop out
+      for (const [k, n] of Object.entries(d.stats || {})) if (isFinite(n)) b.stats[k] = +n;
+    } catch (e) {}
+    return b;
+  })();
+  // This game's facts the rules need (saved with the game): cheated also covers legacy, a save from
+  // before achievements whose past is unknown; usedSupport = an airstrike or nuke called; hiredOther =
+  // a Marauder or Ghost hired. _runAch: earned this game (the results); _waveHurt: a bite or acid this wave
+  const _newRun = () => ({ cheated: false, legacy: false, usedSupport: false, hiredOther: false });
+  let _run = _newRun(), _runAch = [], _waveHurt = false, _airRunKills = 0;
+  function _achSave() { _ach.dirty = false; _store.set(ACH_KEY, JSON.stringify({ earned: _ach.earned, stats: _ach.stats })); }
+  function achFlush() { if (_ach.dirty) _achSave(); }
+  addEventListener('pagehide', achFlush);       // the web has no shutdown hook
+  document.addEventListener('visibilitychange', () => { if (document.hidden) achFlush(); });
+  const achCount = () => Object.keys(_ach.earned).length;
+  const achPoints = () => ACH.reduce((p, a) => p + (_ach.earned[a.id] ? a.points : 0), 0);
+  function _achUnlock(id) {
+    if (_ach.earned[id] || !_achDef(id)) return;
+    _ach.earned[id] = Math.floor(Date.now() / 1000);
+    _achSave();                                 // at once: the toast must not be lost
+    _runAch.push(id);
+    _toasts.push(id); if (_toasts.length === 1) _toastShow(); else _toastKick();
+  }
+  function _achAdd(key, n) {                    // a lifetime stat; earns the ones counting it at their goal
+    const v = _ach.stats[key] = (_ach.stats[key] || 0) + n;
+    _ach.dirty = true;
+    ACH.forEach(a => { if (a.goal > 0 && a.stat === key && v >= a.goal) _achUnlock(a.id); });
+  }
+  // ── rules ──
+  function achKill(gameKills) {                 // a Zerg killed for its reward; gameKills: this game's total
+    if (_run.cheated) return;
+    _achUnlock('first_blood'); _achAdd('kills', 1);
+    if (gameKills >= 100) _achUnlock('kills100');
+    if (gameKills >= _GEN.kills) _achUnlock('general');
+  }
+  function achSnipe() { if (!_run.cheated) _achAdd('snipes', 1); }
+  function achMultiKill(by, n) {                // 'nuke' (one blast), 'strike' (one airstrike), 'grenade' (one burst)
+    if (_run.cheated) return;
+    if (by === 'nuke' && n >= 10) _achUnlock('nuke10');   // (20 was out of reach: rarely 20 alive at once)
+    else if (by === 'strike' && n >= 10) _achUnlock('strike10');
+    else if (by === 'grenade' && n >= 5) _achUnlock('grenade5');
+  }
+  function achWaveCleared(endless, w, hurt, hpFrac, night) {
+    if (_run.cheated) return;
+    if (w >= 5) _achUnlock('wave5');
+    if (w >= 10) _achUnlock('wave10');
+    if (endless && w >= 20) _achUnlock('endless20');
+    if (endless && w >= 25) _achUnlock('endless25');
+    if (endless && w >= 30) _achUnlock('endless30');
+    if (w >= 5 && !hurt) _achUnlock('untouchable');
+    if (hpFrac > 0 && hpFrac < 0.1) _achUnlock('last_stand');
+    if (night) _achUnlock('night_watch');
+    achFlush();                                 // a wave is a checkpoint: the lifetime kills and snipes are stored with it
+  }
+  function achVictory() {
+    if (_run.cheated) return;
+    _achUnlock('victory');
+    if (!_run.hiredOther) _achUnlock('marines_only');
+    if (!_run.usedSupport) _achUnlock('no_support');
+  }
+  function achState() {                         // after a purchase, a hire, a research, the overdrive, a load
+    if (_run.cheated) return;
+    if (dmgLvl >= 3 && armorLvl >= 3 && hpLvl >= 3 && ammoLvl >= 3) _achUnlock('maxed');
+    if (hpLvl >= 3) _achUnlock('shrike');
+    if (shrikeOverdrive()) _achUnlock('overdrive');
+    if (['marine', 'marauder', 'ghost'].every(u => roster.includes(u))) _achUnlock('combined');
+    if (superStimLvl >= 3) _achUnlock('superstim');
+    if (sensorLvl >= 3) _achUnlock('sensor3');
+  }
+  function achTourDone() { _achUnlock('boot_camp'); }   // the caller skips a cheated game
+  // ── drawing: the icon, the row (the list, the menu, the results, the toast reuse them) ──
+  const _MON = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  const _achDate = t => { if (!(t > 1)) return ''; const d = new Date(t * 1000); return `${d.getDate()} ${_MON[d.getMonth()]} ${d.getFullYear()}`; };   // 24 OCT 2026: day and month cannot be swapped
+  const _thousands = n => n.toLocaleString('en-US');
+  // One of the HUD's StarCraft II buttons, else a stroke icon on a dark tile; dimmed and grey until earned
+  function _achIconHTML(a, got = !!_ach.earned[a.id]) {
+    return `<span class="ach-ico${got ? ' got' : ''}">${a.icon.startsWith('svg:') ? `<svg class="ico"><use href="#i-${a.icon.slice(4)}"/></svg>` : `<img src="${UI_DIR + a.icon}" alt="">`}${!got && a.hidden ? '<b>?</b>' : ''}</span>`;
+  }
+  // As StarCraft II lists it: the icon in its frame, a blue panel with the name and what to do (a lifetime
+  // stat's bar along its foot), and a box with the points, large, and the date earned (else the progress, else LOCKED)
+  function _achRowHTML(a) {
+    const t = _ach.earned[a.id], got = !!t, secret = a.hidden && !got, p = a.goal ? Math.min(_ach.stats[a.stat] || 0, a.goal) : 0;
+    return `<div class="ach-row${got ? ' got' : ''}">${_achIconHTML(a, got)}<div class="ach-main"><b>${secret ? '???' : a.name}</b><span>${secret ? 'Hidden — keep playing to find it.' : a.desc}</span>` +
+      `${a.goal && !got ? `<i class="ach-prog"><i style="width:${p / a.goal * 100}%"></i></i>` : ''}</div>` +
+      `<div class="ach-pts"><b>${a.points}</b><span>${got ? _achDate(t) : a.goal ? _thousands(p) + '/' + _thousands(a.goal) : 'LOCKED'}</span></div></div>`;
+  }
+  const _achTotalsHTML = () => `<div class="ach-tot">${achCount()} / ${ACH.length} earned · ${achPoints()} / ${ACH_TOTAL} points</div><div class="ach-bar"><i style="width:${achPoints() / ACH_TOTAL * 100}%"></i></div>`;
+  // Toasts: one box under the top bar, one at a time, 4.6 s each on real time (CSS + setTimeout), so they
+  // show over the roster, the menu and the results; the chime as each first shows
+  let _toasts = [], _toastTimer = 0;
+  function _toastShow() {
+    const el = $('ach-toast'), a = _achDef(_toasts[0]);
+    clearTimeout(_toastTimer); el.classList.remove('on');
+    if (!a) return;                             // the queue is empty
+    el.innerHTML = `<div class="at-box">${_achIconHTML(a, true)}<div class="at-txt"><div class="at-k"></div><b>${a.name}</b><span>${a.desc}</span></div>` +
+      `<div class="at-pts"><b>${a.points}</b><span>${_achDate(_ach.earned[a.id])}</span></div></div>`;
+    _toastKick();
+    void el.offsetWidth; el.classList.add('on');   // restart the animation
+    SFX.play('achieve');
+    _toastTimer = setTimeout(() => { _toasts.shift(); _toastShow(); }, 4600);
+  }
+  function _toastKick() { const k = document.querySelector('#ach-toast .at-k'); if (k) k.textContent = 'ACHIEVEMENT EARNED' + (_toasts.length > 1 ? ` · ${_toasts.length - 1} MORE` : ''); }
+  // Title → ACHIEVEMENTS: the totals, a tab per category (how many earned), the category's rows in an
+  // area sized for the largest category (the card keeps its height on every tab), BACK
+  let _achTab = 0;
+  function showAchievements() {
+    if (phase !== 'menu') return;
+    const most = Math.max(...ACH_CATS.map((c, i) => ACH.filter(a => a.cat === i).length));
+    _showCard(`<div class="ov-kicker">SERVICE RECORD</div>
+      <div class="ov-title ov-title-sm">ACHIEVEMENTS</div>${_achTotalsHTML()}
+      <div class="ach-tabs" id="ach-tabs" role="tablist"></div><div class="ach-list" id="ach-list" style="--n:${most}"></div>
+      <div class="ov-row ach-back"><button class="ov-btn" onclick="G.showTitle()"><svg class="ico"><use href="#i-home"/></svg><span class="ob-t">BACK</span></button></div>`, true);
+    achTab(_achTab);
+  }
+  function achTab(c) {
+    if (!$('ach-list')) return;
+    _achTab = c;
+    $('ach-tabs').innerHTML = ACH_CATS.map((name, i) => {
+      const all = ACH.filter(a => a.cat === i), got = all.filter(a => _ach.earned[a.id]).length;
+      return `<button class="ach-tab${i === c ? ' active' : ''}" role="tab" onclick="G.achTab(${i})">${name}<span class="num${got === all.length ? ' all' : ''}">${got}/${all.length}</span></button>`;
+    }).join('');
+    $('ach-list').innerHTML = ACH.filter(a => a.cat === c).map(_achRowHTML).join('');
+  }
+  // MENU → ACHIEVEMENTS: the totals, the icon grid, the one under the cursor (else the last hovered) as a row
+  let _achHover = 0;
+  function _syncAchUI() {
+    const el = $('menu-ach'); if (!el) return;
+    el.innerHTML = _achTotalsHTML() + (_run.cheated && phase !== 'menu' ? `<div class="menu-note ach-off">${_run.legacy
+        ? 'This game was loaded from a save made before achievements: it earns none.' : 'A cheat turned achievements off for the rest of this game.'}</div>` : '') +
+      `<div class="ach-grid">${ACH.map((a, i) => `<button class="ach-cell" data-i="${i}" aria-label="${a.hidden && !_ach.earned[a.id] ? '???' : a.name}">${_achIconHTML(a)}</button>`).join('')}</div>` +
+      `<div id="menu-ach-row">${_achRowHTML(ACH[_achHover])}</div>`;
+  }
+  ['pointerover', 'focusin'].forEach(t => $('menu-ach')?.addEventListener(t, e => {
+    const c = e.target.closest && e.target.closest('.ach-cell');
+    if (c && +c.dataset.i !== _achHover) { _achHover = +c.dataset.i; $('menu-ach-row').innerHTML = _achRowHTML(ACH[_achHover]); }
+  }));
 
   // ── Tutorial: HUD tour + hints for new players ────────────────────────────
   // The first game opens with a HUD tour: the console and each command-card
@@ -4471,6 +4671,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   // is skipped: the screen would dim with nothing lit. The last page always shows.
   const _tourShown = i => i === 0 || i === TOUR.length - 1 || !!_focusRect(TOUR[i].focus);
   function tutNext() {                          // GOT IT / NEXT / OK, LET'S ROLL
+    if (_tourI === TOUR.length - 1 && (phase !== 'playing' || !_run.cheated)) achTourDone();   // OK, LET'S ROLL: BOOT CAMP
     if (_tourI < 0 || _tourI === TOUR.length - 1) { tutDismiss(); return; }
     let i = _tourI + 1; while (!_tourShown(i)) i++;
     _tourPage(i);
@@ -4537,7 +4738,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
 
   // ── Title / results screens (one overlay card) ──────────────────────────
   const _esc = v => String(v).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-  function _showCard(html){ const c=$('ov-card'); if(c) c.innerHTML=html; $('overlay').style.display='flex'; }
+  function _showCard(html,wide){ const c=$('ov-card'); if(c){ c.innerHTML=html; c.classList.toggle('wide',!!wide); } $('overlay').style.display='flex'; }
   const _KEYS_HTML = `<div class="ov-keys">
       <kbd>CLICK / HOLD</kbd><span>Fire a volley / full auto</span><kbd>R</kbd><span>Airstrike + resupply</span>
       <kbd>N</kbd><span>Nuke (wave 5+)</span><kbd>B</kbd><span>Roster (pauses)</span>
@@ -4549,6 +4750,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     clearEntities();
     closeRoster(); closeMenu(); closeCheat(); tutDismiss();
     phase='menu'; wavePhase='idle';
+    $('tv-cheat').hidden=true;   // no game on: no CHEATS chip (updateHUD does not run on the title)
     const unlocked=endlessUnlocked(), best=_bestEndless();
     const auto=_readSave(AUTO_KEY), manual=_readSave(SAVE_KEY);
     _showCard(`<div class="ov-kicker">TERRAN DOMINION · BUNKER DEFENSE</div>
@@ -4567,6 +4769,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
           <span><span class="ob-t">HOW TO PLAY</span><span class="ob-d">Rules, controls, units</span></span></button>
         <button class="ov-btn" onclick="G.menuTab('settings');G.openMenu()"><svg class="ico"><use href="#i-gfx"/></svg>
           <span><span class="ob-t">SETTINGS</span><span class="ob-d">Graphics, sound, day/night</span></span></button></div>
+        <button class="ov-btn gold" onclick="G.showAchievements()"><svg class="ico"><use href="#i-trophy"/></svg>
+          <span><span class="ob-t">ACHIEVEMENTS</span><span class="ob-d">${achCount()} / ${ACH.length} earned · ${achPoints()} / ${ACH_TOTAL} points</span></span></button>
       </div>
       <div class="ov-load" id="ov-load"><div class="ol-bar"><i></i></div><span class="ol-t"></span><button class="ol-skip" onclick="G.skipAssetWait()">start now</button></div>
       ${_KEYS_HTML}<div class="ov-legal">${BLIZZARD_NOTICE}</div>`);
@@ -4615,12 +4819,17 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
                  ['SCORE',score],['RANK',`<span style="color:${rk.color}">${rk.name}</span>`],['MODE',camp?'CAMPAIGN':'ENDLESS']];
     const sub=victory?`All ${CFG.victory_wave} waves held. The Dominion stands.`
       :camp?`Overrun on wave ${wave} of ${CFG.victory_wave}.`:`The swarm broke through on wave ${wave}.`;
+    // earned this game (before any cheat): the best three as rows (most points, then the latest), then a count
+    const best=_runAch.slice().reverse().map(_achDef).filter(Boolean).sort((a,b)=>b.points-a.points).slice(0,3);
     _showCard(`<div class="ov-kicker">${victory?'CAMPAIGN COMPLETE':camp?'CAMPAIGN':'ENDLESS MODE'}</div>
       <div class="ov-title ${victory?'victory':'defeat'}">${victory?'VICTORY':'BUNKER LOST'}</div>
       <div class="ov-sub">${sub}</div>
       ${newlyUnlocked?'<div class="ov-badge"><svg class="ico"><use href="#i-endless"/></svg>ENDLESS MODE UNLOCKED</div>':''}
       ${newRecord?'<div class="ov-badge">NEW ENDLESS RECORD</div>':''}
       <div class="ov-stats">${stats.map(([l,v])=>`<div class="ov-stat"><b>${v}</b><span>${l}</span></div>`).join('')}</div>
+      ${best.length?`<div class="ach-res"><div class="ach-res-h">ACHIEVEMENTS EARNED · ${_runAch.length}</div>${best.map(_achRowHTML).join('')}
+        ${_runAch.length>best.length?`<div class="ach-res-n">+${_runAch.length-best.length} more — ACHIEVEMENTS on the title screen</div>`:''}</div>`:''}
+      ${_run.cheated?`<div class="ach-res-off">${_run.legacy?'Loaded from a save made before achievements: none this game.':'A cheat turned achievements off for the rest of this game.'}</div>`:''}
       <div class="ov-row">${victory
         ?'<button class="ov-btn gold" onclick="G.continueEndless()"><svg class="ico"><use href="#i-endless"/></svg><span class="ob-t">CONTINUE · ENDLESS</span></button>'
         :'<button class="ov-btn" onclick="G.start(G.mode())"><svg class="ico"><use href="#i-restart"/></svg><span class="ob-t">PLAY AGAIN</span></button>'}
@@ -4633,8 +4842,10 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if(mode==='campaign'||mode==='endless') gameMode=mode;
     SFX.ensure();             // start() always runs from a click — unlocks Web Audio
     Music.play('battle');
+    achFlush();               // the last game's lifetime stats
     clearEntities();
     newGameState();
+    _run=_newRun(); _runAch=[]; _airRunKills=0;   // a new game (loadGame restores a saved one's flags after this)
     tutDismiss(); _tutNext=0;       // a hint left open (Restart / Load from the menu) goes with the old game
     $('overlay').style.display='none';
     phase='playing';
@@ -4687,9 +4898,11 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if (minerals < m || gas < g) return needText(m, g);
     minerals -= m; gas -= g;
     roster.push(type);
+    if (type !== 'marine') _run.hiredOther = true;   // BAND OF BROTHERS: Marines only
     if (type === 'ghost') snipeReady.push(0); // new ghost (last in roster order) may snipe at once
     if (type === 'marauder') marauderReady.push(0);   // ... and a new Marauder fire
     syncMarines(); updateHUD();
+    achState();
     return `${def.name} hired! (${slotsUsed()}/6 slots)`;
   }
 
@@ -4751,6 +4964,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       setStatus(td.desc);
     }
     updateHUD();
+    achState();
   }
 
   // ── SC2-style slot bar overlay (positioned over bunker in world→screen) ──
@@ -5034,6 +5248,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       beams.push({mesh: beam, life: 0.3});
 
       killEnemy(target, true);
+      achSnipe();
       spawnParts(target.mesh.position.clone(), 0xcc44ff, 18);
       const tname = target.type === 'r' ? 'Roach' : target.type === 'h' ? 'Hydralisk' : 'Zergling';
       setStatus(`Ghost snipe — ${tname} eliminated!`);
@@ -5224,26 +5439,25 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       fn: () => { kills+=280; score+=2800; updateHUD(); }
     },
     'help': {
-      desc: '📋 Lists all cheat codes in console (F12)',
-      fn: () => {
-        console.group('%c DOTD Cheat Codes', 'color:#44ff88;font-weight:bold;font-size:14px');
-        Object.entries(CHEATS).forEach(([code,{desc}])=>{
-          console.log(`%c ${code.padEnd(12)} %c ${desc}`,
-            'color:#fa4;font-weight:bold','color:#aaa');
-        });
-        console.groupEnd();
-        setStatus('Cheat list printed to F12 console!');
+      desc: '📋 Lists all cheat codes',
+      fn: () => {   // in the console itself, widened (the list stays until a code or ESC)
+        const m = document.getElementById('cheat-msg');
+        m.innerHTML = Object.entries(CHEATS).map(([code,{desc}])=>`<b>${code.padEnd(11)}</b>${_esc(desc)}`).join('\n');
+        m.classList.add('list'); document.getElementById('cheat-wrap').classList.add('wide');
       }
     },
   };
 
+  let _cheatCloseT = 0;   // the console closes itself a moment after a code (a stale one must not close the next)
   function openCheat() {
     if(phase!=='playing') return;
     _cheatOpen = true; // pauses gameplay
+    clearTimeout(_cheatCloseT);
     document.getElementById('cheat-wrap').style.display='block';
+    document.getElementById('cheat-wrap').classList.remove('wide');
     document.getElementById('cheat-backdrop').style.display='block';
     document.getElementById('cheat-input').value='';
-    document.getElementById('cheat-msg').textContent='';
+    document.getElementById('cheat-msg').textContent=''; document.getElementById('cheat-msg').classList.remove('list');
     setTimeout(()=>document.getElementById('cheat-input').focus(), 50);
   }
   function closeCheat() {
@@ -5254,16 +5468,22 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   function submitCheat(code) {
     const key = code.trim().toLowerCase();
     const entry = CHEATS[key];
+    const msgEl = document.getElementById('cheat-msg');
+    clearTimeout(_cheatCloseT);
+    msgEl.classList.remove('list'); document.getElementById('cheat-wrap').classList.remove('wide');
     if(entry) {
-      entry.fn();
-      const msgEl = document.getElementById('cheat-msg');
+      // Any code but help turns achievements off for the rest of this game — before it acts:
+      // endv wins the campaign and terran hires, and both would earn achievements first
+      const first = key !== 'help' && !_run.cheated;
+      if(first){ _run.cheated = true; updateHUD(); }
       msgEl.style.color='#44ff88';
-      msgEl.textContent = entry.desc;
-      setTimeout(closeCheat, 1400);
+      entry.fn();
+      if(key === 'help') return;   // open to read the list
+      msgEl.textContent = entry.desc + (first ? '\nAchievements are off for the rest of this game.' : '');
+      _cheatCloseT = setTimeout(closeCheat, first ? 2600 : 1400);   // time to read it
     } else {
-      const msgEl = document.getElementById('cheat-msg');
       msgEl.style.color='#f44';
-      msgEl.textContent = key ? `Unknown: "${key}" — try 'help' (check F12)` : 'Enter a code!';
+      msgEl.textContent = key ? `Unknown: "${key}" — try 'help'` : 'Enter a code!';
       document.getElementById('cheat-input').select();
     }
   }
@@ -5302,11 +5522,12 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   // ── Menu ────────────────────────────────────────────────────────────────────
   // (_menuOpen is declared with the game state — opening the menu pauses gameplay)
   // Tabs: the last one chosen opens again (GAME first)
-  const MENU_TABS = ['game', 'settings', 'controls', 'tutorial', 'cheats'];
+  const MENU_TABS = ['game', 'settings', 'controls', 'tutorial', 'achievements', 'cheats'];
   let _menuTab = 'game';
   function menuTab(t) {
     if (!MENU_TABS.includes(t)) return;
     _menuTab = t;
+    if (t === 'achievements') _syncAchUI();
     document.querySelectorAll('.menu-tab').forEach(b => { const on = b.dataset.tab === t; b.classList.toggle('active', on); b.setAttribute('aria-selected', on); });
     document.querySelectorAll('.menu-page').forEach(p => p.classList.toggle('active', p.dataset.page === t));
   }
@@ -5368,6 +5589,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       airCD: (vikingActive || marines.some(m => m.cb)) ? 0 : airCD,
       nukeCD: _nukeInFlight ? 0 : nukeCD,
       stimT, stimVolley: _stimVolley,   // the bunker HP already paid for this stim
+      cheated: _run.cheated, legacy: _run.legacy, usedSupport: _run.usedSupport, hiredOther: _run.hiredOther,   // achievements
       ts: Date.now()
     };
   }
@@ -5433,6 +5655,9 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       if (gameMode === 'endless' && !endlessUnlocked()) _store.set(ENDLESS_KEY, '1'); // an Endless save means the campaign was won
       airCD = d.airCD || 0; nukeCD = d.nukeCD || 0;
       stimT = d.stimT || 0; _stimVolley = d.stimVolley || 0;   // a stim paid for keeps running
+      // a save from before achievements has no flags: what happened in that game is unknown, so it earns none
+      _run.legacy = !('cheated' in d) || !!d.legacy; _run.cheated = _run.legacy || !!d.cheated;
+      _run.usedSupport = !!d.usedSupport; _run.hiredOther = !!d.hiredOther;
       syncMarines(); // marine meshes must match the restored roster
       if (d.gfxQuality) applyGfx(d.gfxQuality);
       updateBunkerVisual();
@@ -5447,6 +5672,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       startWave();
       updateHUD();
       _shrikeOD = shrikeOverdrive();   // a restored overdrive is not news: keep the "Loaded" message
+      achState();
       setStatus(`Loaded — ${gameMode === 'endless' ? 'Endless' : 'Campaign'} wave ${wave} (saved ${_ago(d.ts)})`);
       closeMenu();
     } catch (e) {
@@ -5459,5 +5685,5 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   showTitle();
   return {start, buy, buyArmory, skipAssetWait, doAirstrike, doNuke, doStim, toggleStimAuto, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
           saveGame, loadGame, toggleDayNight, setVolume, setMuted, setMusic, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode,
-          showHowTo, tutDismiss, tutNext, tutBack, tutSkip, startTour, setTutorial, replayTutorial, menuTab, setWeather};
+          showHowTo, tutDismiss, tutNext, tutBack, tutSkip, startTour, setTutorial, replayTutorial, menuTab, setWeather, showAchievements, achTab};
 })();

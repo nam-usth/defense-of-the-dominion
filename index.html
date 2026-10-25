@@ -33,6 +33,7 @@
   <symbol id="i-gfx" viewBox="0 0 24 24"><path d="M3 4.5h18v11.5H3z"/><path d="M8 20h8M12 16v4"/></symbol>
   <!-- Sensor Tower radar: PLACEHOLDER until the SC2 btn-building-terran-sensortower.png is exported (then UI_ICONS.sensor + an <img> in #upg-sensor) -->
   <symbol id="i-sensor" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 8 8M4 5a15 15 0 0 1 15 15M4 20l10.5-10.5"/><circle cx="14" cy="14.3" r="1.6" fill="currentColor" stroke="none"/></symbol>
+  <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M7.5 4h9v5.5a4.5 4.5 0 0 1-9 0z"/><path d="M7.5 6H4.5v1.5A3.5 3.5 0 0 0 8 11M16.5 6h3v1.5A3.5 3.5 0 0 1 16 11"/><path d="M12 14v3.5M8.5 20.5h7M9.5 20.5v-3h5v3"/></symbol>
 </svg>
 <div id="gw">
   <canvas id="gc"></canvas>
@@ -45,6 +46,7 @@
     <div class="tb-stat"><span class="tb-l">KILLS</span><span id="tv-kills" class="tb-v">0</span></div>
     <div class="tb-stat"><span class="tb-l">TIME</span><span id="tv-time" class="tb-v">0:00</span></div>
     <span id="tv-mode" class="tb-mode">CAMPAIGN</span>
+    <span id="tv-cheat" class="tb-mode tb-cheat" title="Achievements are off for this game" hidden>CHEATS</span>
     <div id="tv-status"></div>
     <span id="tv-dn-wrap" style="display:none"><span id="tv-dn"></span><span id="tv-dn-next"></span></span>
     <span id="tv-rank">PRIVATE</span>
@@ -185,6 +187,7 @@
           <button class="menu-tab" data-tab="settings" role="tab" onclick="G.menuTab('settings')"><svg class="ico"><use href="#i-gfx"/></svg>SETTINGS</button>
           <button class="menu-tab" data-tab="controls" role="tab" onclick="G.menuTab('controls')"><svg class="ico"><use href="#i-keys"/></svg>CONTROLS</button>
           <button class="menu-tab" data-tab="tutorial" role="tab" onclick="G.menuTab('tutorial')"><svg class="ico"><use href="#i-help"/></svg>TUTORIAL</button>
+          <button class="menu-tab" data-tab="achievements" role="tab" onclick="G.menuTab('achievements')"><svg class="ico"><use href="#i-trophy"/></svg>ACHIEVEMENTS</button>
           <button class="menu-tab" data-tab="cheats" role="tab" onclick="G.menuTab('cheats')"><svg class="ico"><use href="#i-cheat"/></svg>CHEATS</button>
           <span class="menu-grow"></span>
           <button class="menu-action-btn" id="menu-resume" onclick="G.closeMenu()"><svg class="ico"><use href="#i-play"/></svg><span>RESUME</span></button>
@@ -264,10 +267,12 @@
               <div class="menu-note">HUD TOUR walks through the console and every command-card button now. START OVER shows the tour and every hint again as you play.</div>
             </div>
           </section>
+          <section class="menu-page" data-page="achievements" role="tabpanel"><div id="menu-ach"></div></section>
           <section class="menu-page" data-page="cheats" role="tabpanel">
             <div class="menu-section">
               <div class="menu-label">CHEAT CODES</div>
-              <div class="menu-note" style="margin:0 0 9px">Type <b style="color:var(--warn);letter-spacing:2px">dotd</b> during play to open the console; there <b>help</b> lists the codes in the browser console (F12).</div>
+              <div class="menu-note" style="margin:0 0 9px">Type <b style="color:var(--warn);letter-spacing:2px">dotd</b> during play to open the console; there <b>help</b> lists the codes.</div>
+              <div class="menu-note ach-warn" style="margin:0 0 9px">A cheat code turns achievements off for the rest of that game.</div>
               <div class="menu-row"><button class="menu-action-btn warn" onclick="G.closeMenu();G.openCheat()"><svg class="ico"><use href="#i-cheat"/></svg>CHEAT CONSOLE</button></div>
             </div>
           </section>
@@ -305,12 +310,14 @@
       <button class="ch-ok" onclick="G.submitCheat(document.getElementById('cheat-input').value)">OK</button>
     </div>
     <div id="cheat-msg"></div>
-    <div class="ch-foot">press ESC to close · 'help' lists codes (F12)</div>
+    <div class="ch-foot">press ESC to close · 'help' lists the codes</div>
   </div>
   <div id="cheat-backdrop" onclick="G.closeCheat()"></div>
 
   <!-- Title / results overlay (content built by showTitle / showResults) -->
   <div id="overlay"><div class="ov-card" id="ov-card"></div></div>
+  <!-- Achievement earned: over everything, on real time (built by _toastShow) -->
+  <div id="ach-toast" aria-live="polite"></div>
 </div>
 
 <!-- three.js r128 + loaders (CDN) -->
