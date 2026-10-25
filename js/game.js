@@ -254,7 +254,7 @@ const G = (() => {
   let bunkerModelRoot = null;
   let bunkerGroup = null;   // scene group holding the bunker (procedural, then the loaded model)
   let airCD=0, nukeCD=0;
-  let floatTexts = []; // {x,y,z,txt,life,maxLife,color}
+  let floatTexts = []; // {x,y,z,txt,life,maxLife,color[,lift (px over x,y,z), on (its enemy)]}; row: set by drawCH
   // ── Bunker roster state ────────────────────────────────────────────────────
   // roster: array of unit type strings filling 6 slots
   // Marine=1slot, Marauder=2slots, Ghost=2slots
@@ -3094,6 +3094,14 @@ const G = (() => {
     cd.classList.toggle('on',on);
     if(on){ cd.style.setProperty('--p',Math.max(0,Math.min(1,o.cd||0)).toFixed(3)); const t=String(o.cdText??''); if(cd.textContent!==t) cd.textContent=t; }
   }
+  // HP / AMMO bars: no segment tick under the label or the value (css .ticks mask); the
+  // spans are watched, so the mask follows the value's width as its digits come and go
+  const _barMask=new ResizeObserver(es=>es.forEach(({target})=>{
+    const bar=target.parentNode, l=bar.querySelector('.bar-l'), v=bar.querySelector('.bar-v');
+    bar.style.setProperty('--ml',(l.offsetLeft+l.offsetWidth+2)+'px');
+    bar.style.setProperty('--mr',(bar.clientWidth-v.offsetLeft+2)+'px');
+  }));
+  document.querySelectorAll('.bar .bar-l,.bar .bar-v').forEach(s=>_barMask.observe(s));
 
   function updateHUD(){
     const set=(id,v)=>{v=String(v);if(_hudText.get(id)===v)return;_hudText.set(id,v);const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -3216,7 +3224,7 @@ const G = (() => {
 
   // ── Command card tooltips (live: cost, level, why it is disabled) ─────────
   const CMD_INFO = {
-    air:    { t:'AIRSTRIKE', k:'R', d:'A Viking bombs every enemy cluster and drops an ammo crate by the bunker — your reload once the magazine is empty.' },
+    air:    { t:'AIRSTRIKE', k:'R', d:'A Viking fires a missile at every enemy cluster and drops an ammo crate by the bunker — your reload once the magazine is empty.' },
     stim:   { t:'STIMPACK', k:'T', d:'Unlocked by six Marines in the bunker (fewer with Super Stimpack\'s tiers: 4, 2, 1). For 11 s the Marines and Marauders fire 50% faster (Marines: an extra round every other volley, no extra ammo). Costs 10 HP per Marine and 20 per Marauder, paid by the bunker — free and repairing with the Super Stimpack research, which also lets you right-click it for autocast: it stims whenever you fire (a gold light runs round the button).' },
     nuke:   { t:'NUKE', k:'N', d:'Tactical nuke on the centre of the swarm after a 2-second warning. Wipes out everything in a huge radius.' },
     roster: { t:'BUNKER ROSTER', k:'B', d:'Hire Marines, Marauders and Ghosts (6 slots) and research their upgrades. In Endless its armory sells more HP, damage, ammo and shorter strike / nuke cooldowns. The game pauses while it is open.' },
@@ -3312,6 +3320,14 @@ const G = (() => {
   // Projects each enemy's world position to screen space and draws
   // a compact HP bar above their head. Zergling: small, Roach: wider.
   const _projV = new THREE.Vector3(); // reused projection temp
+  const barY = e => e.type==='r' ? 1.4 : 1.1;   // its HP bar's height over its feet (the hit numbers ride on it)
+  // A damage number over its enemy's HP bar, lifted clear of it (a Roach's: of its HP figure too);
+  // it follows that enemy while it lives, and drawCH stacks it in a row
+  function hitText(e,txt,color){
+    if(floatTexts.length>=60) floatTexts.shift(); // cap: late waves produce ~60 numbers/s, each two text draws
+    const p=e.mesh.position;
+    floatTexts.push({x:p.x,y:p.y+barY(e),z:p.z,txt,life:900,maxLife:900,color,lift:e.type==='r'?9:2,on:e});
+  }
   function drawEnemyHPBars() {
     if(phase!=='playing') return;
     const ctx = chCtx;
@@ -3334,7 +3350,7 @@ const G = (() => {
 
       // Project world pos → screen (reused temp vector)
       const worldPos = _projV.copy(e.mesh.position);
-      worldPos.y += e.type==='r' ? 1.4 : 1.1; // above head
+      worldPos.y += barY(e); // above head
       worldPos.project(camera);
 
       // Skip if behind camera or off screen
@@ -3351,9 +3367,15 @@ const G = (() => {
       // Only draw if not at full HP (less visual clutter)
       if(pct >= 1.0) return;
 
-      // Background track
+      // Attribute badge: small tag right of the bar showing Light/Armored
+      const tag = (e.attrs||[]).includes('armored') ? 'ARM'
+                : (e.attrs||[]).includes('light')   ? 'LGT' : '';
+      const tx = bx + barW + 3;
+      ctx.font = 'bold 6px "Courier New"';
+
+      // Background track, under the badge too (bare, it was lost on the grass and the Zerg)
       ctx.fillStyle = 'rgba(0,0,0,0.65)';
-      ctx.fillRect(bx-1, by-1, barW+2, barH+2);
+      ctx.fillRect(bx-1, by-1, tag ? tx + ctx.measureText(tag).width + 3 - bx : barW+2, barH+2);
 
       // HP fill — green→yellow→red
       const col = pct > 0.5 ? `rgb(${Math.round(255*(1-pct)*2)},200,0)`
@@ -3366,15 +3388,11 @@ const G = (() => {
       ctx.lineWidth = 0.5;
       ctx.strokeRect(bx, by, barW, barH);
 
-      // Attribute badge: small tag above bar showing Light/Armored
-      const tag = (e.attrs||[]).includes('armored') ? 'ARM'
-                : (e.attrs||[]).includes('light')   ? 'LGT' : '';
       if(tag){
-        ctx.font = 'bold 6px "Courier New"';
         ctx.textAlign = 'left';
         const tagCol = tag==='ARM' ? 'rgba(255,150,50,0.85)' : 'rgba(100,220,255,0.85)';
         ctx.fillStyle = tagCol;
-        ctx.fillText(tag, bx + barW + 2, by + barH - 1);
+        ctx.fillText(tag, tx, by + barH - 1);
       }
       // Numeric HP for Roaches
       if((e.attrs||[]).includes('armored')){
@@ -3505,21 +3523,37 @@ const G = (() => {
     chCtx.clearRect(0,0,_logW,gameH);
     syncSensor();
     drawEnemyHPBars();
-    // Floating damage numbers
+    // Floating damage numbers. A new one takes the lowest of FT_ROWS rows over its spot that no text
+    // already up covers; none free (a burst on one Zergling), the row whose texts fade first, and they
+    // go at once: the hits stack up instead of running together
     if(floatTexts.length>0){
       chCtx.textAlign='center'; chCtx.textBaseline='middle';
       chCtx.font='15px "Share Tech Mono", Consolas, monospace';
-      const W2=W/2, H2=gameH/2;
-      floatTexts.forEach(f=>{
+      const W2=W/2, H2=gameH/2, FT_ROWS=2, m=chCtx.measureText('0');   // more rows made a tall column over every Zerg under fire
+      const h=m.fontBoundingBoxAscent+m.fontBoundingBoxDescent||15, step=.8*h, placed=[];   // digits fill ~0.8 of the line
+      floatTexts.forEach(f=>{   // oldest first: a new one sees all the others placed
         const v=_projV.set(f.x,f.y,f.z).project(camera);
         const sx=(v.x+1)*W2, sy=(-v.y+1)*H2;
         if(sx<-20||sx>W+20||sy<-20||sy>gameH+20)return;
+        const w=chCtx.measureText(f.txt).width, cy0=sy-(f.lift||0)-h/2;   // row 0's centre
+        if(f.row===undefined){   // its first frame: the row is kept from now on
+          const covers=(q,k)=>Math.abs(q.cx-sx)<(q.w+w)/2+2&&Math.abs(q.cy-(cy0-k*step))<step;
+          let best=Infinity;
+          for(let k=0;k<FT_ROWS;k++){
+            let taken=0;
+            for(const q of placed) if(covers(q,k)) taken=Math.max(taken,q.f.life);
+            if(taken<best){ best=taken; f.row=k; }
+          }
+          for(const q of placed) if(covers(q,f.row)) q.f.life=Math.min(q.f.life,100);
+        }
+        const cy=cy0-f.row*step;
+        placed.push({cx:sx,cy,w,f});
         const t=f.life/f.maxLife;
         chCtx.globalAlpha=Math.min(1,t*2);
         chCtx.strokeStyle='rgba(0,0,0,0.7)'; chCtx.lineWidth=3;
-        chCtx.strokeText(f.txt,sx,sy);
+        chCtx.strokeText(f.txt,sx,cy);
         chCtx.fillStyle=f.color;
-        chCtx.fillText(f.txt,sx,sy);
+        chCtx.fillText(f.txt,sx,cy);
       });
       chCtx.globalAlpha=1; chCtx.textAlign='left'; chCtx.textBaseline='alphabetic';
     }
@@ -3872,10 +3906,7 @@ const G = (() => {
           const actualDmg = baseDmg*def.dmgMult*bonus;
           e.hp-=actualDmg;
           e.flash=0.08; SFX.play('hit');                 // white hit flash (instance colour) + tick
-          if(floatTexts.length>=60) floatTexts.shift(); // cap: late waves produce ~60 numbers/s, each two text draws
-          floatTexts.push({x:e.mesh.position.x,y:e.mesh.position.y+1.2,z:e.mesh.position.z,
-            txt:Math.round(actualDmg).toString(),life:900,maxLife:900,
-            color:bonus>1?'#ff6600':'#ffffff'});
+          hitText(e,Math.round(actualDmg).toString(),bonus>1?'#ff6600':'#ffffff');
           if(b.unitType==='marauder') marauderBlast(b.mesh.position,e,baseDmg,_enemyList);   // the rest of the blast, and the slow
           const vl=Math.hypot(b.vx,b.vz)||1;
           bloodFx(e,b.mesh.position,b.vx/vl,b.vz/vl);
@@ -3927,7 +3958,10 @@ const G = (() => {
     syncNukeBlasts(dt);
     tutorialTick();
     // Update floating damage numbers
-    floatTexts.forEach(f=>{ f.life-=dt*1000; f.y+=dt*0.8; });
+    floatTexts.forEach(f=>{
+      f.life-=dt*1000; f.y+=dt*0.8;
+      if(f.on&&!f.on.dead){ f.x=f.on.mesh.position.x; f.z=f.on.mesh.position.z; }   // a running Zergling would pass under it
+    });
     floatTexts=floatTexts.filter(f=>f.life>0);
     syncEnemyPools();
     drawCH();
@@ -4031,7 +4065,7 @@ const G = (() => {
   // The tour's own words for each button: shorter than the hover tooltips (CMD_INFO),
   // which name things a new player has not met yet
   const TOUR_TEXT = {
-    air:    'When the magazine is empty: a Viking bombs every Zerg group and drops an ammo crate by the bunker.',
+    air:    'When the magazine is empty: a Viking fires a missile at every Zerg group and drops an ammo crate by the bunker.',
     nuke:   `From wave ${CFG.nuke_wave} (the button shows W${CFG.nuke_wave} until then): a nuke on the middle of the swarm wipes out everything in a huge radius. It recharges after each launch.`,
     roster: 'Hire Marines, Marauders and Ghosts into the bunker\'s 6 slots and research their upgrades. Marines and Ghosts fire with each volley, Marauders on their own. The game pauses while it is open.',
     view:   'Back to the overview. The mouse wheel zooms in on the bunker; INSERT / DELETE rotate the view.',
@@ -4048,7 +4082,7 @@ const G = (() => {
   const TUT_STEPS = [
     { id:'tour', when:()=>true, tour:true },
     { id:'strike', when:()=>wavePhase==='combat'&&ammo<=0&&airCD<=0&&!vikingActive, focus:['#cmd-air'], keys:['r'], title:'OUT OF AMMO',
-      text:'Call an airstrike: press <kbd>R</kbd> or click STRIKE. A Viking bombs every Zerg group and drops an ammo crate by the bunker — that crate is also this wave\'s resupply.' },
+      text:'Call an airstrike: press <kbd>R</kbd> or click STRIKE. A Viking fires a missile at every Zerg group and drops an ammo crate by the bunker — that crate is also this wave\'s resupply.' },
     { id:'cleared', when:()=>wavePhase==='cleared', focus:['#res-min','#res-gas'], title:'WAVE CLEARED',
       text:'Kills and cleared waves pay minerals and vespene gas. A Marine runs out for the wave\'s supply crate (unless the Viking\'s crate already came in), the magazine is refilled, then the next wave comes. The game autosaves after every wave.' },
     { id:'upgrade', after:'cleared', when:_canUpgrade, focus:['#cmd-dmg','#cmd-ammo'], keys:['1','2','3','4'], title:'UPGRADES',
@@ -4165,7 +4199,8 @@ const G = (() => {
     const g = $('gw').getBoundingClientRect(), { l, t, r, b } = q;
     Object.assign(ring.style, { display: 'block', left: (l - g.left - 4) + 'px', top: (t - g.top - 4) + 'px', width: (r - l + 8) + 'px', height: (b - t + 8) + 'px' });
     const w = box.offsetWidth, x = Math.max(12, Math.min(g.width - w - 12, (l + r) / 2 - g.left - w / 2));
-    Object.assign(box.style, { left: x + 'px', bottom: (g.bottom - t + 14) + 'px', transform: 'none' });
+    const c = $('con-right').getBoundingClientRect(), top = l >= c.left && t >= c.top && r <= c.right && b <= c.bottom ? c.top : t;   // on the command card: above the whole card (above a button it lay over the card's header)
+    Object.assign(box.style, { left: x + 'px', bottom: (g.bottom - top + 14) + 'px', transform: 'none' });
   }
   addEventListener('resize', () => { if (_tutStep) _tutPlace(); });
   // A press anywhere outside the box (and the menu) closes a hint first — the
