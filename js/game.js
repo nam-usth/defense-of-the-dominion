@@ -305,7 +305,9 @@ const G = (() => {
   let bunkerModelRoot = null;
   let bunkerGroup = null;   // scene group holding the bunker (procedural, then the loaded model)
   let airCD=0, nukeCD=0;
-  let floatTexts = []; // {x,y,z,txt,life,maxLife,color[,lift (px over x,y,z), on (its enemy)]}; row: set by drawCH
+  let floatTexts = []; // {x,y,z,txt,life,maxLife,color[,lift (px over x,y,z), on (its enemy), row (its place in that enemy's queue: hitText)]}
+  let dmgNumbersOn = true;   // hits and MISSes over the Zerg: Menu → Settings (stored)
+  try { dmgNumbersOn = localStorage.getItem('dotd_dmg_numbers') !== '0'; } catch (e) {}
   // ── Bunker roster state ────────────────────────────────────────────────────
   // roster: array of unit type strings filling 6 slots
   // Marine=1slot, Marauder=2slots, Ghost=2slots
@@ -635,6 +637,7 @@ const G = (() => {
   // Right-click STIM, as SC2's autocast: with Super Stimpack (free) it stims whenever the bunker fires
   function toggleStimAuto() {
     if (!superStimUnlocked) { setStatus('Autocast needs the Super Stimpack research'); SFX.play('deny'); return; }
+    if (_tutStep && _tutStep.id === 'autostim') tutDismiss();   // the hint that asks for it
     stimAuto = !stimAuto;
     setStatus(stimAuto ? 'Stimpack autocast on — it stims as you fire' : 'Stimpack autocast off');
     updateHUD();
@@ -3450,12 +3453,24 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   // a compact HP bar above their head. Zergling: small, Roach: wider.
   const _projV = new THREE.Vector3(); // reused projection temp
   const barY = e => e.type==='r' ? 1.4 : 1.1;   // its HP bar's height over its feet (the hit numbers ride on it)
-  // A damage number over its enemy's HP bar, lifted clear of it (a Roach's: of its HP figure too);
-  // it follows that enemy while it lives, and drawCH stacks it in a row
+  // A queue over each enemy: a new hit (or MISS) comes in just over its HP bar (a Roach's: over its HP
+  // figure too) and moves the older ones up a row; the one pushed out fades in the row above in FT_OUT ms,
+  // and goes at the next push. It follows the enemy while it lives
+  const FT_ROWS = 2, FT_OUT = 250;
   function hitText(e,txt,color){
+    if(!dmgNumbersOn) return;   // switched off: the HP bars tell the damage
+    for(const f of floatTexts){
+      if(f.on!==e) continue;   // another enemy's
+      if(++f.row>FT_ROWS) f.life=0;
+      else if(f.row===FT_ROWS&&f.life>FT_OUT){ f.life=FT_OUT; f.maxLife=2*FT_OUT; }   // from full to nothing: the alpha is life / maxLife * 2
+    }
     if(floatTexts.length>=60) floatTexts.shift(); // cap: late waves produce ~60 numbers/s, each two text draws
     const p=e.mesh.position;
-    floatTexts.push({x:p.x,y:p.y+barY(e),z:p.z,txt,life:900,maxLife:900,color,lift:e.type==='r'?9:2,on:e});
+    floatTexts.push({x:p.x,y:p.y+barY(e),z:p.z,txt,life:900,maxLife:900,color,lift:e.type==='r'?9:2,on:e,row:0});
+  }
+  function setDmgNumbers(on) {   // Menu → Settings
+    dmgNumbersOn = !!on; _store.set('dotd_dmg_numbers', dmgNumbersOn ? '1' : '0');
+    if (!dmgNumbersOn) floatTexts = floatTexts.filter(f => !f.on);   // the REINFORCED banner is not a damage number
   }
   function drawEnemyHPBars() {
     if(phase!=='playing') return;
@@ -3652,31 +3667,16 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     chCtx.clearRect(0,0,_logW,gameH);
     syncSensor();
     drawEnemyHPBars();
-    // Floating damage numbers. A new one takes the lowest of FT_ROWS rows over its spot that no text
-    // already up covers; none free (a burst on one Zergling), the row whose texts fade first, and they
-    // go at once: the hits stack up instead of running together
-    if(floatTexts.length>0){
+    if(floatTexts.length>0){   // floating damage numbers, queued over each enemy (hitText)
       chCtx.textAlign='center'; chCtx.textBaseline='middle';
       chCtx.font='15px "Share Tech Mono", Consolas, monospace';
-      const W2=W/2, H2=gameH/2, FT_ROWS=2, m=chCtx.measureText('0');   // more rows made a tall column over every Zerg under fire
-      const h=m.fontBoundingBoxAscent+m.fontBoundingBoxDescent||15, step=.8*h, placed=[];   // digits fill ~0.8 of the line
-      floatTexts.forEach(f=>{   // oldest first: a new one sees all the others placed
+      const W2=W/2, H2=gameH/2, m=chCtx.measureText('0');
+      const h=m.fontBoundingBoxAscent+m.fontBoundingBoxDescent||15, step=.8*h;   // a row: digits fill ~0.8 of the line
+      floatTexts.forEach(f=>{
         const v=_projV.set(f.x,f.y,f.z).project(camera);
         const sx=(v.x+1)*W2, sy=(-v.y+1)*H2;
         if(sx<-20||sx>W+20||sy<-20||sy>gameH+20)return;
-        const w=chCtx.measureText(f.txt).width, cy0=sy-(f.lift||0)-h/2;   // row 0's centre
-        if(f.row===undefined){   // its first frame: the row is kept from now on
-          const covers=(q,k)=>Math.abs(q.cx-sx)<(q.w+w)/2+2&&Math.abs(q.cy-(cy0-k*step))<step;
-          let best=Infinity;
-          for(let k=0;k<FT_ROWS;k++){
-            let taken=0;
-            for(const q of placed) if(covers(q,k)) taken=Math.max(taken,q.f.life);
-            if(taken<best){ best=taken; f.row=k; }
-          }
-          for(const q of placed) if(covers(q,f.row)) q.f.life=Math.min(q.f.life,100);
-        }
-        const cy=cy0-f.row*step;
-        placed.push({cx:sx,cy,w,f});
+        const cy=sy-(f.lift||0)-h/2-(f.row||0)*step;
         const t=f.life/f.maxLife;
         chCtx.globalAlpha=Math.min(1,t*2);
         chCtx.strokeStyle='rgba(0,0,0,0.7)'; chCtx.lineWidth=3;
@@ -4614,6 +4614,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       text:'Below half HP the bunker burns — if it falls, the game is lost. Armor reduces the damage; bunker hull level 3 mounts a Shrike turret and repairs itself.' },
     { id:'stim', when:()=>wavePhase==='combat'&&stimUnlocked()&&stimT<=0, focus:['#cmd-stim'], keys:['t'], title:'STIMPACK',
       text:`Your squad can stim: press <kbd>T</kbd> or click STIM. For ${CFG.stim_duration} s the Marines and Marauders fire 50% faster, for ${CFG.stim_hp} HP per Marine and ${CFG.stim_hp_marauder} per Marauder from the bunker (free with the Super Stimpack research).` },
+    { id:'autostim', after:'stim', when:()=>wavePhase==='combat'&&superStimUnlocked&&stimUnlocked()&&!stimAuto, focus:['#cmd-stim'], title:'STIMPACK AUTOCAST',   // a right-click on STIM closes it (toggleStimAuto)
+      text:'Super Stimpack makes the stim free, so it can run itself: <b>right-click</b> STIM for autocast, as in StarCraft II. It stims whenever you fire, and a gold light runs round the button. Right-click it again to turn it off.' },
   ];
   const _tut = (() => {
     try { const d = JSON.parse(_store.get(TUT_KEY) || 'null'); if (d && Array.isArray(d.seen)) return { on: d.on !== false, seen: new Set(d.seen.filter(id => TUT_STEPS.some(s => s.id === id))) }; } catch (e) {}   // ids of removed hints drop out
@@ -5548,6 +5550,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     const cb = document.getElementById('menu-dn-cb');
     if (cb) cb.checked = dnEnabled;
     $('menu-wx-cb').checked = wxOn;
+    $('menu-dmg-cb').checked = dmgNumbersOn;
   }
   function _syncSoundUI() {
     const cb = document.getElementById('menu-mute-cb'), vol = document.getElementById('menu-vol'), val = document.getElementById('menu-vol-val');
@@ -5685,5 +5688,5 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   showTitle();
   return {start, buy, buyArmory, skipAssetWait, doAirstrike, doNuke, doStim, toggleStimAuto, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
           saveGame, loadGame, toggleDayNight, setVolume, setMuted, setMusic, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode,
-          showHowTo, tutDismiss, tutNext, tutBack, tutSkip, startTour, setTutorial, replayTutorial, menuTab, setWeather, showAchievements, achTab};
+          showHowTo, tutDismiss, tutNext, tutBack, tutSkip, startTour, setTutorial, replayTutorial, menuTab, setWeather, showAchievements, achTab, setDmgNumbers};
 })();
