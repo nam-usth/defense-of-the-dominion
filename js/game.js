@@ -823,9 +823,9 @@ const G = (() => {
       if (!live(e)) continue;
       e.mesh.updateMatrix();
       const i = e.pool.n++, o = i * 16, c = i * 3;
-      // colour: corpse fades dark · hit flash bright · concussive slow icy blue
+      // colour: corpse fades dark (a nuke's burns) · hit flash bright · concussive slow icy blue
       let r = 1, g = 1, b = 1;
-      if (e.corpse) r = g = b = Math.max(0.25, 1 - e.t * 1.4);
+      if (e.corpse) { if (e.col) [r, g, b] = e.col; else r = g = b = Math.max(0.25, 1 - e.t * 1.4); }
       else if (e.flash > 0) r = g = b = 2.6;
       else if (slowedEnemies.has(e.mesh.uuid)) { r = 0.6; g = 0.8; b = 1.5; }
       for (const im of e.pool.ims) {
@@ -839,17 +839,68 @@ const G = (() => {
     }
   }
 
-  // Dying enemies: pop, roll onto their side, then sink into the ground (~1.2 s)
+  // Dying enemies: pop, roll onto their side, then sink into the ground (~1.2 s). A nuke's victims
+  // catch fire in the flash and run on, slowing and staggering, until its front reaches them, then
+  // fly outward burning and tumbling, bounce once, smoulder out and sink (_burnCorpse).
+  const CORPSE_CAP = 160;
+  const NUKE_FIRE_BODIES = { HIGH: 40, LOW: 20 };   // the flames on all the bodies share this budget (bodies at full rate)
   let corpses = [];
   function updateCorpses(dt) {
+    // (a nuke over a big wave must not flood the particles)
+    let burning = 0;
+    for (const c of corpses) if (c.flung && c.t < c.delay + 2) burning++;   // (before it is thrown: when it should be)
+    const share = Math.min(1, NUKE_FIRE_BODIES[gfxQuality] / Math.max(1, burning));
     corpses = corpses.filter(c => {
       c.t += dt;
+      if (c.flung) return _burnCorpse(c, dt, share);
       const m = c.mesh;
       if (c.t < 0.12) m.position.y = c.t / 0.12 * 0.18;                                   // pop
       else m.position.y = 0.18 - Math.min(1, (c.t - 0.12) / 1.0) ** 2 * 0.9;               // sink
       m.rotation.z = c.spin * Math.min(1, c.t / 0.3) * Math.PI * 0.5;                       // roll over
       return c.t < 1.2;
     });
+  }
+  function _burnCorpse(c, dt, share) {
+    const m = c.mesh, p = m.position, v = c.vel, R = Math.random;
+    if (!c.thrown) {   // the front reaches it where it has run to: thrown outward from there
+      const ox = p.x - c.zero[0], oz = p.z - c.zero[1], L = Math.hypot(ox, oz);
+      if (nk.frontR(c.t) >= L) {
+        c.thrown = true; c.delay = c.t;
+        const h = Math.hypot(v[0], v[2]);
+        if (L > 1e-3) { v[0] = ox / L * h; v[2] = oz / L * h; }
+      }
+    }
+    const s = c.thrown ? c.t - c.delay : -1;
+    // the flash's white-out, then orange-hot, charring black within about a second
+    const ch = _sstep(0, 1.2, c.t), wh = 1.2 * Math.exp(-c.t / .12);
+    c.col[0] = 1 - .87 * ch + wh; c.col[1] = .62 - .51 * ch + wh; c.col[2] = .38 - .28 * ch + wh;
+    if (s < 0) {   // still on its feet: runs on, slowing as it burns, staggering (no further than the hull)
+      const k = Math.exp(-c.t / .35);
+      if (c.run) {
+        let dx = c.run[0] * k * dt, dz = c.run[1] * k * dt;
+        const r = Math.hypot(p.x, p.z), L = Math.hypot(dx, dz);
+        if (r - L < c.stopR) { const f = Math.max(0, r - c.stopR) / Math.max(L, 1e-6); dx *= f; dz *= f; }
+        p.x += dx; p.z += dz;
+        if (c.walk && dx * dx + dz * dz > 0) walkStep(c, Math.hypot(dx, dz));
+      }
+      m.rotation.z = .14 * (1 - k) * Math.sin(c.t * 15 + 3 * c.spin);
+    } else if (s < 1.6) {   // flying, tumbling; it bounces once
+      v[1] -= 20 * dt;
+      p.x += v[0] * dt; p.y += v[1] * dt; p.z += v[2] * dt;
+      if (p.y < 0) { p.y = 0; v[0] *= .5; v[1] *= -.25; v[2] *= .5; c.spin *= .5; }
+      m.rotation.z += c.spin * dt;
+    } else p.y = Math.min(p.y, 0) - .8 * dt;   // smouldering, it sinks
+    // flames on the body until about a second after it lands, then smoke as it smoulders out (the
+    // flames blended over: added, orange turns lime on the grass and reads as sparks; the smoke greys
+    // as it spreads, lit by the scene: left dark, it stains the bright grass in dots; grey, it shows in the night)
+    const fire = 1 - _sstep(.9, 1.9, s), smoke = 1 - _sstep(1.4, 2.4, s), tr = s >= 0 && s < 1.6 ? .25 : 0;   // (trailing as it flies)
+    for (c.fireAcc += dt * 16 * fire * share; c.fireAcc >= 1; c.fireAcc--)
+      emitParticle(_smoke, p.x + (R() - .5) * .5, p.y + .2 + R() * .25, p.z + (R() - .5) * .5, v[0] * 2 * tr + (R() - .5) * .4, v[1] * 2 * tr + .8 + R() * .8, v[2] * 2 * tr + (R() - .5) * .4,
+        .25 + R() * .2, (.45 + .25 * R()) * (.6 + .4 * fire), .1, .85, 0xffcc66, 0xe02c04, -1.5, 1, 0);
+    for (c.smokeAcc += dt * 4 * smoke * share; c.smokeAcc >= 1; c.smokeAcc--)
+      emitParticle(_smoke, p.x + (R() - .5) * .3, p.y + .45, p.z + (R() - .5) * .3, v[0] * tr * .5 + (R() - .5) * .3, .5 + R() * .4, v[2] * tr * .5 + (R() - .5) * .3,
+        1.4 + R() * .8, .35, 1.6, .26, 0x24201c, _tmpCol.setHex(0x8a847c).multiplyScalar(1 - .75 * _dnLitF).getHex(), -.2, .4, 1);
+    return s < 2.4 && camera.position.distanceTo(p) > 1.5;   // gone once sunk (or as it comes at the close-up camera's lens)
   }
 
   // ── Entity factories ─────────────────────────────────────────────────────
@@ -1974,6 +2025,44 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     }
   }
 
+  // ── Nuke timeline (the desktop's nk::, nuke_fx.h) ──────────────────────────
+  // Closed-form curves of a blast t s old (game time), so every part and every frame reads the
+  // same blast: the shock front (its ring, the cracks it opens, when it throws a victim, when its
+  // boom reaches the bunker), the base surge, the fireball and the mushroom's cap. StarCraft II's
+  // own keys (NB) time the rest, read at seqMs(t).
+  const nk = (() => {
+    const S_MAX = 30, S_TAU = .9;   // the front: 33 u/s at the blast, 15 u/s as it passes the kill radius (16 at 0.69 s)
+    const frontR = t => t <= 0 ? 0 : S_MAX * (1 - Math.exp(-t / S_TAU));
+    // the fireball: a white-hot hemisphere (r 2.6 at 0.1 s) that lifts off, cools and flattens
+    const fireR = t => 3.3 * Math.sqrt(1 - Math.exp(-t / .16)) + .12 * t;
+    const fireY = t => .42 * fireR(t) + 4.6 * (1 - Math.exp(-Math.max(0, t - .3) / 1.2));
+    return {
+      frontR,
+      frontT: r => -S_TAU * Math.log(1 - Math.min(r, S_MAX - .01) / S_MAX),
+      // the base surge: rolls out just behind the front, past the kill radius at ~1.3 s, stalls near 22
+      surgeR: t => Math.max(0, Math.min(frontR(t) - .6, 1.5 + 21 * (1 - Math.exp(-t / 1.2)))),
+      surgeH: t => (.5 + 3.1 * (1 - Math.exp(-t / .7))) * (1 - .5 * _sstep(2, 6, t)),
+      fireR,
+      heat: t => Math.exp(-t / 2.4),
+      // the mushroom's cap (its sprites and the fire tori): height, ring radius, tube
+      capH: t => fireY(t) + .25 * Math.max(0, t - 2),
+      capR: t => .8 * fireR(t) * (1 + .22 * _sstep(.6, 2.6, t)) + .1 * t,
+      capTube: t => .42 * fireR(t),
+      // SC2's nuke (Nuke.m3, its Death sequence) keys its parts in ms: a blast t s old reads them at
+      // seqMs(t), so its flash star opens as ours goes off and its detonation frame follows 0.24 s later
+      seqMs: t => t * 1000 + 130,
+      // the flash: up in 25 ms, mostly gone by 0.3 s; then the eyes are dazzled (the desktop's exposure x0.8 at
+      // 0.45-0.9 s, back to 1 by 3 s): how much the field dims
+      flashK: t => t < 0 ? 0 : t < .025 ? t / .025 : Math.exp(-(t - .025) / .09),
+      dazzle: t => .2 * _sstep(.15, .45, t) * (1 - _sstep(.9, 3, t)),
+      FRONT_END: 2,    // the front ring has faded out past the screen
+      FIRE_OUT0: 3.6, FIRE_OUT1: 5.4,   // the fire burns out (SC2's cap by 4.7 s, its top by 5.5 s)
+      SURGE_END: 6.5,  // the surge has settled; the cloud's last smoke with it
+      HAZE_END: 12.3,  // the air over the crater has stopped shimmering
+      SCAR_END: 16,    // the scar has faded
+    };
+  })();
+
   // ── Nuke: 1 warhead, massive radius, laser designator then detonation ──────
   // SC2 lore: Terran nuclear missile. Bunker survives (hardened structure).
   // Enemies within blast radius are wiped. ~2s warning laser before impact.
@@ -1981,7 +2070,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
 
   // force = cheat launch: skips the wave unlock, cooldown and in-flight checks
   let _nukeTargetTex = null;   // SC2 nuke reticle for the target marker, loaded at boot
-  ModelLoader.texture(DECALS.nukeTarget).then(t => { _nukeTargetTex = t; })
+  ModelLoader.texture(DECALS.nukeTarget).then(t => { _nukeTargetTex = t; warmNukeShaders(); })
     .catch(() => console.warn('Nuke target texture failed to load — using a plain ring.'));
   function doNuke(force){
     if(!force){
@@ -2014,6 +2103,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
 
     setStatus('NUCLEAR LAUNCH DETECTED — 2 seconds to impact!');
     SFX.play('nukeWarn');
+    prepNukeHaze();   // (the heat haze's targets, ready before the blast)
 
     // The dive path leans NUKE_SLANT toward the far side of the target as the camera
     // sees it, so the warhead and its streak come in from the top of the screen. (A
@@ -2089,6 +2179,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     let warnT = 0, detonated = false;
     const WARN_DUR = 2.0; // seconds
     const NUKE_RADIUS = 16; // kills everything within this range
+    const NUKE_VAPOR_R = 3.5; // this close to ground zero they vanish in the fireball; the rest are flung
     // (one ticker to the end of the trail's fade: a ticker added from inside a ticker would be dropped)
     addTicker(dt => {
       warnT += dt;
@@ -2142,31 +2233,35 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     // ── Phase 3: DETONATION (2.0s) ──────────────────────────────────────
     function detonate() {
       SFX.play('nukeBoom');
-      // The shock front (33 u/s at ground zero, slowing to 15 past the kill radius: the desktop's
-      // nk::frontT) reaches the bunker: a crack and a deep thud, then a long rumble
-      const toBunker = Math.min(Math.hypot(tx, tz), 29.99);
-      after(-0.9 * Math.log(1 - toBunker / 30), () => { SFX.play('nukeShock'); after(0.3, () => SFX.play('nukeRumble')); });
-      // The blast, timed from SC2's (flash star, glows, shock ring and bubble, dust ring, fire
-      // ring, stem, cap, smoke rings, scorch), and its light (at night it lights the field)
-      nukeBlasts.push({x: tx, z: tz, t: 0, parts: _nbMake(tx, tz)});
+      // The shock front reaches the bunker: a crack and a deep thud, then a long rumble
+      after(nk.frontT(Math.hypot(tx, tz)), () => { SFX.play('nukeShock'); after(0.3, () => SFX.play('nukeRumble')); });
+      // The blast, on nk:: and timed from SC2's (the flash, the shock front under its dome, the fireball
+      // rolling into the mushroom cloud, the base surge, the burn ring, the flash star, the glow cards,
+      // the heat haze), the scar it leaves, and its light (at night it lights the field)
+      const seed = Math.random() * 50;
+      nukeBlasts.push({x: tx, z: tz, t: 0, parts: _nbMake(tx, tz, seed)});
+      addNukeScar(tx, tz, seed);
       _nukeLightT = 0;
       _nukeLight.position.set(tx, 2.3, tz);
 
-      // Screen flash — strong white then orange
-      flash('nuke-flash');
-
       // (no sparks or debris flung across the field: hard to read; the blast carries it)
 
-      // Kill ALL enemies in radius — bunker excluded (hardened); burnt: no blood
+      // Kill ALL enemies in radius — bunker excluded (hardened); burnt: no blood. Vaporised near
+      // ground zero; the rest catch fire in the flash and run on until the front flings them out
       let killed = 0;
+      _killBatch = true;
       allEnemies().forEach(e => {
         if(e.dead) return;
-        const dx=e.mesh.position.x-tx, dz=e.mesh.position.z-tz;
-        if(Math.sqrt(dx*dx+dz*dz) <= NUKE_RADIUS){
-          killEnemy(e, true, false);
-          killed++;
-        }
+        const dx=e.mesh.position.x-tx, dz=e.mesh.position.z-tz, d=Math.sqrt(dx*dx+dz*dz);
+        if(d > NUKE_RADIUS) return;
+        killed++;
+        if(d < NUKE_VAPOR_R){ e.mesh.visible = false; killEnemy(e, true, false); return; }   // nothing left
+        e.mesh.visible = true;   // (out in the night's dark too: the flash shows them, then the blast lights the field)
+        const k = 1 - d / 24, j = .8 + .4 * Math.random(), h = (3 + 10 * k) * j;
+        killEnemy(e, true, false, { zero: [tx, tz], delay: nk.frontT(d), vel: [dx / d * h, 3 + 5 * k * Math.random(), dz / d * h],
+          spin: (Math.random() < .5 ? -1 : 1) * (6 + 6 * Math.random()) });
       });
+      _killBatch = false; updateHUD();
       achMultiKill('nuke', killed);
 
       setStatus(`Nuclear detonation — ${killed} unit${killed!==1?'s':''} annihilated. Bunker intact.`);
@@ -2190,47 +2285,50 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   // SC2's (NB.light): dark until the detonation frame, full in ~0.3 s, held to ~2 s, gone by
   // 4 s: a warm white point light at the blast, and at night the dark lifts toward
   // NUKE_LIGHT_F (fog far ≈ 40: past the spawn ring) — _dnEffFactor.
-  const NUKE_LIGHT_DUR = 4, NUKE_LIGHT_F = 0.32;
+  const NUKE_LIGHT_DUR = 4, NUKE_LIGHT_F = 0.32, NUKE_FLASH_LIGHT = 10;
   let _nukeLightT = -1;          // seconds since the blast (game time); -1 = none
-  function _nukeLightK() { return _nukeLightT < 0 ? 0 : _nbKey(NB.light, _nukeLightT * 1000 + NB_LEAD); }
+  function _nukeLightK() { return _nukeLightT < 0 ? 0 : _nbKey(NB.light, nk.seqMs(_nukeLightT)); }
   function updateNukeLight(dt) {   // live frames only, before updateDayNight (the lights follow it)
     if (_nukeLightT >= 0 && (_nukeLightT += dt) >= NUKE_LIGHT_DUR) _nukeLightT = -1;
-    if (_nukeLight) _nukeLight.intensity = _nukeLightK() * (1 + 3 * _dnFactor);
+    if (_nukeLight) _nukeLight.intensity = _nukeLightK() * (1 + 3 * _dnFactor) + NUKE_FLASH_LIGHT * nk.flashK(_nukeLightT);   // (and it surges in the flash)
   }
 
   // ── Nuke blast ───────────────────────────────────────────────────────────
-  // Timed from StarCraft II's own nuke (Nuke.m3, its Death sequence), built light: soft glow
-  // cards, rings of fire cloud with scrolling textures, a lumpy dust ring, sprite smoke, a
-  // scorch mark with cracks glowing red. Each part follows SC2's key tracks (ms -> value);
-  // a blast at t s reads them at t * 1000 + NB_LEAD ms, so the flash star is already opening
-  // at the detonation frame. Sizes are SC2's units (ours match: the bunker is 3 wide), the
-  // rings along the ground x NB_RING. The textures are drawn here (no art for them).
-  const NB_LEAD = 130, NB_END = 13000, NB_RING = 1.25;
+  // StarCraft II's, rebuilt on nk:: and timed from SC2's own nuke (Nuke.m3, its Death sequence):
+  // the shock front under its dome, the burn ring, the fire tori and the scar (its own: nukeScars)
+  // are drawn by their shaders; the fireball, the mushroom cloud, the base surge and the glow
+  // cards are soft sprites (_nbCloud). Each SC2 part follows SC2's key tracks (ms -> value);
+  // a blast at t s reads them at nk.seqMs(t) ms, so the flash star is already opening
+  // at the detonation frame. Sizes are SC2's units (ours match: the bunker is 3 wide). The
+  // textures are drawn here (no art for them).
+  const NB_END = 13000;
   let nukeBlasts = [];   // {x, z, t: s since the blast, parts}
   const NB = {
     flashSide:  [[0, 1.15], [200, 2.2], [300, 6.6], [400, 12.3], [500, 16.7], [566, 17.8]],
     flashLight: [[133, 1], [366, .8], [566, 0]],
-    glowSide:   [[0, 1.25], [333, 1.4], [433, 2.8], [700, 15.4], [933, 22.5], [1166, 22.1], [2000, 15.8], [3166, 2.7], [3233, .8]],
-    glow2Side:  [[0, .9], [500, 3.7], [766, 13.1], [1066, 15.8], [1800, 12.6], [2400, 7.9], [3100, 2.4], [3233, .57]],
-    glowLight:  [[333, 0], [633, 1], [5033, 0]],
-    shockDiam:  [[666, 2.3], [1000, 5.3], [1700, 17.1], [1966, 18.9]],
-    shockLight: [[300, 0], [700, 1], [1466, .6], [1966, 0]],
-    domeDiam:   [[0, .47], [166, 1.8], [500, 7.6], [900, 15.6], [1300, 21.8], [1600, 23.6]],
-    domeLight:  [[0, 0], [233, 1], [733, .9], [1233, .5], [1300, .6], [1600, 0]],
-    dustDiam:   [[0, .19], [333, 1.2], [566, 3.5], [800, 8.5], [933, 10.25], [2000, 11.6], [3300, 12.5]],
-    dustAlpha:  [[0, 0], [333, .8], [1500, 1], [3633, 0]],
-    ringDiam:   [[666, 2.4], [800, 5.7], [1300, 11.1], [1666, 13.5]],
-    ringLight:  [[566, 1], [800, 0], [1066, 1], [1700, 0]],     // two pulses
-    stemLight:  [[966, 0], [1800, 1], [3166, .53], [4700, 0]],
-    capZ:       [[333, -2.71], [500, -2.32], [1000, -1.17], [1500, -.04], [2000, 1.02], [2500, 1.98], [3000, 2.8], [3500, 3.46], [4000, 3.9], [4500, 4.11], [5000, 4.16]],
-    capGrow:    [[2200, 1], [4300, 1.43]],
-    capLight:   [[1100, 0], [1433, 1], [3566, .53], [4700, 0]],
-    topLight:   [[1566, 0], [2100, 1], [4433, .6], [5500, 0]],
+    // the glow cards (_nbGlowCards): the flare of the flash, a white haze, a yellow core, a burst cut short at 1 s
+    flareSide:  [[0, 2.9], [113, 10.5], [433, 3.9]],
+    flareLight: [[181, 1], [433, 0]],
+    hazeSide:   [[333, 1.4], [433, 3.1], [700, 16.9], [933, 24.8], [1166, 24.4], [2000, 17.4], [3166, 3]],
+    hazeLight:  [[333, 0], [633, 1], [5033, 0]],
+    coreSide:   [[0, 1], [500, 4.1], [766, 14.4], [1066, 17.4], [1800, 13.9], [2400, 8.7], [3100, 2.6]],
+    burstSide:  [[333, .7], [433, 1.4], [766, 9.5], [933, 11.5]],
+    glowCool:   [[633, 1], [5033, 0]],
     light:      [[333, 0], [400, .1], [466, .35], [533, .65], [600, .9], [666, 1], [1966, 1], [2200, .96], [2466, .84], [2633, .75],
                  [2900, .57], [3266, .32], [3466, .19], [3633, .11], [3766, .05], [3900, .02], [4000, 0]],
-    markSize:   [[333, .3], [833, 1]],
-    markGlow:   [[833, 1], [13000, .25]],
-    markAlpha:  [[333, 0], [450, 1], [12800, 1], [13000, 0]],
+    burnR:      [[633, 3.8], [1700, 9.3], [3000, 16]],         // the burn ring (radius: SC2's half-width x 1.83, our blast's footprint)
+    burnLight:  [[633, 0], [933, 1], [1700, 2], [3000, 0]],
+    toriLight:  [[1100, 0], [1433, 3], [3566, 1.6], [4700, 0]],
+    // the heat haze (strength: 10 bends ~10 px at 1080p; D: SC2's diameter): the shock bubble, the ripple over the
+    // ground behind it, the shimmer round the cap; over the crater, keyed by the blast's own age (ms, not seqMs)
+    hazeBubbleD: [[130, 1], [500, 7.6], [900, 15.6], [1300, 21.8], [1600, 23.6]],
+    hazeBubble:  [[130, 0], [233, 10], [733, 9], [1233, 5], [1300, 6], [1600, 0]],
+    hazeRippleD: [[666, 2.3], [1700, 17.1], [1966, 18.9]],
+    hazeRipple:  [[300, 0], [700, 10], [1466, 6], [1966, 0]],
+    hazeCap:     [[666, 0], [1366, 7], [4233, 7], [5166, 0]],
+    hazeCrater:  [[1900, 0], [1970, 3], [2440, 5], [9740, 6], [12300, 0]],
+    hazeCraterR: [[1900, 2.3], [2640, 8.9], [5400, 5.1]],
+    hazeCraterH: [[1900, 1.2], [2640, 3.4], [5400, 1.6]],
   };
   function _nbKey(tr, ms) {   // piecewise linear, held at both ends
     if (ms <= tr[0][0]) return tr[0][1];
@@ -2241,50 +2339,74 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   const _puffHash = (i, salt) => { const s = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453; return s - Math.floor(s); };
   const _sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
-  // textures: tileable noise (fire cloud, smoke), the flash star, the scorch and its cracks
-  function _nbNoise(w, h, cells, seed, oct) {   // fbm of value noise that wraps in both axes, ~0..0.94
-    const out = new Float32Array(w * h);
-    for (let o = 0, amp = .5, cx = cells; o < oct; o++, amp *= .5, cx *= 2) {
-      const cy = Math.max(1, Math.round(cx * h / w)), lat = new Float32Array(cx * cy);
-      for (let i = 0; i < lat.length; i++) lat[i] = _puffHash(i, seed + o * 13);
-      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-        const fx = x / w * cx, fy = y / h * cy, ix = Math.floor(fx), iy = Math.floor(fy);
-        let tx = fx - ix, ty = fy - iy; tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
-        const x0 = ix % cx, x1 = (ix + 1) % cx, r0 = (iy % cy) * cx, r1 = ((iy + 1) % cy) * cx;
-        const a = lat[r0 + x0] + (lat[r0 + x1] - lat[r0 + x0]) * tx, b = lat[r1 + x0] + (lat[r1 + x1] - lat[r1 + x0]) * tx;
-        out[y * w + x] += amp * (a + (b - a) * ty);
+  // textures: the cloud's puffs, the flash star
+  // The puffs: a 2x2 atlas of cauliflower billows, 128² each: round billows packed on a low dome, smaller
+  // florets bulging out of them, each a dome (lit by its normal); their silhouette crisp and a little
+  // ragged. R density, GB the normal (x, y; 0.5 = flat), A the hollows (as the cloud cools, its fire glows
+  // on there, sinking deeper)
+  const _nbPuffTex = (() => {
+    const N = 128, W = 2 * N, px = new Uint8Array(W * W * 4), hgt = new Float32Array(N * N);
+    const hash = (x, y, s) => {
+      let n = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(s, 2246822519)) >>> 0;
+      n = Math.imul(n ^ (n >>> 13), 1274126177) >>> 0;
+      return ((n ^ (n >>> 16)) & 0xffff) / 65535;
+    };
+    const noise = (x, y, s) => {
+      const ix = Math.floor(x), iy = Math.floor(y);
+      let fx = x - ix, fy = y - iy; fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+      const a = hash(ix, iy, s) + (hash(ix + 1, iy, s) - hash(ix, iy, s)) * fx, b = hash(ix, iy + 1, s) + (hash(ix + 1, iy + 1, s) - hash(ix, iy + 1, s)) * fx;
+      return a + (b - a) * fy;
+    };
+    const fbm = (x, y, s, oct) => { let v = 0; for (let o = 0, a = .5; o < oct; o++, a *= .5) { v += a * noise(x, y, s + o * 17); x = x * 2.03 + 5.1; y = y * 2.03 + 1.3; } return v; };
+    for (let cell = 0; cell < 4; cell++) {
+      const ox = (cell % 2) * N, oy = (cell >> 1) * N, H = (k, s) => hash(k, cell, s);
+      // the billows {x, y, r, z: lift, w: how much their seams glow}: each overlapping one, swallowed by none
+      const B = [{ x: 0, y: 0, r: .34, z: .3, w: 1 }];
+      for (let k = 0; B.length < 20 && k < 2000; k++) {
+        const a = H(k, 1) * 6.2832, d = .62 * Math.sqrt(H(k, 2)), r = .14 + .16 * H(k, 3) * (1 - .5 * d), x = Math.cos(a) * d, y = Math.sin(a) * d;
+        const gap = Math.min(...B.map(b => Math.hypot(x - b.x, y - b.y) / (r + b.r)));
+        if (d + r <= .87 && gap >= .5 && gap <= .85) B.push({ x, y, r, z: .3 * (1 - d * d / .7), w: 1 });
+      }
+      const top = (x, y) => { let h = -1; for (const b of B) { const q = 1 - ((x - b.x) ** 2 + (y - b.y) ** 2) / (b.r * b.r); if (q > 0) h = Math.max(h, b.z + .9 * b.r * q); } return h; };
+      for (let k = 0, m = 0; m < 24 && k < 600; k++) {   // the florets
+        const x = 1.6 * (H(k, 20) - .5), y = 1.6 * (H(k, 21) - .5), hp = top(x, y), r = .055 + .06 * H(k, 22);
+        if (hp >= .16) { B.push({ x, y, r, z: hp - .5 * r, w: .15 }); m++; }
+      }
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+        const x = (i + .5) / N * 2 - 1, y = (j + .5) / N * 2 - 1, o = ((oy + j) * W + ox + i) * 4;
+        let sd = -9, h1 = 0, h2 = 0, w1 = 0, w2 = 0, hm = 0, qm = 0;   // the distance in from the silhouette; the two highest billows here; qm: how near the crown of the top billow (not a floret)
+        for (const b of B) {
+          const q = (x - b.x) ** 2 + (y - b.y) ** 2;
+          sd = Math.max(sd, b.r - Math.sqrt(q));
+          if (q >= b.r * b.r) continue;
+          const c = 1 - q / (b.r * b.r), h = b.z + .9 * b.r * c;   // (domed, not a ball: no hard ring round each billow)
+          if (h > h1) { h2 = h1; w2 = w1; h1 = h; w1 = b.w; } else if (h > h2) { h2 = h; w2 = b.w; }
+          if (b.w > .5 && h > hm) { hm = h; qm = c; }
+        }
+        const f1 = fbm(x * 6 + cell * 3.7, y * 6, 11 + cell, 3), f2 = fbm(x * 11 + cell, y * 11, 50 + cell, 2);
+        const e = sd + .07 * (f2 - .5) + .03 * (f1 - .5);   // the rim, a little ragged
+        // the hollows: down each billow's flank to the seams, in broad blotches (lines read as cracked rock, rings round each billow as bubbles)
+        const seam = h2 > 0 ? (1 - _sstep(0, .1, h1 - h2)) * Math.min(w1, w2) : 0, f3 = fbm(x * 3.3 + cell * 1.7, y * 3.3, 90 + cell, 2);
+        hgt[j * N + i] = h1 + .09 * f1;
+        px[o] = Math.round(255 * Math.max(_sstep(0, .055, e), 1 - _sstep(.4, .62, Math.hypot(x, y))));   // (no holes inside it)
+        px[o + 3] = Math.round(255 * Math.max(0, Math.min(1, .35 * (1 - qm) ** 1.3 + .8 * (f3 - .4) + .12 * (f2 - .5) + .15 * seam)));
+      }
+      const Hh = (a, b) => hgt[Math.max(0, Math.min(N - 1, b)) * N + Math.max(0, Math.min(N - 1, a))];
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {   // (slopes in the cell's own units)
+        const nx = (Hh(i - 1, j) - Hh(i + 1, j)) * N / 4, ny = (Hh(i, j - 1) - Hh(i, j + 1)) * N / 4, l = Math.hypot(nx, ny, 1), o = ((oy + j) * W + ox + i) * 4;
+        px[o + 1] = Math.round(255 * (nx / l * .5 + .5));
+        px[o + 2] = Math.round(255 * (ny / l * .5 + .5));
       }
     }
-    return out;
-  }
-  function _nbCanvasTex(w, h, paint, repeat) {
+    const t = new THREE.DataTexture(px, W, W, THREE.RGBAFormat);
+    t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.needsUpdate = true;
+    return t;
+  })();
+  function _nbCanvasTex(w, h, paint) {
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     paint(c.getContext('2d'), w, h);
-    const t = new THREE.CanvasTexture(c);
-    if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    return t;
+    return new THREE.CanvasTexture(c);
   }
-  function _nbPixels(g, w, h, fn) {   // fn(x, y, i) -> [r, g, b, a]
-    const img = g.createImageData(w, h);
-    for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i++) img.data.set(fn(x, y, i), i * 4);
-    g.putImageData(img, 0, 0);
-  }
-  // fire cloud: orange billows with yellow knots, deep red at the thin edges (alpha)
-  const _nbFireTex = _nbCanvasTex(256, 128, (g, w, h) => {
-    const n = _nbNoise(w, h, 6, 11, 4);
-    _nbPixels(g, w, h, (x, y, i) => {
-      const v = Math.max(0, Math.min(1, (n[i] - .2) / .6)), k = v * 3, f = k - Math.floor(k);
-      const C = [[110, 20, 4], [225, 80, 14], [255, 150, 35], [255, 220, 120]], c0 = C[Math.min(2, Math.floor(k))], c1 = C[Math.min(3, Math.floor(k) + 1)];
-      return [c0[0] + (c1[0] - c0[0]) * f, c0[1] + (c1[1] - c0[1]) * f, c0[2] + (c1[2] - c0[2]) * f, 255 * _sstep(.12, .6, v)];
-    });
-  }, true);
-  const _nbCapTex = _nbFireTex.clone(), _nbStemTex = _nbFireTex.clone(), _nbRingTex = _nbFireTex.clone();
-  for (const t of [_nbCapTex, _nbStemTex, _nbRingTex]) t.needsUpdate = true;   // own offsets: each scrolls its own way
-  // dust: soft grey billows (lit by the scene)
-  const _nbSmokeTex = _nbCanvasTex(256, 128, (g, w, h) => {
-    const n = _nbNoise(w, h, 5, 23, 4);
-    _nbPixels(g, w, h, (x, y, i) => { const v = n[i]; return [150 + 100 * v, 140 + 100 * v, 128 + 100 * v, 255 * _sstep(.22, .62, v)]; });
-  }, true);
   // flash star: a white-hot core and twelve thin rays
   const _nbStarTex = _nbCanvasTex(128, 128, (g) => {
     g.globalCompositeOperation = 'lighter';
@@ -2301,55 +2423,12 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       g.lineTo(64 + Math.cos(a) * len, 64 + Math.sin(a) * len); g.lineTo(64 + Math.cos(a + wd) * 4, 64 + Math.sin(a + wd) * 4); g.fill();
     }
   });
-  // scorch: churned brown earth, darkest in the pit, a ragged rim
-  const _nbMarkTex = _nbCanvasTex(256, 256, (g, w, h) => {
-    const n = _nbNoise(w, h, 8, 31, 4);
-    _nbPixels(g, w, h, (x, y, i) => {
-      const r = Math.hypot(x - 127.5, y - 127.5) / 128, v = n[i], pit = 1 - _sstep(.08, .4, r);
-      return [70 - 50 * pit + 30 * v, 48 - 36 * pit + 20 * v, 30 - 24 * pit + 12 * v, 255 * (1 - _sstep(.5, .98, r + .2 * (v - .45))) * (.7 + .3 * v)];
-    });
-  });
-  // cracks: short jagged fissures out of the pit, glowing red (drawn over black, added)
-  const _nbCrackTex = _nbCanvasTex(256, 256, (g) => {
-    g.fillStyle = '#000'; g.fillRect(0, 0, 256, 256);
-    const pit = g.createRadialGradient(128, 128, 0, 128, 128, 48);
-    pit.addColorStop(0, 'rgba(255,70,20,.55)'); pit.addColorStop(1, 'rgba(255,40,10,0)');
-    g.fillStyle = pit; g.fillRect(0, 0, 256, 256);
-    g.lineCap = 'round'; g.shadowColor = 'rgba(255,50,10,1)'; g.shadowBlur = 7;
-    const crack = (a, r0, r1, w0, s) => {
-      let x = 128 + Math.cos(a) * r0, y = 128 + Math.sin(a) * r0;
-      for (let r = r0, j = 0; r < r1; j++) {
-        const step = 7 + 6 * _puffHash(j, s), na = a + (_puffHash(j, s + 1) - .5) * .9 * (12 / Math.max(r, 12));
-        r += step; const nx = 128 + Math.cos(na) * r, ny = 128 + Math.sin(na) * r;
-        g.lineWidth = Math.max(.8, w0 * (1 - (r - r0) / (r1 - r0)));
-        g.strokeStyle = `rgba(255,${(80 + 60 * (1 - r / r1)) | 0},30,1)`;
-        g.beginPath(); g.moveTo(x, y); g.lineTo(nx, ny); g.stroke();
-        x = nx; y = ny;
-      }
-    };
-    for (let k = 0; k < 11; k++) {
-      const a = (k + .6 * _puffHash(k, 40)) * Math.PI * 2 / 11, r1 = 60 + 50 * _puffHash(k, 41);
-      crack(a, 10, r1, 3.2, 100 + k * 7);
-      crack(a + (_puffHash(k, 42) < .5 ? -.35 : .35), 30 + 20 * _puffHash(k, 43), r1 * .8, 1.8, 300 + k * 7);   // its fork
-    }
-  });
-  // shapes: flat quad, lumpy dust doughnut, flat fire ring, open hemisphere, the stem's spindle, a fat cap doughnut
-  const _nbQuad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-  const _nbDustGeo = (() => {
-    const g = new THREE.TorusGeometry(1, .4, 12, 48).rotateX(-Math.PI / 2), p = g.attributes.position;
-    for (let i = 0; i < p.count; i++) {   // lumps: push each vertex out from the tube's centre line by a fixed hash
-      const x = p.getX(i), z = p.getZ(i), a = Math.atan2(z, x), cx = Math.cos(a), cz = Math.sin(a);
-      const k = 1 + .28 * (_puffHash(Math.round(a * 40) * 7 + Math.round(p.getY(i) * 20), 9) - .5);
-      p.setXYZ(i, cx + (x - cx) * k, p.getY(i) * .87 * k, cz + (z - cz) * k);
-    }
-    g.computeVertexNormals();
-    return g;
-  })();
-  const _nbRingGeo = new THREE.TorusGeometry(1, .26, 8, 48).rotateX(-Math.PI / 2).scale(1, .45, 1);
-  const _nbDomeGeo = new THREE.SphereGeometry(.5, 32, 10, 0, Math.PI * 2, 0, Math.PI / 2);
-  const _nbStemGeo = new THREE.LatheGeometry([[1.65, 0], [1.3, .18], [.85, .45], [.68, 1], [.6, 2.5], [.62, 4.5], [.7, 6.3], [.5, 7.15]]
-    .map(([r, y]) => new THREE.Vector2(r, y)), 24);
-  const _nbCapGeo = new THREE.TorusGeometry(1, .7, 12, 32).rotateX(-Math.PI / 2);   // diameter 3.4
+  // shapes: flat quad (and one facing down: the ripple's haze, seen from behind), open hemisphere, ball (the cap's
+  // haze), the fire tori's ring (1 round, its tube 0.5, lying flat)
+  const _nbQuad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), _nbQuadDown = new THREE.PlaneGeometry(1, 1).rotateX(Math.PI / 2);
+  const _nbDomeGeo = new THREE.SphereGeometry(.5, 64, 16, 0, Math.PI * 2, 0, Math.PI / 2);   // (16 across: its silhouette, 16 wide, would show facets)
+  const _nbBallGeo = new THREE.SphereGeometry(.5, 32, 16);
+  const _nbTorusGeo = new THREE.TorusGeometry(1, .5, 16, 48).rotateX(-Math.PI / 2);
   // A glow that also hides some of what lies behind it (premultiplied, cover NB_COVER): added
   // light alone tints the bright grass lime; this whitens and warms it
   const NB_COVER = .55;
@@ -2362,16 +2441,265 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     mat.customProgramCacheKey = () => 'nbCoverGlow';
     return mat;
   }
-  const _nbDomeMat = () => new THREE.ShaderMaterial({   // the shock bubble: only its rim shows (SC2 draws it as heat haze)
-    uniforms: { uK: { value: 0 } },
-    vertexShader: 'varying vec3 vN, vV; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.); vN = normalMatrix * normal; vV = -mv.xyz; gl_Position = projectionMatrix * mv; }',
-    fragmentShader: 'uniform float uK; varying vec3 vN, vV; void main() { float a = pow(1. - abs(dot(normalize(vN), normalize(vV))), 3.) * uK; gl_FragColor = vec4(vec3(1., .95, .86) * a, a * ' + NB_COVER.toFixed(2) + '); }',
-    transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor });
+  // ── Nuke shaders (the desktop's nuke_fx.cpp) ─────────────────────────────
+  // The shock front, its dome, the burn ring and the scar, drawn procedurally: value noise from
+  // integer hashes (no texture; sampled round a circle it is periodic), fbm over it, the fire ramp.
+  // Premultiplied like _nbCoverGlow: they whiten and warm the grass instead of tinting it lime.
+  const NK_NOISE = `
+    float h12(vec2 p) { vec3 q = fract(vec3(p.xyx) * .1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+    float h13(vec3 p) { p = fract(p * .1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
+    vec2 h22(vec2 p) { vec3 q = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973)); q += dot(q, q.yzx + 33.33); return fract((q.xx + q.yz) * q.zy); }
+    float n2(vec2 x) {
+      vec2 i = floor(x), f = fract(x); f = f * f * (3. - 2. * f);
+      return mix(mix(h12(i), h12(i + vec2(1., 0.)), f.x), mix(h12(i + vec2(0., 1.)), h12(i + vec2(1., 1.)), f.x), f.y);
+    }
+    float n3(vec3 x) {
+      vec3 i = floor(x), f = fract(x); f = f * f * (3. - 2. * f);
+      return mix(mix(mix(h13(i), h13(i + vec3(1., 0., 0.)), f.x), mix(h13(i + vec3(0., 1., 0.)), h13(i + vec3(1., 1., 0.)), f.x), f.y),
+                 mix(mix(h13(i + vec3(0., 0., 1.)), h13(i + vec3(1., 0., 1.)), f.x), mix(h13(i + vec3(0., 1., 1.)), h13(i + vec3(1., 1., 1.)), f.x), f.y), f.z);
+    }
+    float fbm2(vec2 p, int o) { float s = 0., a = .5; for (int i = 0; i < 4; i++) { if (i >= o) break; s += a * n2(p); p = p * 2.03 + vec2(5.1, 1.3); a *= .5; } return s; }
+    vec3 fireCol(float T) {   // fire by temperature: soot, deep red, orange, yellow, white-hot
+      T = clamp(T, 0., 1.15);
+      float k = min(T, 1.) * 4.;
+      vec3 c = k < 1. ? mix(vec3(.18, .14, .12), vec3(.54, .16, .05), k) : k < 2. ? mix(vec3(.54, .16, .05), vec3(.94, .42, .09), k - 1.)
+             : k < 3. ? mix(vec3(.94, .42, .09), vec3(1., .71, .23), k - 2.) : mix(vec3(1., .71, .23), vec3(1., .94, .75), k - 3.);
+      return c * (1. + .25 * T);
+    }
+    varying vec3 vW; varying vec3 vN;
+  `;
+  const NK_VS = `varying vec3 vW; varying vec3 vN;
+    void main() { vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; vN = mat3(modelMatrix) * normal; gl_Position = projectionMatrix * viewMatrix * w; }`;
+  // the shock front: a bright ragged ring (a Mach stem) racing over the ground, a luminous zone trailing it
+  const NK_FRONT_FS = `
+    uniform vec2 uC; uniform float uR, uW, uI, uTime, uSeed;
+    void main() {
+      vec2 dv = vW.xz - uC; float r = length(dv);
+      float x0 = (r - uR) / uW;
+      if (x0 > 3. || x0 < -8.) discard;   // (the rag moves the ring by under 0.6 band widths)
+      vec2 dir = dv / max(r, 1e-4);
+      float R = uR * (1. + .03 * (n2(dir * 3. + vec2(uSeed, uTime * 2.)) - .5) + .012 * (n2(dir * 11. + uSeed) - .5));
+      float x = (r - R) / uW;
+      float clump = .6 + .4 * n2(dir * 9. + vec2(uTime * 1.3, uSeed));
+      float trail = .3 * smoothstep(-7., -.5, x) * step(x, 0.) * smoothstep(.5, .8, r / max(uR, 1e-3)) * (.5 + .5 * n2(dir * 14. + vec2(r * .8)));
+      float k = uI * (exp(-x * x * 3.) * clump + trail);
+      gl_FragColor = vec4(vec3(1., .86, .62) * k, clamp(.5 * k, 0., .85));
+    }`;
+  // the shock dome: a hemisphere of compressed air over the front, seen at its rim (fading out right at
+  // the silhouette: the rim alone ends in a hard line, a wall of light seen from the close-up)
+  const NK_DOME_FS = `
+    uniform float uA, uTime;
+    void main() {
+      vec3 N = normalize(vN), V = normalize(cameraPosition - vW);
+      float c = abs(dot(N, V));
+      float a = uA * (2.6 * pow(1. - c, 3.) + .04) * smoothstep(0., .35, c) * (.7 + .3 * n3(vW * .7 + vec3(uTime * 3.)));
+      gl_FragColor = vec4(vec3(1., .95, .88) * a, a * ${NB_COVER.toFixed(2)});
+    }`;
+  // SC2's burn ring: a band of burning ground spreading at a steady pace, torn along the ring and across
+  // it. Drawn straight to the screen the fire covers the bright grass and stays under 1 (added, or past
+  // 1, it turns yellow-white there, lime at its edges)
+  const NK_BURN_FS = `
+    uniform vec2 uC; uniform float uR, uW, uK, uTime, uSeed;
+    void main() {
+      vec2 dv = vW.xz - uC; float r = length(dv);
+      float x = (r - uR) / uW;
+      if (abs(x) > 3.) discard;
+      vec2 dir = dv / max(r, 1e-4);
+      float tear = fbm2(dir * 5. + vec2(uSeed, r * .35 - uTime * .4), 3);
+      float band = exp(-x * x * 2.2) * smoothstep(.25, .6, tear) + .3 * exp(-x * x * 7.) * tear;
+      float k = 1. - exp(-2. * uK * band);
+      gl_FragColor = vec4(fireCol(.45 + .25 * n2(dir * 13. + vec2(r * 1.3, uTime * 2.))) * k, k);
+    }`;
+  // The scar: a small scorched pit of churned earth. Short cracks run out of it (each forking once)
+  // and its floor is shattered; they open behind the shock front and glow a deep red-orange through
+  // the soil, dimming over ~8 s, then the pit fades. The earth darkens the grass (fogged like the
+  // ground, dimmed with the night: uLit), the cracks glow
+  const NK_SCAR_FS = `
+    uniform vec2 uC; uniform float uAge, uSeed, uFront, uK, uLit;
+    #ifdef USE_FOG
+      uniform vec3 fogColor; uniform float fogNear, fogFar;
+    #endif
+    const float TAU = 6.2831853;
+    float adiff(float a, float b) { return mod(a - b + 3.14159265, TAU) - 3.14159265; }
+    float ln1(float x) { float i = floor(x); return mix(h12(vec2(i, uSeed)), h12(vec2(i + 1., uSeed)), fract(x)); }   // linear: a polyline
+    // a crack's lateral wander (world units) at radius r: straight runs with sharp kinks, and a fine jag
+    float wander(float r, float i) { return (ln1(r * 2.4 + i * 7.31) - .5) * .4 + (ln1(r * 7.5 + i * 3.17 + 40.) - .5) * .11; }
+    // a line of half-width h, x off its centre: no thinner than a pixel px (thinner, it breaks into dots), dimmed as it widens
+    float line(float x, float h, float px) { float w = max(h, px); return (1. - smoothstep(w * .35, w + .5 * px, x)) * h / w; }
+    void main() {
+      vec2 d = vW.xz - uC; float r = length(d), px = fwidth(r);   // (a pixel, in world units)
+      if (r > 4.) discard;
+      float ang = atan(d.y, d.x);
+      float mott = fbm2(vW.xz * .8 + uSeed, 3);
+      float pit = 1. - smoothstep(.5, 1.2 + .4 * mott, r);    // the churned centre
+      float soil = 1. - smoothstep(1.6, 2.4 + .8 * mott, r);   // scorched earth
+      float tint = 1. - smoothstep(2.3, 3.8, r);               // a faint singe on the grass
+      float crack = 0.;
+      for (int i = 0; i < 10; i++) {
+        float fi = float(i);
+        float len = 1.3 + 1.2 * h12(vec2(fi + 31., uSeed));
+        if (r > len + .2) continue;
+        float phi = (fi + .7 * h12(vec2(fi, uSeed))) * TAU / 10.;
+        float da = adiff(ang, phi) * r;   // arc distance from the crack's base line
+        if (abs(da) > 1.4) continue;
+        float w = wander(r, fi);
+        float taper = 1. - smoothstep(.2, len, r);
+        float wid = .025 + .045 * taper;
+        crack = max(crack, line(abs(da - w), wid, px) * smoothstep(.2, .45, r) * sqrt(taper));
+        float rb = .6 + .4 * len * h12(vec2(fi + 7., uSeed));   // the fork leaves at rb, bending off ~25 deg
+        if (r > rb) {
+          float side = h12(vec2(fi + 13., uSeed)) < .5 ? -1. : 1.;
+          float tb = 1. - smoothstep(rb, rb + len * (.35 + .25 * h12(vec2(fi + 17., uSeed))), r);
+          float xb = abs(da - w - side * (r - rb) * .5 - (ln1(r * 6. + fi * 5.1 + 90.) - .5) * .12);
+          float wb = .018 + .035 * tb;
+          crack = max(crack, line(xb, wb, px) * tb);
+        }
+      }
+      if (r < 1.8) {   // the shattered floor: Voronoi cell edges
+        vec2 x = vW.xz * 3.2 + uSeed * 3.; vec2 g = floor(x), f = fract(x); float F1 = 8., F2 = 8.;
+        for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+          vec2 o = vec2(float(i), float(j)); vec2 dd = o + h22(g + o) - f; float q = dot(dd, dd);
+          if (q < F1) { F2 = F1; F1 = q; } else if (q < F2) F2 = q;
+        }
+        crack = max(crack, line((sqrt(F2) - sqrt(F1)) / 3.2, .028, px) * (1. - smoothstep(.8, 1.7, r)));
+      }
+      crack *= 1. - smoothstep(uFront * .9 - .3, uFront * .9, r);   // opened by the front
+      // a deep red-orange glow, brightest in the pit, flickering a little, dimming over ~8 s
+      float E = .85 * exp(-uAge / 3.) + .15 * exp(-uAge / 8.);
+      float T = E * (1. - .12 * r) * (.75 + .5 * n2(vW.xz * 3. + uAge * .6));
+      vec3 hot = mix(vec3(.54, .1, .03), vec3(1., .23, .06), clamp(T, 0., 1.)), earth = vec3(.3, .19, .11);   // dull red .. glowing red
+      float under = mix(.35, 1., smoothstep(1., 3., uAge));   // dim while the fireball sits on it (no veins through the fire)
+      vec3 glow = mix(earth * .5, hot, .65) * crack * smoothstep(0., .25, T) * under;   // red through the soil
+      glow += hot * .22 * pit * E * under * (.5 + .5 * mott);   // the pit floor smoulders
+      float a = clamp(uK * (pit * .35 + soil * (.45 + .25 * mott) + tint * .12 + crack * .35), 0., .9);
+      vec3 ch = mix(vec3(.16, .11, .07), vec3(.07, .05, .035), max(pit, crack)) * uLit;   // churned brown earth, darker in the pit and cracks
+      #ifdef USE_FOG
+        ch = mix(ch, fogColor, smoothstep(fogNear, fogFar, length(vW.xz)));
+      #endif
+      gl_FragColor = vec4(ch * a + glow * uK, a);
+    }`;
+  // The fire tori (SC2's cap: three nested fat rings of fire): fire that rolls round the tube, faint,
+  // bright face-on and gone well before the silhouette (the sprites over it keep the cloud soft; past
+  // them, faded as slowly as the desktop's, the rim read as a lime ring on the grass), blended over (full
+  // cover). vO: the vertex on the unit ring (tube 0.5); the normal and view in view space (scaled unevenly)
+  const NK_TORUS_VS = `varying vec3 vO; varying vec3 vN; varying vec3 vV;
+    void main() { vec4 mv = modelViewMatrix * vec4(position, 1.); vO = position; vN = normalMatrix * normal; vV = -mv.xyz; gl_Position = projectionMatrix * mv; }`;
+  const NK_TORUS_FS = `
+    uniform float uB, uTime, uSeed;
+    varying vec3 vO; varying vec3 vV;
+    void main() {
+      float phi = atan(vO.z, vO.x);
+      vec2 cs = vec2(length(vO.xz) - 1., vO.y);
+      float th = atan(cs.y, cs.x) + uTime * 2.9;   // rolling round the tube
+      vec3 q = vec3(cos(phi) * (3. + cos(th)), sin(phi) * (3. + cos(th)), sin(th)) * 1.3 + uSeed;   // seamless both ways
+      float T = .62 * n3(q) + .38 * n3(q * 2.3 + 7.);
+      float a = clamp(.22 * uB * smoothstep(.25, .8, T) * pow(abs(dot(normalize(vN), normalize(vV))), 1.5), 0., 1.);
+      gl_FragColor = vec4(fireCol(.45 + .5 * T) * a, a);
+    }`;
+  // The condensation (Wilson) ring: a pale skirt of cloud flashing out round the cap's foot as the shock
+  // passes through damp air, wispy, sharpest at its outer edge. The mesh's outer edge is at uR
+  const NK_WILSON_FS = `
+    uniform vec2 uC; uniform vec3 uCol; uniform float uR, uA, uTime, uSeed;
+    void main() {
+      vec2 dv = vW.xz - uC; float r = length(dv), x = r / uR;
+      vec2 dir = dv / max(r, 1e-4);
+      float wisp = fbm2(dir * 4. + vec2(uSeed + x * 9., x * 9. - uTime * .3), 2);   // (as fast across the band as along it: no radial streaks)
+      float k = uA * smoothstep(.995, .945, x + .05 * (wisp - .5)) * smoothstep(.8, .95, x) * smoothstep(.25, .7, wisp);
+      k *= smoothstep(3., 9., distance(cameraPosition, vW));   // (gone as the close-up lens comes into it: a white smear)
+      gl_FragColor = vec4(uCol * k, k * .8);
+    }`;
+  const _nbWilsonGeo = new THREE.RingGeometry(.8, 1, 160).rotateX(-Math.PI / 2);
+  // The heat haze: signed uv offsets the scene is bent by (renderScene), from its own noise, rising, strongest
+  // face-on (SC2's inverted fresnel), fading out toward the ground; or a ripple band on the ground (uRing.y > 0).
+  // RGBA: +x, -x, +y, -y over HZ_RANGE (added: no float target needed)
+  const HZ_RANGE = .05;
+  const NK_HAZE_FS = `
+    uniform vec2 uC, uRing; uniform float uS, uTile, uRise, uAspectInv;
+    void main() {
+      if (vW.y < -.05) discard;
+      vec3 N = normalize(vN), V = normalize(cameraPosition - vW);
+      float f = pow(abs(dot(N, V)), .6) * smoothstep(-.05, 1., vW.y);
+      if (uRing.y > 0.) { float x = (length(vW.xz - uC) - uRing.x) / uRing.y; f = exp(-x * x * 2.); }
+      vec3 q = vW * uTile - vec3(0., uRise, 0.);
+      vec2 o = vec2(n3(q), n3(q + vec3(17.3, 4.1, 9.7))) - .5 + .5 * (vec2(n3(q * 2.3 + 3.), n3(q * 2.3 + 11.)) - .5);
+      o *= vec2(uAspectInv, 1.) * uS * f * ${(.0019 / HZ_RANGE).toFixed(4)};   // S 10: about 10 px at 1080p, alike both ways
+      gl_FragColor = vec4(max(o, 0.), max(-o, 0.)).xzyw;
+    }`;
+  // The cloud's sprites (the desktop's PART_VS / PART_FS): quads facing the camera, drawn instanced and
+  // rebuilt every frame. iPos: xyz, the world diameter; iCol: rgb, alpha; iCell: the puff atlas's cell (< 0:
+  // a plain soft disc, coloured iCol), its turn, its fire's temperature and how far that fire has sunk into
+  // the hollows (0: it burns all over); iShape: xy, the quad squashed along this screen direction by its
+  // length (a billow rolling over the cap's rim, seen edge-on), z: how blurred (mip levels: dust, smoke in
+  // shadow, glowing gas). They fade out as the lens comes within about their size, where they meet the
+  // ground and in the night fog (except near a small light), and the cloud thins where it hangs between the
+  // camera and the bunker (uThin: the bunker on screen, the aspect; w 0: not this system)
+  const NK_PUFF_VS = `
+    attribute vec4 iPos; attribute vec4 iCol; attribute vec4 iCell; attribute vec3 iShape;
+    uniform vec4 uThin;
+    varying vec2 vUv; varying vec4 vCol; varying vec4 vCell; varying vec2 vFogXZ; varying float vWy, vBlur;
+    void main() {
+      vec4 mv = viewMatrix * vec4(iPos.xyz, 1.), c = projectionMatrix * mv;
+      float a = iCol.a * smoothstep(1. + .5 * iPos.w, 2. + 1.6 * iPos.w, -mv.z);
+      if (uThin.w > 0. && iPos.y >= 2. && c.w > 0.) a *= .35 + .65 * smoothstep(.12, .4, length((c.xy / c.w - uThin.xy) * vec2(uThin.z, 1.)));
+      float sq = length(iShape.xy);
+      vec2 q = position.xy, ax = iShape.xy / max(sq, 1e-4);
+      q -= ax * dot(q, ax) * sq;
+      mv.xy += q * iPos.w;
+      vWy = iPos.y + iPos.w * (q.x * viewMatrix[1][0] + q.y * viewMatrix[1][1]);   // this corner's height in the world
+      vUv = position.xy; vCol = vec4(iCol.rgb, a); vCell = iCell; vFogXZ = iPos.xz; vBlur = iShape.z;
+      gl_Position = projectionMatrix * mv;
+    }`;
+  const NK_PUFF_FS = `
+    uniform sampler2D uPuff; uniform vec3 uLightV; uniform float uCover;   // the sun in view space; < 0: blended over, else premultiplied light that hides this much of what is behind
+    varying vec2 vUv; varying vec4 vCol; varying vec4 vCell; varying vec2 vFogXZ; varying float vWy, vBlur;
+    #ifdef USE_FOG
+      uniform float fogNear; uniform float fogFar;
+      uniform vec4 glowPos[ 8 ]; uniform vec4 glowCol[ 8 ]; uniform int glowCount;   // small lights (radial-fog.js)
+    #endif
+    vec3 fire(float T) {   // by temperature: soot, deep red, orange, yellow, pale yellow (white would read as a hole)
+      float k = clamp(T, 0., 1.) * 4.;
+      return k < 1. ? mix(vec3(.18, .14, .12), vec3(.54, .14, .04), k) : k < 2. ? mix(vec3(.54, .14, .04), vec3(.95, .4, .08), k - 1.)
+           : k < 3. ? mix(vec3(.95, .4, .08), vec3(1., .7, .22), k - 2.) : mix(vec3(1., .7, .22), vec3(1., .88, .56), k - 3.);
+    }
+    void main() {
+      float d = length(vUv) * 2., cell = max(floor(vCell.x + .5), 0.), s = sin(vCell.y), co = cos(vCell.y);
+      vec2 uv = (vec2(mod(cell, 2.), floor(cell / 2.)) + mat2(co, s, -s, co) * vUv + .5) * .5;
+      vec4 t = texture2D(uPuff, uv, vBlur), tb = texture2D(uPuff, uv, vBlur + 1.5);   // tb: blurred (both sampled for the discs too: no derivatives in a branch)
+      vec3 col = vCol.rgb;
+      float a;
+      if (vCell.x >= 0.) {   // a billow: a turned atlas cell, its smoke lit by the sun and dark in the hollows, its fire by temperature
+        float T = vCell.z, w = vCell.w;
+        a = vCol.a * mix(tb.r, t.r, w) * step(d, 1.);   // burning, its edge soft (glowing gas: crisp, the young fireball read as popcorn); its soot crisp
+        vec2 n = mat2(co, -s, s, co) * (t.gb * 2. - 1.);   // the cell's normal, turned back to the screen
+        vec3 N = vec3(n, sqrt(max(0., 1. - dot(n, n))));
+        float k = 1. - .2 * min(vBlur, 2.), dif = max(dot(N, uLightV), 0.);
+        col = col * mix(.85 + .2 * dif, .5 + .7 * dif, k) * (1. - .5 * k * t.a) + fire(T) * .3 * T;   // (and the fire's own glow on its smoke)
+        // burning all over, the billows are hottest at their crowns; cooling, the fire sinks into the hollows between
+        // them (thr: how deep) in soft patches (crisp, they read as a network of cracks in lava), deepening to red (not
+        // on the billow's thin rim: over the grass it would turn olive)
+        float ha = mix(t.a, tb.a, w), Tp = T * mix(.75 + .25 * N.z - .3 * tb.a, .7 + .55 * ha, w), thr = 1.3 - 2. * T;   // (hot: orange down its flanks, or the fireball reads as pale cotton)
+        col = mix(col, fire(Tp), smoothstep(thr - .2, thr + .15, ha) * mix(1., smoothstep(.5, .9, t.r), w));
+      } else a = vCol.a * (1. - smoothstep(.15, 1., d));
+      a *= smoothstep(-.05, .6, vWy);
+      #ifdef USE_FOG
+        float lift = 0.0;
+        for ( int i = 0; i < 8; i ++ ) {
+          if ( i >= glowCount ) break;
+          float gr = glowPos[ i ].w;
+          lift = max( lift, glowCol[ i ].a * ( 1.0 - smoothstep( 0.35 * gr, gr, length( vFogXZ - glowPos[ i ].xz ) ) ) );
+        }
+        a *= 1.0 - smoothstep( fogNear, fogFar, length( vFogXZ ) ) * ( 1.0 - lift );
+      #endif
+      if (a < .004) discard;
+      gl_FragColor = uCover < 0. ? vec4(col, a) : vec4(col * a, a * uCover);
+    }`;
+  const _nkU = (o) => { const u = {}; for (const k in o) u[k] = { value: o[k] }; return u; };   // {name: value} -> uniforms
+  function _nkMat(fs, uniforms, o) {
+    return new THREE.ShaderMaterial(Object.assign({ uniforms, vertexShader: NK_VS, fragmentShader: NK_NOISE + fs,
+      transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor }, o));
+  }
+  const _nkRingGeo = new THREE.RingGeometry(.5, 1.12, 192).rotateX(-Math.PI / 2);   // the front's band (scaled out past its glow)
 
-  // the sprites: smoke rings fired along the ground, fire sucked into the stem, rising embers
-  const _nbSmoke = makeParticleSystem(500, THREE.NormalBlending), _nbFire = makeParticleSystem(260, THREE.AdditiveBlending);
-  const _nbC = new THREE.Color(), _nbWhite = new THREE.Color(0xd8d0c4), _nbGrey = new THREE.Color(0x857c72);   // smoke: warm grey (pure white blows out on the grass)
-  const _nbEmb0 = new THREE.Color(0xffc050), _nbEmb1 = new THREE.Color(0xc02000), _nbSuck = new THREE.Color(0xff6a1c);
   function _putSprite(sys, x, y, z, size, col, alpha) {   // one sprite into a rebuilt-every-frame system
     if (sys.n >= sys.cap || alpha < .005) return;
     const i = sys.n++, i3 = i * 3;
@@ -2379,146 +2707,468 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     sys.col[i3] = col.r; sys.col[i3 + 1] = col.g; sys.col[i3 + 2] = col.b;
     sys.size[i] = size; sys.alpha[i] = alpha;
   }
-  function _nbSprites(b, ms, lit) {
-    const s = (ms - 366) / 1000;   // since the detonation frame
-    if (s < 0) return;
-    // the main ring: puffs fired out at 30-34 u/s, stalled by drag 5; white going grey as they thin
-    for (let k = 0; k < 80; k++) {
-      const life = 4.5 + .7 * _puffHash(k, 50), f = s / life;
-      if (f >= 1) continue;
-      const a = (k + .5 * _puffHash(k, 51)) * Math.PI * 2 / 80, r = NB_RING * (29.9 + 4.5 * _puffHash(k, 52)) / 5 * (1 - Math.exp(-5 * s));
-      _nbC.copy(_nbWhite).lerp(_nbGrey, f).multiplyScalar(lit);
-      _putSprite(_nbSmoke, b.x + Math.cos(a) * r, .5 + .15 * s * s, b.z + Math.sin(a) * r, (3.4 + 2.2 * f) * (.85 + .3 * _puffHash(k, 53)), _nbC, .42 * (1 - f) * Math.min(1, s / .1));
-    }
-    // the inner ring: slower, whiter, a little above the ground, filling the main one
-    for (let k = 0; k < 64; k++) {
-      const life = 4.5 + 1.5 * _puffHash(k, 60), f = s / life;
-      if (f >= 1) continue;
-      const a = Math.PI * 2 * _puffHash(k, 61), r = NB_RING * (11.1 + 11.1 * _puffHash(k, 62)) / 4 * (1 - Math.exp(-4 * s));
-      _nbC.copy(_nbWhite).multiplyScalar(lit);
-      _putSprite(_nbSmoke, b.x + Math.cos(a) * r, 1 + .15 * s * s, b.z + Math.sin(a) * r, (2.1 + 1.7 * f) * (.85 + .3 * _puffHash(k, 63)), _nbC, .4 * (1 - f) * Math.min(1, s / .1));
-    }
-    // the upper ring: a collar at the cap's final height (2.3 s)
-    const su = (ms - 2333) / 1000;
-    for (let k = 0; su >= 0 && k < 36; k++) {
-      const life = 4 + _puffHash(k, 70), f = su / life;
-      if (f >= 1) continue;
-      const a = (k + .5 * _puffHash(k, 71)) * Math.PI * 2 / 36, r = 1.6 + 3.2 * (1 - Math.exp(-3 * su));
-      _nbC.copy(_nbWhite).lerp(_nbGrey, f).multiplyScalar(lit);
-      _putSprite(_nbSmoke, b.x + Math.cos(a) * r, 4.3 + .3 * su, b.z + Math.sin(a) * r, 2.6 + 1.6 * f, _nbC, .4 * (1 - f) * Math.min(1, su / .2));
-    }
-    // smoke rolling round the cap while it burns (1.1-5.5 s): it reads as cloud, not a solid
-    const capK = _nbKey(NB.capLight, ms) + .6 * _nbKey(NB.topLight, ms);
-    if (capK > .01) {
-      const cy = _nbKey(NB.capZ, ms) + 3.9, cr = 2.6 * _nbKey(NB.capGrow, ms);
-      for (let k = 0; k < 26; k++) {
-        const a = (k + .4 * _puffHash(k, 100)) * Math.PI * 2 / 26 + ms * .00012 * (_puffHash(k, 101) - .5), r = cr * (.75 + .45 * _puffHash(k, 102));
-        _nbC.copy(_nbGrey).lerp(_nbSuck, .25 * _puffHash(k, 103)).multiplyScalar(lit * (.6 + .3 * _puffHash(k, 104)));
-        _putSprite(_nbSmoke, b.x + Math.cos(a) * r, cy + 1.6 * (_puffHash(k, 105) - .3), b.z + Math.sin(a) * r, cr * (.7 + .4 * _puffHash(k, 106)), _nbC, .5 * Math.min(1, capK * 1.5));
+  // The sprite systems (NK_PUFF_*), rebuilt every frame (the cloud keeps no per-puff state): the
+  // smoke and the fire's body blended over, back to front (_nbPuffs); the hot glows added over them,
+  // premultiplied, hiding most of what is behind them (_nbFire: drawn straight to the screen, added
+  // light clips to flat white over the fire and tints the grass lime round it); the glow cards, big and
+  // pale, blended over under the cloud (_nbGlow). Hidden while empty
+  const _nbLightV = { value: new THREE.Vector3() }, _nbThin = { value: new THREE.Vector4() };
+  function _nbSys(cap, order, cover, sorted) {
+    const geo = new THREE.InstancedBufferGeometry(), at = (k) => new THREE.InstancedBufferAttribute(new Float32Array(cap * k), k).setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([-.5, -.5, 0, .5, -.5, 0, .5, .5, 0, -.5, .5, 0], 3));
+    geo.setIndex([0, 1, 2, 0, 2, 3]);
+    geo.setAttribute('iPos', at(4)); geo.setAttribute('iCol', at(4)); geo.setAttribute('iCell', at(4)); geo.setAttribute('iShape', at(3));
+    geo.instanceCount = 0;
+    const mat = new THREE.ShaderMaterial({ uniforms: Object.assign(THREE.UniformsUtils.clone(THREE.UniformsLib.fog),
+      { uPuff: { value: _nbPuffTex }, uLightV: _nbLightV, uCover: { value: cover }, uThin: _nbThin }),
+      vertexShader: NK_PUFF_VS, fragmentShader: NK_PUFF_FS, transparent: true, depthWrite: false, fog: true });   // (fog: the renderer keeps its uniforms)
+    if (cover >= 0) Object.assign(mat, { blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.frustumCulled = false; mesh.renderOrder = order; mesh.visible = false;
+    scene.add(mesh);
+    const A = geo.attributes, s = { cap, n: 0, mesh, P: A.iPos.array, C: A.iCol.array, L: A.iCell.array, Q: A.iShape.array };
+    if (sorted) Object.assign(s, { out: [s.P, s.C, s.L, s.Q], P: new Float32Array(cap * 4), C: new Float32Array(cap * 4), L: new Float32Array(cap * 4), Q: new Float32Array(cap * 3), key: new Float32Array(cap), idx: [] });
+    return s;
+  }
+  const _nbPuffs = _nbSys(1000, 2, -1, true), _nbGlow = _nbSys(16, 1.6, 1), _nbFire = _nbSys(1000, 3, .85);   // (the glow cards under the cloud: over it, they wash out its billows)
+  _nbGlow.mesh.material.uniforms.uThin = { value: new THREE.Vector4() };   // (light, not cloud: it does not thin)
+  // cell: the puff atlas's (-1: a plain soft disc); near: sorted as this much nearer; T, w: its fire; sx, sy, blur: iShape (NK_PUFF_*)
+  function _nbPut(s, x, y, z, size, c, a, cell = -1, turn = 0, near = 0, T = 0, w = 0, sx = 0, sy = 0, blur = 0) {
+    if (s.n >= s.cap || a < .004) return;
+    const i = s.n++, i4 = i * 4;
+    s.P[i4] = x; s.P[i4 + 1] = y; s.P[i4 + 2] = z; s.P[i4 + 3] = size;
+    s.C[i4] = c.r; s.C[i4 + 1] = c.g; s.C[i4 + 2] = c.b; s.C[i4 + 3] = a;
+    s.L[i4] = cell; s.L[i4 + 1] = turn; s.L[i4 + 2] = T; s.L[i4 + 3] = w;
+    s.Q[i * 3] = sx; s.Q[i * 3 + 1] = sy; s.Q[i * 3 + 2] = blur;
+    if (s.key) s.key[i] = near;
+  }
+  function _nbUpload(s, v) {   // v: the view matrix (a sorted system goes back to front)
+    const n = s.n, A = s.mesh.geometry.attributes;
+    if (s.key) {
+      const [P, C, L, Q] = s.out, idx = s.idx;
+      idx.length = n;
+      for (let i = 0; i < n; i++) { idx[i] = i; s.key[i] += v[2] * s.P[i * 4] + v[6] * s.P[i * 4 + 1] + v[10] * s.P[i * 4 + 2]; }
+      idx.sort((a, b) => s.key[a] - s.key[b]);
+      for (let j = 0; j < n; j++) {
+        const i = idx[j];
+        for (let c = 0; c < 4; c++) { P[j * 4 + c] = s.P[i * 4 + c]; C[j * 4 + c] = s.C[i * 4 + c]; L[j * 4 + c] = s.L[i * 4 + c]; }
+        for (let c = 0; c < 3; c++) Q[j * 3 + c] = s.Q[i * 3 + c];
       }
     }
-    // fire sucked from the ground into the stem (1.0-4.1 s), the afterwind (blended over: added, orange turns lime on the grass)
-    for (let k = 0; k < 70; k++) for (let j = 0; j < 2; j++) {
-      const born = 1000 + 3000 * _puffHash(k * 2 + j, 80), life = 1000 + 1500 * _puffHash(k * 2 + j, 81), f = (ms - born) / life;
-      if (f < 0 || f >= 1) continue;
-      const a = Math.PI * 2 * _puffHash(k * 2 + j, 82), r = NB_RING * (2 + 4.5 * _puffHash(k * 2 + j, 83)) * (1 - f * f);
-      _putSprite(_nbSmoke, b.x + Math.cos(a) * r, .25 + .9 * f * f, b.z + Math.sin(a) * r, .9 + .5 * f, _nbSuck, .75 * Math.sin(Math.PI * f));
+    s.mesh.geometry.instanceCount = n;
+    if ((s.mesh.visible = n > 0)) for (const a of [A.iPos, A.iCol, A.iCell, A.iShape]) { a.updateRange.count = n * a.itemSize; a.needsUpdate = true; }
+  }
+
+  // Fire by temperature (the plain glows; the billows burn in NK_PUFF_FS): soot, deep red, orange, yellow, white-hot
+  const _NB_FIRE = [0x2e2420, 0x8a2a0c, 0xf06a18, 0xffb43a, 0xfff0c0].map(c => new THREE.Color(c));
+  function _nbFireRamp(T, out) { T = Math.max(0, Math.min(1, T)) * 4; const i = Math.min(3, Math.floor(T)); return out.copy(_NB_FIRE[i]).lerp(_NB_FIRE[i + 1], T - i); }
+  const _nbC = new THREE.Color(), _nbC2 = new THREE.Color(), _nbSoot0 = new THREE.Color(0x4a3a30), _nbSoot1 = new THREE.Color(0x665448), _nbStemSmoke = new THREE.Color(0x6a5a4c);
+  const _nbDust0 = new THREE.Color(0x7d6650), _nbDust1 = new THREE.Color(0xa48a6e);
+  const _nbEmb0 = new THREE.Color(0xf0941d), _nbEmb1 = new THREE.Color(0xd11d1d), _nbSuck0 = new THREE.Color(0xffc46a), _nbSuck1 = new THREE.Color(0xff4a10);
+  const _nbCell = (i, salt) => Math.floor(_puffHash(i, salt + 1) * 3.999);   // a puff's atlas cell and its turn: fixed per puff
+  const _nbTurn = (i, salt, turn) => _puffHash(i, salt) * 6.2831853 + turn;
+  const _nbSunW = new THREE.Vector3(), _nbEye = new THREE.Vector3(), _nbN = new THREE.Vector3();
+  // The blast's fire and smoke at its age (the desktop's mushroomSprites, taken further). The mushroom's
+  // cap is a vortex ring of cauliflower billows: each puff rides round the ring's tube (up the inside, out
+  // over the top, down over the rim and back in underneath), slow and heavy, turning a little as it goes,
+  // so from above the cap's surface flows out from its heart and curls under at the rim. The young
+  // fireball is the same ring, a fat tube with no hole, so its puffs roll straight on into the mushroom as
+  // it rises and flattens (nk::). A puff cools as it rolls (hottest coming up the inside, coolest at the
+  // rim and underneath): from above, a hot heart, the rolling ring and a darker sooty skirt. It burns
+  // white-yellow and orange all over at first; from ~1 s soot takes the billows' crowns and the fire glows
+  // on in the hollows between them, sinking into the heart and deepening to red. As in SC2 it is all gone
+  // by 5.4 s: no grey cloud lingers, the soot dims out with the fire. Over the ring a dome of hot billows
+  // wells up from the heart and spreads into it; under it the stem draws fire up from the ground (grey-brown
+  // smoke at its foot). The smoke is lit by the sun and by the scene (lit: dark at night), darker underneath
+  // and inside the ring; a billow on the far side of the tube fades out, and one turning over the rim is
+  // squashed, seen edge-on. Then the base surge. On GFX LOW the cap, the dome and the stem have half the
+  // puffs (the cap's a little larger), the surge's dust a third (a little denser)
+  function _nbCloud(b, lit) {
+    const t = b.t, low = gfxQuality !== 'HIGH', step = low ? 2 : 1;
+    if (t >= nk.SURGE_END) return;   // (the blast lives on for its embers)
+    const PI2 = Math.PI * 2, v = camera.matrixWorldInverse.elements, eye = camera.position;
+    const g = 1 - Math.exp(-t / .9), fr = nk.fireR(t), gF = _sstep(.6, 2.6, t), m = _sstep(.25, 2.2, t);   // m: the ball has become the ring
+    const R = .15 * fr + (nk.capR(t) - .15 * fr) * m, r = .85 * fr + (1.1 * nk.capTube(t) - .85 * fr) * m;   // the ring's radius, its tube
+    const sy = 1 - .38 * gF + (.38 * gF - .22) * m, H = nk.capH(t);   // the tube's height / width (the ball flattening as it rises)
+    const roll = 1.05 * (t - .5 * (1 - Math.exp(-t / .5)));   // how far it has rolled round the tube: ~1 rad/s once it is going
+    const burn = 1 - _sstep(nk.FIRE_OUT0, nk.FIRE_OUT1, t), Tg = 1.12 * Math.exp(-t / 6) * burn;   // the cloud's temperature
+    const spread = .15 + .6 * _sstep(.4, 2.6, t);   // how much cooler its rim burns than its heart
+    const puff = Math.max(1.05 + 1.65 * g, .7 * fr * (1 - m)) * (low ? 1.3 : 1), fadeIn = Math.min(1, t / .08);   // (the ball's billows big: it reads solid)
+    _nbSunW.copy(_sunLight.position).normalize();
+    // one billow at (x, y, z) from ground zero, its normal _nbN (world), shade: its smoke's own shadow (alb lit
+    // by the sun through it). From 2.8 s a billow whose fire is dying (life: how hot its part of the cloud
+    // burns) breaks up and dims out, the rim first, the heart last: the soot goes with the fire. On the ring
+    // (ring): fades out on the far side of the tube, squashed at the rim. Burning all over, it is blurred a
+    // little: glowing gas has no crisp edge, the soot does
+    const put = (k, salt, x, y, z, size, a, T, life, shade, alb, ring, blur = 0) => {
+      const n = _nbN, f = ring ? n.dot(_nbEye.set(eye.x - b.x - x, eye.y - y, eye.z - b.z - z).normalize()) : 1, h = .06 * _puffHash(k, salt + 5);
+      const go = 1 - _sstep(2.8, 3.8, t) * (1 - _sstep(.3 + h, .55 + h, life));   // (shrinking as it goes: thinned, it turned olive over the grass)
+      a *= (ring ? _sstep(-.4, 0, f) : 1) * Math.min(1, 1.6 * go) * fadeIn;   // (the far side hidden: not drawn)
+      size *= .5 + .5 * go;
+      if (a < .004) return;
+      const vx = v[0] * n.x + v[4] * n.y + v[8] * n.z, vy = v[1] * n.x + v[5] * n.y + v[9] * n.z, sq = ring ? .5 * (1 - Math.abs(f)) / Math.max(Math.hypot(vx, vy), 1e-4) : 0;
+      _nbC.copy(alb).multiplyScalar(lit * (.4 + .75 * Math.max(0, n.dot(_nbSunW))) * shade);
+      _nbPut(_nbPuffs, b.x + x, Math.max(y, .35 * size), b.z + z, size, _nbC, a, _nbCell(k, salt), _nbTurn(k, salt, t * (_puffHash(k, salt + 2) - .5) * .8),
+        0, T, _sstep(.8, .4, T), vx * sq, vy * sq, blur + 1.2 * _sstep(.6, 1, T));
+    };
+    for (let k = 0, NT = 120; k < NT; k += step) {   // the ring (golden-angle offsets spread the puffs over its tube)
+      const h1 = _puffHash(k, 10), h2 = _puffHash(k, 11), a = PI2 * (k + .4 * h1) / NT, ph = k * 2.39996 - roll + .3 * h2;
+      const s = Math.sin(ph), c = Math.cos(ph), rr = R + r * c, ca = Math.cos(a), sa = Math.sin(a);
+      const u = (((Math.PI - ph) / PI2) % 1 + 1) % 1;   // along the roll: 0 coming up the inside, .25 over the top, .5 the rim, .75 underneath
+      const hot = 1 - _sstep(0, .5, u) + _sstep(.75, 1, u);
+      _nbN.set(ca * c, s / sy, sa * c).normalize();   // (the tube is squashed: sy)
+      put(k, 12, ca * rr, H + r * sy * s, sa * rr, puff * (.82 + .15 * (1 + s)) * (.85 + .3 * h1), .92, Tg * (1 - spread * (1 - hot)) * (.9 + .2 * h2), Tg * (.55 + .45 * hot),
+        (.55 + .225 * (1 + s)) * (.8 + .1 * (1 + c)), _nbC2.copy(_nbSoot0).lerp(_nbSoot1, h1), true, 1.5 * _sstep(-.2, -.8, s));   // (underneath, in its own shadow: blurred)
     }
-    // embers: small hot sparks rising slowly off the base (0.9-9 s), cooling to red
-    for (let k = 0; k < 44; k++) {
-      const born = 900 + 8200 * _puffHash(k, 90), life = 2500 + 4500 * _puffHash(k, 91), f = (ms - born) / life;
+    for (let k = 0; k < 26; k += step) {   // the dome: hot billows welling up from the heart, spreading out over the top into the ring
+      const h1 = _puffHash(k, 20), h2 = _puffHash(k, 21), u = (h1 + t * .16) % 1, ang = PI2 * h2 + .3 * t * (h1 - .5), q = .95 * R * Math.sqrt(u);
+      _nbN.set(Math.cos(ang) * .5 * u, 1, Math.sin(ang) * .5 * u).normalize();
+      put(k, 22, Math.cos(ang) * q, H + r * sy * (1.05 - .35 * u), Math.sin(ang) * q, puff * (1.25 - .3 * u + .25 * _puffHash(k, 23)), .92 * _sstep(0, .06, u) * (1 - _sstep(.7, 1, u)),
+        Tg * (1 - .25 * u), Tg * (1 - .25 * u), 1, _nbC2.copy(_nbSoot0).lerp(_nbSoot1, h2), true);
+    }
+    const stemIn = _sstep(.4, 1.4, t), stemTop = Math.max(.5, H - .5 * r * sy);
+    for (let k = 0; k < 18 && stemIn > 0; k += step) {   // the stem: fire drawn up from the ground into the cap, smoke at its foot
+      const u = (_puffHash(k, 30) + t * .3) % 1, ang = PI2 * _puffHash(k, 31) + t * .6, q = (.2 + .6 * (1 - u) ** 2) * _puffHash(k, 32) * (.6 + .4 * m);
+      _nbN.set(Math.cos(ang), .3, Math.sin(ang)).normalize();
+      put(k, 33, Math.cos(ang) * q, .2 + u * (stemTop - .2), Math.sin(ang) * q, (1 + 1.1 * (1 - u)) * (.6 + .4 * g) * (low ? 1.3 : 1), .7 * stemIn * _sstep(0, .15, u) * (1 - _sstep(.85, 1, u)),
+        Tg * (.55 + .45 * u), Tg * (.55 + .45 * u), .8, _nbC2.copy(_nbStemSmoke).lerp(_nbSoot1, u), false);
+    }
+    // the cap's heart: a knot of flame glowing through the smoke, white-hot while young, then widening into
+    // a soft ember glow as it cools (and a faint glow up the stem while it is hot, seen from the side; from
+    // above it would read as a stick)
+    const heat = Math.exp(-t / 3.6), hk = fadeIn * (1 - _sstep(3.5, 5, t)) * _sstep(.08, .3, heat), widen = 1.6 - .6 * heat;
+    for (let i = 0; i < 7 && hk > 0; i++) {
+      const a = PI2 * _puffHash(i, 60), q = .25 * R * Math.sqrt(_puffHash(i, 61));
+      _nbPut(_nbFire, b.x + Math.cos(a) * q, H + r * sy * (.3 + .5 * _puffHash(i, 62)), b.z + Math.sin(a) * q, (R + .5 * r) * (.6 + .3 * _puffHash(i, 63)) * widen,
+        _nbFireRamp(Math.min(1, heat * (1.6 + .4 * _puffHash(i, 64))), _nbC), .12 * hk * (.6 + .4 * heat));
+    }
+    const stemK = .15 * hk * stemIn * _sstep(.3, .5, heat);
+    for (let i = 0; i < 6 && stemK > 0; i++) {
+      const f = (i + .5) / 6;
+      _nbPut(_nbFire, b.x, .4 + f * (stemTop - .4), b.z, 1.1 + .5 * (1 - f), _nbFireRamp(Math.min(1, heat * (1.6 - .3 * f)), _nbC), stemK);
+    }
+    // the base surge: a ring of dust rolling out past the kill radius with a burning leading edge
+    // (shock-heated dust), the most of it at its front, breaking up and settling as it slows. The
+    // bunker stays readable through it (keep)
+    const Rd = nk.surgeR(t), Hd = nk.surgeH(t), grow = 1 + .5 * _sstep(1.5, nk.SURGE_END, t);
+    const sa = _sstep(.03, .2, t) * (1 - _sstep(2, 4.5, t));
+    const rim = Math.exp(-t / 2.2), rimHeat = Math.exp(-t / 1.8), rimIn = _sstep(.03, .15, t);
+    const keep = (x, z) => .3 + .7 * _sstep(1.5, 4, Math.hypot(x, z));
+    for (let k = 0, NW = 130; k < NW && sa > 0; k += low ? 3 : 1) {
+      const h1 = _puffHash(k, 30), h2 = _puffHash(k, 31), h3 = _puffHash(k, 32), h4 = _puffHash(k, 33);
+      const a = PI2 * (k + .5 * h1) / NW, q = Rd - (.2 + .25 * Rd) * h2 * h2, x = b.x + Math.cos(a) * q, z = b.z + Math.sin(a) * q;
+      _nbC.copy(_nbDust0).lerp(_nbDust1, h3).multiplyScalar(.85 * lit);   // dust: lit by the scene (earthy: on the bright grass grey read as shrubs, pale as smoke)
+      _nbPut(_nbPuffs, x, .5 + .55 * Hd * (.3 + .7 * h3) * (1 - .5 * h2), z, (1.6 + .13 * Rd) * (.75 + .5 * h4) * grow, _nbC, .55 * (low ? 1.55 : 1) * sa * keep(x, z), _nbCell(k, 34), _nbTurn(k, 34, t * (h1 - .5) * .8), 0, 0, 0, 0, 0, 3);   // (blurred: soft dust)
+    }
+    // the burning edge: flames licking along the front, close enough to merge (blended over: added, the
+    // yellow would tint the grass lime), sorted a little nearer: the dust rolling behind them does not hide them
+    for (let k = 0, NF = 96; k < NF && rim * rimIn > .02; k++) {
+      const h1 = _puffHash(k, 50), h3 = _puffHash(k, 52), h4 = _puffHash(k, 53);
+      const a = PI2 * (k + .6 * h1) / NF, q = Rd + .2 + .3 * h4, x = b.x + Math.cos(a) * q, z = b.z + Math.sin(a) * q;
+      _nbPut(_nbPuffs, x, .45 + .3 * Hd * h3, z, (1.1 + .1 * Rd) * (.8 + .4 * h3), _nbC.copy(_nbDust0).multiplyScalar(lit),
+        Math.min(1, 1.1 * Math.min(1, 1.3 * rim) * rimIn * (.5 + .5 * h1)) * keep(x, z), _nbCell(k, 54), _nbTurn(k, 54, t * (h1 - .5) * 2), 2, .35 + .6 * rimHeat * (.6 + .4 * h4), 0, 0, 0, 1);
+    }
+  }
+  // SC2's glow cards: the soft ball of light round the fire for its first 3 s (a white haze, a yellow
+  // core, a burst cut short at 1 s), and the flare of the flash. SC2's cards lie flat; from above they
+  // read as these soft discs. Drawn straight to the screen (no bloom), their light is dimmed (k)
+  function _nbGlowCards(b, ms) {
+    if (ms >= 3233) return;
+    const K = (tr) => _nbKey(tr, ms), k = .45, cool = K(NB.glowCool);
+    const card = (y, size, r, g, bl, a) => { if (size > 0) _nbPut(_nbGlow, b.x, y, b.z, size, _nbC.setRGB(r * k, g * k, bl * k), a); };
+    if (ms < 433) card(.9, K(NB.flareSide), 4, 3.88, 3.6, K(NB.flareLight));   // flare
+    if (ms >= 333) card(2.6, K(NB.hazeSide), 1.5, 1.425, 1.32, .6 * K(NB.hazeLight));   // haze
+    if (ms >= 300) card(2.8, K(NB.coreSide), 2.5, 1.95, .875, .7 * cool);   // core
+    if (ms >= 333 && ms < 966) card(3.3, K(NB.burstSide), 3, 2.55, 1.5, .7 * cool);   // burst
+  }
+  // SC2's fire inrush and embers, at SC2's rates (per s, ms keys): the birth times (ms) of the ones a blast throws
+  const _nbBirths = (tr) => { const out = []; for (let ms = tr[0][0], n = 0; ms < tr[tr.length - 1][0]; ms += 5) for (n += _nbKey(tr, ms) * .005; n >= 1; n--) out.push(ms); return out; };
+  const NB_INRUSH = _nbBirths([[1533, 0], [1540, 200], [3100, 200], [3110, 0]]), NB_EMBERS = _nbBirths([[866, 0], [1266, 44], [2866, 44], [9100, 0]]);
+  // The inrush: streaks pulled in from a ring round ground zero toward a point over it, slowing as they go (drag
+  // 4), each three sprites along its path (a streak, stretched by its speed). The embers: small sparks rising
+  // slowly off the crater, a disc 2.8 across, orange cooling to red; the later ones live longer
+  function _nbSparks(b, ms) {
+    for (let k = 0; k < NB_INRUSH.length; k++) {
+      const age = (ms - NB_INRUSH[k]) / 1000, life = .45 + .2 * _puffHash(k, 80), f = age / life;
       if (f < 0 || f >= 1) continue;
-      const a = Math.PI * 2 * _puffHash(k, 92), r = 2.6 * Math.sqrt(_puffHash(k, 93)), up = (.4 + 2 * _puffHash(k, 94)) * f * life / 1000;
-      _nbC.copy(_nbEmb0).lerp(_nbEmb1, f);
-      _putSprite(_nbFire, b.x + Math.cos(a) * r, .3 + up, b.z + Math.sin(a) * r, .28, _nbC, .9 * (1 - f));
+      const a = Math.PI * 2 * _puffHash(k, 81), r = 1.6 + 3.6 * _puffHash(k, 82), y = .3 + .9 * _puffHash(k, 83);
+      const dx = -Math.cos(a) * r, dy = 1 - y, dz = -Math.sin(a) * r, v = (5 + 2 * _puffHash(k, 84)) / Math.hypot(dx, dy, dz), go = (1 - Math.exp(-4 * age)) / 4;
+      _nbC.copy(_nbSuck0).lerp(_nbSuck1, f);
+      for (let j = 0; j < 3; j++) {
+        const m = (go - .03 * j) * v;
+        _nbPut(_nbFire, b.x + Math.cos(a) * r + dx * m, y + dy * m, b.z + Math.sin(a) * r + dz * m, .22 - .05 * j + (.05 - .22 + .05 * j) * f, _nbC, (.5 - .12 * j) * (1 - f));
+      }
+    }
+    for (let k = 0; k < NB_EMBERS.length; k++) {
+      const late = _sstep(866, 9100, NB_EMBERS[k]), life = 2.5 + 2 * late + 2.6 * _puffHash(k, 90), age = (ms - NB_EMBERS[k]) / 1000, f = age / life;
+      if (f < 0 || f >= 1) continue;
+      const a = Math.PI * 2 * _puffHash(k, 91), r = 2.8 * Math.sqrt(_puffHash(k, 92));
+      _nbPut(_nbFire, b.x + Math.cos(a) * r, .2 + (.7 + 2 * _puffHash(k, 93)) * age, b.z + Math.sin(a) * r, .12 - .08 * f, _nbC.copy(_nbEmb0).lerp(_nbEmb1, f), 1 - f);
+    }
+    // sparks flung off the cap's rolling rim (1-4.4 s), spiralling up and out round it as they cool
+    for (let k = 0, NS = gfxQuality === 'HIGH' ? 64 : 32, t = b.t; k < NS; k++) {
+      const born = 1 + 3.4 * _puffHash(k, 120), age = t - born, f = age / (1.1 + .9 * _puffHash(k, 121));
+      if (f < 0 || f >= 1) continue;
+      const a = Math.PI * 2 * _puffHash(k, 122) + (.3 + .3 * _puffHash(k, 123)) * age, loop = .3 * (1 - f);
+      const q = nk.capR(born) + .95 * nk.capTube(born) + (1.2 + 1.6 * _puffHash(k, 124)) * (1 - Math.exp(-age / .5)) + loop * Math.cos(6 * age);
+      const y = nk.capH(born) + .2 * nk.capTube(born) + (.6 + 1.2 * _puffHash(k, 125)) * age + loop * Math.sin(6 * age);
+      _nbPut(_nbFire, b.x + Math.cos(a) * q, y, b.z + Math.sin(a) * q, .16 - .08 * f, _nbC.copy(_nbEmb0).lerp(_nbEmb1, f), (1 - f) * (.75 + .25 * Math.sin(age * 23 + k)));
     }
   }
 
-  function _nbMake(x, z) {
+  function _nbMake(x, z, seed) {
     const add = (geo, mat, order, y = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.renderOrder = order; m.visible = false; scene.add(m); return m; };
-    const basic = (o) => new THREE.MeshBasicMaterial(Object.assign({ transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide }, o));
-    const glow = (o) => _nbCoverGlow(basic(o));
-    const fire = (o) => basic(o);   // fire cloud: blended over (SC2 adds it, onto its darker ground; added onto bright grass it turns white)
+    const glow = (o) => _nbCoverGlow(new THREE.MeshBasicMaterial(Object.assign({ transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide }, o)));
     return {
-      mark:   add(_nbQuad, new THREE.MeshBasicMaterial({ map: _nbMarkTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), 0, .03),
-      cracks: add(_nbQuad, basic({ map: _nbCrackTex, blending: THREE.AdditiveBlending }), 1, .04),   // (red on black: added)
-      shock:  add(_glowRingGeo, glow({ map: _glowTex, color: 0xfff1d8 }), 1, .15),
-      dome:   add(_nbDomeGeo, _nbDomeMat(), 4),
-      dust:   add(_nbDustGeo, new THREE.MeshLambertMaterial({ map: _nbSmokeTex, color: 0xb4a694, transparent: true, depthWrite: false }), 2, 1.6),
-      ring:   add(_nbRingGeo, fire({ map: _nbRingTex }), 3, 2.6),
-      stem:   add(_nbStemGeo, fire({ map: _nbStemTex }), 3),
-      caps:   [0, 1, 2].map(() => add(_nbCapGeo, fire({ map: _nbCapTex }), 3)),
-      top:    add(_nbCapGeo, fire({ map: _nbCapTex, color: 0xff6a4a }), 3),
-      glows:  [0xffe2b8, 0xffa040].map(c => add(_nbQuad, glow({ map: _glowTex, color: c }), 3, 2.4)),
+      burn:   add(_nbQuad, _nkMat(NK_BURN_FS, _nkU({ uC: new THREE.Vector2(x, z), uR: 0, uW: 1, uK: 0, uTime: 0, uSeed: seed })), 1, .06),   // with the ground decals
+      wash:   add(_nbQuad, glow({ map: _blastWashTex, color: 0xff8c38 }), 1, .045),
+      front:  add(_nkRingGeo, _nkMat(NK_FRONT_FS, _nkU({ uC: new THREE.Vector2(x, z), uR: 0, uW: 1, uI: 0, uTime: 0, uSeed: seed })), 1, .12),
+      tori:   [0, 1, 2].map(i => add(_nbTorusGeo, _nkMat(NK_TORUS_FS, _nkU({ uB: 0, uTime: 0, uSeed: seed + 3.1 * i }), { vertexShader: NK_TORUS_VS }), 1)),   // (under the cloud)
+      dome:   add(_nbDomeGeo, _nkMat(NK_DOME_FS, _nkU({ uA: 0, uTime: 0 })), 4),
       star:   add(_nbQuad, glow({ map: _nbStarTex }), 4, .8),
+      shadow: add(_nbQuad, new THREE.MeshBasicMaterial({ map: _blastWashTex, color: 0, transparent: true, depthWrite: false, fog: false }), 1, .05),
+      wilson: add(_nbWilsonGeo, _nkMat(NK_WILSON_FS, _nkU({ uC: new THREE.Vector2(x, z), uCol: new THREE.Color(), uR: 1, uA: 0, uTime: 0, uSeed: seed })), 1.5),   // (under the cap's sprites)
+      // the heat haze (renderScene bends the scene by it): the shock bubble, the ripple over the ground, the cap's shimmer, the crater's
+      haze:   [_nbDomeGeo, _nbQuadDown, _nbBallGeo, _nbDomeGeo].map((geo, i) => {
+        const m = new THREE.Mesh(geo, _nkMat(NK_HAZE_FS, Object.assign(_nkU({ uC: new THREE.Vector2(x, z), uRing: new THREE.Vector2(), uS: 0, uTile: 1, uRise: 0 }), _hz.U),
+          { depthTest: false, side: THREE.DoubleSide, blendDst: THREE.OneFactor }));
+        m.position.set(x, i === 1 ? .05 : 0, z); m.visible = false; _hz.scene.add(m); return m;
+      }),
     };
   }
   function _nbDispose(b) {
     const P = b.parts;
-    for (const m of [P.mark, P.cracks, P.shock, P.dome, P.dust, P.ring, P.stem, ...P.caps, P.top, ...P.glows, P.star]) { scene.remove(m); m.material.dispose(); }
+    for (const m of [P.burn, P.wash, P.front, ...P.tori, P.dome, P.star, P.shadow, P.wilson]) { scene.remove(m); m.material.dispose(); }
+    for (const m of P.haze) { _hz.scene.remove(m); m.material.dispose(); }
     b.parts = null;
   }
   function _nbPose(b, ms) {
     const P = b.parts, K = (tr) => _nbKey(tr, ms), on = (m, from, to) => (m.visible = ms >= from && ms < to);
     const flat = (m, d, k = 1) => m.scale.set(d, k, d);
     if (on(P.star, 133, 566)) { flat(P.star, K(NB.flashSide)); P.star.material.opacity = K(NB.flashLight); }
-    for (const [i, m] of P.glows.entries()) if (on(m, 333, 3233)) { flat(m, K(i ? NB.glow2Side : NB.glowSide)); m.material.opacity = .32 * K(NB.glowLight); }   // (additive on bright grass: it saturates fast)
-    if (on(P.shock, 666, 1966)) { flat(P.shock, NB_RING * K(NB.shockDiam) / 2); P.shock.material.opacity = .6 * K(NB.shockLight); }
-    if (on(P.dome, 0, 1600)) { P.dome.scale.setScalar(NB_RING * K(NB.domeDiam)); P.dome.material.uniforms.uK.value = .45 * K(NB.domeLight); }
-    if (on(P.dust, 0, 3633)) { P.dust.scale.setScalar(NB_RING * K(NB.dustDiam) / 2.8); P.dust.material.opacity = .85 * K(NB.dustAlpha); }
-    if (on(P.ring, 566, 1700)) { flat(P.ring, NB_RING * K(NB.ringDiam) / 2.52); P.ring.material.opacity = .8 * K(NB.ringLight); }
-    if (on(P.stem, 966, 4700)) P.stem.material.opacity = .85 * K(NB.stemLight);
-    // the cap: three fire-cloud doughnuts (wide, a tall core, an upper layer) riding the rising column, and a red top skin
-    const z = K(NB.capZ), grow = K(NB.capGrow);
-    const cap = [[3.48, 5.9 * grow, 1.7], [3.48, 2.37 * (1 + .85 * (grow - 1)), 2.2], [4.4, 5.36 * grow, 1.6]];
-    P.caps.forEach((m, i) => {
-      if (!on(m, 1100, 4700)) return;
-      const [dy, d, hy] = cap[i];
-      m.position.y = Math.max(.8, z + dy);
-      flat(m, d / 3.4, hy * d / 3.4);
-      m.material.opacity = (i === 1 ? .45 : .6) * K(NB.capLight);   // (the core thinner: stacked full, they read as a solid can)
+    // nk::: the shock front racing over the ground (a soft band of light, not a drawn line) under its dome (gone by 0.8 s)
+    const t = b.t, R0 = nk.frontR(t);
+    if ((P.front.visible = t < nk.FRONT_END)) {
+      const w = .45 + .04 * R0, U = P.front.material.uniforms;
+      flat(P.front, Math.max(.05, R0 + 2 * w) / 1.12);   // the band's mesh (r 0.5-1.12) out past its glow
+      U.uR.value = R0; U.uW.value = w; U.uTime.value = t;
+      U.uI.value = Math.min(1.2, (6 * Math.exp(-t / .3) + .9) * (1 - _sstep(1.2, nk.FRONT_END, t)));
+    }
+    if ((P.dome.visible = t < .8 && gfxQuality === 'HIGH')) {   // (not on LOW: a faint rim, but the whole screen drawn over)
+      const U = P.dome.material.uniforms;
+      P.dome.scale.setScalar(2 * Math.max(.05, R0));
+      U.uA.value = Math.min(.8, 2.2 * _sstep(0, .04, t) * (1 - _sstep(.2, .8, t))); U.uTime.value = t;
+    }
+    // SC2's burn ring: burning ground spreading at a steady pace well behind the front, brightest at 1.7 s
+    if (on(P.burn, 633, 3000)) {
+      const r = K(NB.burnR), w = .9 + .06 * r, U = P.burn.material.uniforms;
+      flat(P.burn, 2 * (r + 3 * w));
+      U.uR.value = r; U.uW.value = w; U.uK.value = K(NB.burnLight); U.uTime.value = t;
+    }
+    // the fireball's glow on the ground under it (short: its light lights the field), less in the close-up (it looks across it)
+    const wk = nk.heat(t) * (1 - _sstep(1.5, 3.5, t));
+    if ((P.wash.visible = wk > .01)) { flat(P.wash, 5.6 * nk.fireR(t)); P.wash.material.opacity = wk * (1 - .5 * _zoom); }
+    // the fire tori: SC2's cap is three nested fat rings of rolling fire (the main ring, a smaller one over it,
+    // a narrow tall core) on the cap's curves, a faint layer under the sprites
+    const h = nk.capH(t), cr = nk.capR(t), tb = nk.capTube(t), B = K(NB.toriLight);
+    const tori = [[h, cr, 2 * tb], [h + 1.2, .7 * cr, 1.4 * tb], [h - .4 * tb, .35 * cr, 3.2 * tb]];
+    P.tori.forEach((m, i) => {
+      if (!on(m, 1100, 4700) || !(m.visible = gfxQuality === 'HIGH')) return;   // (not on LOW: faint under the sprites)
+      const [y, r, s] = tori[i], U = m.material.uniforms;
+      m.position.y = y; m.scale.set(r, s, r);
+      U.uB.value = B * (i === 2 ? .7 : 1) * (1 - _sstep(3.2, 4.2, t)); U.uTime.value = t;   // (gone with the cloud's billows)
     });
-    if (on(P.top, 1566, 5500)) {
-      const d = 4.42 * (1 + .43 * _sstep(2100, 4166, ms));
-      P.top.position.y = z + 5.64;
-      flat(P.top, d / 3.4, 1.5 * d / 3.4);
-      P.top.material.opacity = .6 * K(NB.topLight);
+    // the heat haze: the shock bubble swelling out to the kill radius (gone by 1.5 s), a ripple running over the
+    // ground behind it (to 1.8 s), the shimmer round the cap (0.7-5 s) and over the crater (to 12.3 s, fading
+    // with the scar); SC2's keys, its sizes x 1.83 on the ground, x 1.1 for the cap. The shapes are 1 across
+    const [hb, hr, hc, hk] = P.haze, ta = t * 1000;
+    const haze = (m, S, tile, rise) => { const U = m.material.uniforms; U.uS.value = S; U.uTile.value = tile; U.uRise.value = rise; return (m.visible = S > .01); };
+    if (haze(hb, K(NB.hazeBubble), .35, 1.5 * t)) { const d = 1.83 * K(NB.hazeBubbleD); hb.scale.set(d, .9 * d, d); }
+    if (haze(hr, K(NB.hazeRipple), .5, 0)) { const r = .915 * K(NB.hazeRippleD), w = .8 + .06 * r; flat(hr, 2 * (r + 2.5 * w)); hr.material.uniforms.uRing.value.set(r, w); }
+    if (haze(hc, K(NB.hazeCap), .6, 2.2 * t)) { hc.scale.setScalar(2 * (3.96 + .3 * cr)); hc.position.y = h; }
+    if (haze(hk, _nbKey(NB.hazeCrater, ta) * (1 - _sstep(nk.SCAR_END - 5, nk.SCAR_END, t)), .9, .45 * t)) {
+      const r = 2 * _nbKey(NB.hazeCraterR, ta); hk.scale.set(r, 2 * _nbKey(NB.hazeCraterH, ta), r);
     }
-    if (on(P.mark, 333, NB_END)) { flat(P.mark, 7 * K(NB.markSize)); P.mark.material.opacity = .85 * K(NB.markAlpha); }
-    if (on(P.cracks, 333, NB_END)) { flat(P.cracks, 7 * K(NB.markSize)); P.cracks.material.opacity = K(NB.markGlow) * K(NB.markAlpha); }
+    // the cap's soft shadow on the ground, cast away from the sun: it tells its height from above (once the
+    // fire no longer outshines the sun; none at night). Cast as by a lower sun: from the high one it would
+    // hide under the cap, seen from the overview
+    const sk = _sstep(1, 2.2, t) * (1 - _sstep(3.3, 4.6, t)) * (1 - _dnLitF);
+    if ((P.shadow.visible = sk > .01)) {
+      const S = _sunLight.position, k = 1.6 * h / S.y;
+      P.shadow.position.set(b.x - k * S.x, .05, b.z - k * S.z);
+      flat(P.shadow, 2.6 * (cr + tb));
+      P.shadow.material.opacity = .65 * sk;
+    }
+    // the condensation (Wilson) ring flashing out round the cap's foot (0.75-2.65 s), lit by the fire at night
+    // (not on LOW: a wide ring of noise drawn over the field)
+    const tw = t - .75;
+    if ((P.wilson.visible = tw > 0 && tw < 1.9 && gfxQuality === 'HIGH')) {
+      const U = P.wilson.material.uniforms, Rw = (cr + tb) * (1.1 + 1.5 * (1 - Math.exp(-tw / .55)));
+      P.wilson.position.y = h - .4 * tb;
+      flat(P.wilson, Rw);
+      U.uR.value = Rw; U.uA.value = _sstep(0, .12, tw) * (1 - _sstep(.5, 1.9, tw)); U.uTime.value = t;
+      U.uCol.value.setRGB(.92, .94, .97).lerp(_nbC.setRGB(.8, .5, .32), _dnLitF);
+    }
   }
-  const _nbOrder = [];
-  let _nbClock = 0;
+  const _nbV = new THREE.Vector3();
   function syncNukeBlasts(dt) {   // live frames: they age in game time
-    _nbClock += dt;
-    for (const b of nukeBlasts) { b.t += dt; if (b.t * 1000 + NB_LEAD >= NB_END) _nbDispose(b); }
+    for (const b of nukeBlasts) { b.t += dt; if (nk.seqMs(b.t) >= NB_END) _nbDispose(b); }
     nukeBlasts = nukeBlasts.filter(b => b.parts);
-    _nbCapTex.offset.x = -.47 * _nbClock;    // the cap's fire rolls round it
-    _nbStemTex.offset.y = -.46 * _nbClock;   // the stem's fire runs up it
-    _nbRingTex.offset.x = .3 * _nbClock;
-    _nbSmokeTex.offset.x = -.09 * _nbClock;
-    _nbSmoke.n = _nbFire.n = 0;
+    _nbPuffs.n = _nbFire.n = _nbGlow.n = 0;
     const lit = 1 - .75 * _dnLitF;
-    for (const b of nukeBlasts) { const ms = b.t * 1000 + NB_LEAD; _nbPose(b, ms); _nbSprites(b, ms, lit); }
-    // smoke back to front (normal blending): reorder the buffers by view depth
-    const S = _nbSmoke, N = S.n, v = camera.matrixWorldInverse.elements;
-    if (N > 1) {
-      _nbOrder.length = 0;
-      for (let i = 0; i < N; i++) _nbOrder.push([v[2] * S.pos[i * 3] + v[6] * S.pos[i * 3 + 1] + v[10] * S.pos[i * 3 + 2], i]);
-      _nbOrder.sort((a, b) => a[0] - b[0]);
-      const pos = S.pos.slice(0, N * 3), col = S.col.slice(0, N * 3), size = S.size.slice(0, N), alpha = S.alpha.slice(0, N);
-      _nbOrder.forEach(([, i], j) => {
-        for (let c = 0; c < 3; c++) { S.pos[j * 3 + c] = pos[i * 3 + c]; S.col[j * 3 + c] = col[i * 3 + c]; }
-        S.size[j] = size[i]; S.alpha[j] = alpha[i];
-      });
+    for (const b of nukeBlasts) { const ms = nk.seqMs(b.t); _nbPose(b, ms); _nbCloud(b, lit); _nbGlowCards(b, ms); _nbSparks(b, ms); }
+    syncNukeScars(dt, lit);
+    if (nukeBlasts.length) {   // the sun in view space (it lights the puffs), the bunker on screen (the cloud thins over it)
+      _nbLightV.value.copy(_sunLight.position).transformDirection(camera.matrixWorldInverse);
+      _nbV.set(0, 1, 0).project(camera); _nbThin.value.set(_nbV.x, _nbV.y, camera.aspect, 1);
     }
-    for (const sys of [_nbSmoke, _nbFire]) {
-      const geo = sys.points.geometry;
-      geo.setDrawRange(0, sys.n);
-      for (const k of ['position', 'aColor', 'aSize', 'aAlpha']) geo.attributes[k].needsUpdate = true;
-    }
+    for (const s of [_nbPuffs, _nbGlow, _nbFire]) _nbUpload(s, camera.matrixWorldInverse.elements);
+    syncNukeFlash();
+    syncNukeHaze();
   }
-  function clearNukeBlasts() { nukeBlasts.forEach(_nbDispose); nukeBlasts = []; syncNukeBlasts(0); }
+  function clearNukeBlasts() { nukeBlasts.forEach(_nbDispose); nukeBlasts = []; nukeScars.forEach(_dropScar); nukeScars = []; syncNukeBlasts(0); }
+  // The nuke's programs, compiled at load (again as the reticle and the warhead load, and when the
+  // graphics quality changes them) off a set of its materials kept hidden for good: the first nuke
+  // does not stall a frame, and a material disposed with its launch or its blast does not take its
+  // program with it (the next nuke would compile it again). The launch's own (designator, warning
+  // ring and its night glow, the warhead's trail) are plain MeshBasicMaterials: unlit, one- or
+  // two-sided, the reticle's map, the glow's (_glowMat)
+  let _nbKeep = null;
+  function warmNukeShaders() {
+    const hidden = (mat) => { const m = new THREE.Mesh(_nbQuad, mat); m.visible = false; scene.add(m); return m; };
+    if (!_nbKeep) {
+      _nbKeep = { parts: _nbMake(0, 0, 0), scar: _nbScarMesh(0, 0, 0),
+        launch: [{}, { side: THREE.DoubleSide }].map(o => hidden(new THREE.MeshBasicMaterial(Object.assign({ fog: false }, o)))).concat(hidden(_glowMat())) };
+      _nbKeep.scar.visible = false;
+      for (const t of [_nbPuffTex, _nbStarTex, _blastWashTex]) renderer.initTexture(t);
+    }
+    if (_nukeTargetTex && !_nbKeep.dot) _nbKeep.dot = hidden(new THREE.MeshBasicMaterial({ map: _nukeTargetTex, fog: false }));
+    if (!_nbKeep.missile && (_nbKeep.missile = ModelLoader.clone('nukeMissile'))) { _nbKeep.missile.visible = false; scene.add(_nbKeep.missile); }
+    renderer.compile(scene, camera);
+    renderer.compile(_hz.scene, camera);   // (the heat haze's: its shapes, the scene bent by them)
+  }
+
+  // ── Nuke scars ───────────────────────────────────────────────────────────
+  // The pit a blast leaves (NK_SCAR_FS), its cracks opened by the front: kept apart from the blasts
+  // (it outlives them, to nk.SCAR_END), at most NUKE_SCARS
+  const NUKE_SCARS = 3;
+  let nukeScars = [];   // {age: s since the blast, mesh}, oldest first
+  function _nbScarMesh(x, z, seed) {
+    const mat = _nkMat(NK_SCAR_FS, Object.assign(THREE.UniformsUtils.clone(THREE.UniformsLib.fog), _nkU({ uC: new THREE.Vector2(x, z), uAge: 0, uSeed: seed, uFront: 0, uK: 0, uLit: 1 })),
+      { fog: true, polygonOffset: true, polygonOffsetFactor: -2, extensions: { derivatives: true } });   // (fog: the renderer keeps its uniforms; fwidth on WebGL 1)
+    const m = new THREE.Mesh(_nbQuad, mat);
+    m.position.set(x, .03, z); m.scale.set(8.5, 1, 8.5); m.renderOrder = 0;   // before every other transparent: it lies on the ground
+    scene.add(m);
+    return m;
+  }
+  function addNukeScar(x, z, seed) {
+    if (nukeScars.length >= NUKE_SCARS) _dropScar(nukeScars.shift());
+    nukeScars.push({ age: 0, mesh: _nbScarMesh(x, z, seed) });
+  }
+  function _dropScar(s) { scene.remove(s.mesh); s.mesh.material.dispose(); }
+  function syncNukeScars(dt, lit) {
+    for (const s of nukeScars) {
+      const U = s.mesh.material.uniforms;
+      s.age += dt;
+      // it shows as the flash dies (not a dark pit under the flash star), fades by nk.SCAR_END
+      U.uAge.value = s.age; U.uFront.value = nk.frontR(s.age); U.uLit.value = lit;
+      U.uK.value = _sstep(.1, .45, s.age) * (1 - _sstep(nk.SCAR_END - 5, nk.SCAR_END, s.age));
+    }
+    while (nukeScars.length && nukeScars[0].age >= nk.SCAR_END) _dropScar(nukeScars.shift());
+  }
+
+  // ── Nuke flash and heat haze ─────────────────────────────────────────────
+  // The flash: the desktop blows the field out to white through its HDR exposure (x6) under a white bloom
+  // over ground zero. There is no HDR here: the field whitens, most round ground zero, under a quad drawn
+  // over the scene (the HUD stays clear), then dims a little round the fireball as the eyes are dazzled.
+  // The ambient light, the fog and the fireball's light (updateNukeLight) surge with it
+  const NK_FLASH_VS = `uniform vec3 uPos; varying vec2 vUv; varying vec2 vC;
+    void main() { vec4 c = projectionMatrix * viewMatrix * vec4(uPos, 1.); vC = c.xy / max(c.w, 1e-3) * .5 + .5; vUv = position.xy * .5 + .5; gl_Position = vec4(position.xy, 0., 1.); }`;
+  const NK_FLASH_FS = `
+    uniform float uK, uDim, uAspect;
+    varying vec2 vUv; varying vec2 vC;
+    void main() {
+      vec2 d = (vUv - vC) * vec2(uAspect, 1.);
+      float g = exp(-dot(d, d) / .2025);   // the bloom (0.45 of the screen's height)
+      float w = 1. - exp(-2.4 * uK * sqrt(uK) - 3. * uK * g);   // (the field comes back before the bloom: half white, the grass reads lime)
+      gl_FragColor = vec4(mix(vec3(1., .98, .96), vec3(1., .93, .82), g) * w, 1. - (1. - w) * (1. - uDim * (1. - g)));
+    }`;
+  const NUKE_FLASH_AMB = 1.5, NUKE_FLASH_FOG = 1;   // the ambient light's and the fog's surge at its peak (at night the field is its fog)
+  const _nbFlash = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({ uniforms: _nkU({ uPos: new THREE.Vector3(), uK: 0, uDim: 0, uAspect: 1 }),
+    vertexShader: NK_FLASH_VS, fragmentShader: NK_FLASH_FS, transparent: true, depthTest: false, depthWrite: false,
+    blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor }));
+  _nbFlash.frustumCulled = false; _nbFlash.renderOrder = 99; _nbFlash.visible = false;   // (over every other transparent)
+  scene.add(_nbFlash);
+  let _nbSurged = false;
+  function syncNukeFlash() {   // (syncNukeBlasts) the youngest blast's
+    let k = 0, dim = 0, b = null;
+    for (const n of nukeBlasts) { k = Math.max(k, nk.flashK(n.t)); dim = nk.dazzle(n.t); b = n; }
+    const on = k > .002;
+    if ((_nbFlash.visible = on || dim > .002)) {
+      const U = _nbFlash.material.uniforms;
+      U.uPos.value.set(b.x, Math.max(3, nk.capH(b.t)), b.z); U.uK.value = k; U.uDim.value = dim; U.uAspect.value = camera.aspect;
+    }
+    // the surge, over the day / night lights (_applyDNLights): set again each frame while it lasts, and once after it
+    if (!on && !_nbSurged) return;
+    _applyDNLights(_dnLitF);
+    if (!(_nbSurged = on)) return;
+    _ambientLight.color.multiplyScalar(_ambientLight.intensity).add(_nbC.setRGB(1, .97, .92).multiplyScalar(NUKE_FLASH_AMB * k));
+    _ambientLight.intensity = 1;
+    scene.fog.color.add(_nbC.setRGB(1, .95, .85).multiplyScalar(NUKE_FLASH_FOG * k));
+    scene.background.copy(scene.fog.color);
+  }
+
+  // The heat haze (the desktop's distortion pass; the shapes are each blast's, posed in _nbPose): while a blast
+  // is younger than nk.HAZE_END, the scene, drawn to the canvas as ever, is copied; the haze shapes draw their
+  // offsets (NK_HAZE_FS) into a target half the canvas's size in CSS pixels (a quarter on GFX LOW), then their
+  // far sides are drawn again over the canvas, each pixel the copy bent by them (_hzBend). Drawn there they are
+  // hidden by what the scene drew in front of them (its depth: the bunker, Zerg in the haze or near the lens are
+  // not bent), and the canvas keeps its own antialiasing: the switch in and out changes nothing. (The scene
+  // drawn into a target of its own, multisampled to keep its edges and resolving its depth, cost ~5 ms a frame
+  // more at 2x.) Its targets are made at the launch and freed when the haze is over
+  const _hz = { on: false, made: false, ht: null, copy: null, scene: new THREE.Scene(), U: { uAspectInv: { value: 1 } } };   // U: the shapes' shared uniforms
+  const _hzBend = new THREE.ShaderMaterial({ uniforms: { tScene: { value: null }, tHaze: { value: null }, uPx: { value: new THREE.Vector2(1, 1) } },
+    vertexShader: NK_VS, fragmentShader: `uniform sampler2D tScene, tHaze; uniform vec2 uPx;
+      void main() {
+        vec2 uv = gl_FragCoord.xy * uPx; vec4 h = texture2D(tHaze, uv);
+        vec2 o = (h.xz - h.yw) * ${HZ_RANGE.toFixed(2)};
+        if (dot(o, o) < 1e-9) discard;   // (bends nothing)
+        gl_FragColor = vec4(texture2D(tScene, uv + o).rgb, 1.);
+      }`, side: THREE.BackSide, depthWrite: false });
+  _hz.scene.add(Object.assign(new THREE.Mesh(_nbQuad, _hzBend), { visible: false }));   // (kept: its program compiled at load)
+  const _hzOrigin = new THREE.Vector2(), _hzSize = new THREE.Vector2();
+  function _hzTargets() {   // made, or sized to the canvas
+    const s = renderer.getDrawingBufferSize(_hzSize), q = renderer.getPixelRatio() * (gfxQuality === 'HIGH' ? 2 : 4), w = Math.ceil(s.x / q), h = Math.ceil(s.y / q);
+    if (!_hz.ht) _hz.ht = new THREE.WebGLRenderTarget(w, h, { depthBuffer: false });
+    if (_hz.ht.width !== w || _hz.ht.height !== h) _hz.ht.setSize(w, h);
+    if (!_hz.copy || _hz.copy.image.width !== s.x || _hz.copy.image.height !== s.y) {
+      if (_hz.copy) _hz.copy.dispose();
+      _hz.copy = Object.assign(new THREE.DataTexture(null, s.x, s.y, THREE.RGBFormat), { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });   // (the canvas has no alpha)
+    }
+    const U = _hzBend.uniforms;
+    U.tScene.value = _hz.copy; U.tHaze.value = _hz.ht.texture; U.uPx.value.set(1 / s.x, 1 / s.y);
+    _hz.made = true;
+  }
+  function prepNukeHaze() {   // (the launch) its targets, ready before the blast
+    _hzTargets();
+    renderer.setRenderTarget(_hz.ht); renderer.setRenderTarget(null); renderer.initTexture(_hz.copy);
+  }
+  function syncNukeHaze() {   // (syncNukeBlasts) its targets freed once it is over, or the launch was called off
+    _hz.on = nukeBlasts.some(b => b.t < nk.HAZE_END);
+    if (!_hz.on && _hz.made && !_nukeInFlight) { _hz.ht.dispose(); _hz.copy.dispose(); _hz.made = false; }
+  }
+  function renderScene() {   // (loop()) the scene, bent by the heat haze
+    renderer.render(scene, camera);
+    if (!_hz.on) return;
+    _hzTargets();
+    const a = renderer.getClearAlpha(), P = camera.projectionMatrix.elements;
+    _hz.U.uAspectInv.value = P[0] / P[5];
+    renderer.setRenderTarget(_hz.ht); renderer.setClearAlpha(0); renderer.render(_hz.scene, camera); renderer.setClearAlpha(a);   // the offsets (cleared to none)
+    renderer.setRenderTarget(null); renderer.copyFramebufferToTexture(_hzOrigin, _hz.copy);
+    _hz.scene.overrideMaterial = _hzBend; renderer.autoClear = false;
+    renderer.render(_hz.scene, camera);
+    _hz.scene.overrideMaterial = null; renderer.autoClear = true;
+  }
 
   // ── Kill / upgrade ────────────────────────────────────────────────────────
   // Zerg blood: Zergling, Roach — fresh → dried
@@ -2537,21 +3187,30 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     for (let i = 0; i < (r ? 10 : 7); i++)
       emitParticle(_smoke, p.x, p.y + .35, p.z, (R() - .5) * 2.6, .8 + R() * 2, (R() - .5) * 2.6, .45 + R() * .35, .11, .06, .9, c0, c1, 16, .8, 0);
   }
-  // splash: its blood (not for a nuke: burnt)
-  function killEnemy(e,reward,splash=true){
+  // splash: its blood (not for a nuke: burnt); fling: a nuke's victim {zero, delay, vel, spin} (its
+  // shock front throws the body: updateCorpses)
+  let _killBatch = false;   // a nuke kills a wave in one frame: the HUD once after them (each refresh forces a layout)
+  function killEnemy(e,reward,splash=true,fling=null){
     if(e.dead)return; e.dead=true;
+    const slowF=slowedEnemies.get(e.mesh.uuid)?.factor??1;   // (a nuke's victim runs on at the pace it had)
     slowedEnemies.delete(e.mesh.uuid);
     if(splash) deathFx(e);
     scene.remove(e.mesh);
     SFX.play(e.type==='r'?'rdie':'zdie');
     if(e.pool&&e.mesh.visible){                       // death animation (instanced corpse)
-      if(corpses.length>=80) corpses.shift();
-      corpses.push({mesh:e.mesh,pool:e.pool,corpse:true,t:0,spin:Math.random()<.5?-1:1});
+      if(corpses.length>=CORPSE_CAP) corpses.shift();
+      const c={mesh:e.mesh,pool:e.pool,corpse:true,t:0,spin:Math.random()<.5?-1:1};
+      if(fling){                                      // burning, it runs on at the bunker (one at the hull writhes there, in its attack pose)
+        Object.assign(c, fling, {flung:true, thrown:false, col:[1,1,1], stopR:attackReach(e), fireAcc:Math.random(), smokeAcc:Math.random()});   // (flames out of step)
+        const p=e.mesh.position, d=Math.hypot(p.x,p.z);
+        if(d>=c.stopR&&d>.01){ const v=e.speed*slowF*60/d; c.run=[-p.x*v,-p.z*v]; c.walk=e.walk; c.stride=e.stride; c.step=e.step; }
+      }
+      corpses.push(c);
     }
     if(reward){
       score+=e.reward.score; kills++; waveKills++;
       minerals+=e.reward.minerals; gas+=e.reward.gas;
-      updateHUD();
+      if(!_killBatch) updateHUD();
       achKill(kills);
     }
   }
@@ -4079,7 +4738,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       // not game time: with the cycle off nothing else moves). Left frozen, the
       // title showed the night and the next game started in it.
       if(!dnEnabled&&_dnFactor>0) updateDayNight(dt);
-      drawCH();tickPortrait(dt);renderer.render(scene,camera);return;
+      drawCH();tickPortrait(dt);renderScene();return;
     }
     _gameT+=dt;
 
@@ -4293,7 +4952,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     syncEnemyPools();
     drawCH();
     tickPortrait(dt);
-    renderer.render(scene,camera);
+    renderScene();
   }
 
   // ── Start / game over ─────────────────────────────────────────────────────
@@ -4924,6 +5583,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   ['zergling','zergling_upgrade','zergling_webby','roach','roach_ex1a','roach_ex3']
     .forEach(k => ModelLoader.ready(k).then(() => enemyLook(k)));
   buildScene();
+  warmNukeShaders(); ModelLoader.ready('nukeMissile').then(warmNukeShaders);   // (the warhead: once it has loaded)
   initPortrait(); // hologram builds itself as soon as the bunker model is cached
   loop();
 
@@ -5539,6 +6199,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     _applyDNLights(_dnLitF); // light levels for this quality, blended with day/night (and a flare)
 
     if (hi && _sunLight && _sunLight.shadow.map) { _sunLight.shadow.map.dispose(); _sunLight.shadow.map = null; }
+    warmNukeShaders();   // (the shadows are in every program's key)
     _syncGfxUI();
   }
 
