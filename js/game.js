@@ -823,9 +823,9 @@ const G = (() => {
       if (!live(e)) continue;
       e.mesh.updateMatrix();
       const i = e.pool.n++, o = i * 16, c = i * 3;
-      // colour: corpse fades dark · hit flash bright · concussive slow icy blue
+      // colour: corpse fades dark (a nuke's burns) · hit flash bright · concussive slow icy blue
       let r = 1, g = 1, b = 1;
-      if (e.corpse) r = g = b = Math.max(0.25, 1 - e.t * 1.4);
+      if (e.corpse) { if (e.col) [r, g, b] = e.col; else r = g = b = Math.max(0.25, 1 - e.t * 1.4); }
       else if (e.flash > 0) r = g = b = 2.6;
       else if (slowedEnemies.has(e.mesh.uuid)) { r = 0.6; g = 0.8; b = 1.5; }
       for (const im of e.pool.ims) {
@@ -839,17 +839,68 @@ const G = (() => {
     }
   }
 
-  // Dying enemies: pop, roll onto their side, then sink into the ground (~1.2 s)
+  // Dying enemies: pop, roll onto their side, then sink into the ground (~1.2 s). A nuke's victims
+  // catch fire in the flash and run on, slowing and staggering, until its front reaches them, then
+  // fly outward burning and tumbling, bounce once, smoulder out and sink (_burnCorpse).
+  const CORPSE_CAP = 160;
+  const NUKE_FIRE_BODIES = { HIGH: 40, LOW: 20 };   // the flames on all the bodies share this budget (bodies at full rate)
   let corpses = [];
   function updateCorpses(dt) {
+    // (a nuke over a big wave must not flood the particles)
+    let burning = 0;
+    for (const c of corpses) if (c.flung && c.t < c.delay + 2) burning++;   // (before it is thrown: when it should be)
+    const share = Math.min(1, NUKE_FIRE_BODIES[gfxQuality] / Math.max(1, burning));
     corpses = corpses.filter(c => {
       c.t += dt;
+      if (c.flung) return _burnCorpse(c, dt, share);
       const m = c.mesh;
       if (c.t < 0.12) m.position.y = c.t / 0.12 * 0.18;                                   // pop
       else m.position.y = 0.18 - Math.min(1, (c.t - 0.12) / 1.0) ** 2 * 0.9;               // sink
       m.rotation.z = c.spin * Math.min(1, c.t / 0.3) * Math.PI * 0.5;                       // roll over
       return c.t < 1.2;
     });
+  }
+  function _burnCorpse(c, dt, share) {
+    const m = c.mesh, p = m.position, v = c.vel, R = Math.random;
+    if (!c.thrown) {   // the front reaches it where it has run to: thrown outward from there
+      const ox = p.x - c.zero[0], oz = p.z - c.zero[1], L = Math.hypot(ox, oz);
+      if (nk.frontR(c.t) >= L) {
+        c.thrown = true; c.delay = c.t;
+        const h = Math.hypot(v[0], v[2]);
+        if (L > 1e-3) { v[0] = ox / L * h; v[2] = oz / L * h; }
+      }
+    }
+    const s = c.thrown ? c.t - c.delay : -1;
+    // the flash's white-out, then orange-hot, charring black within about a second
+    const ch = _sstep(0, 1.2, c.t), wh = 1.2 * Math.exp(-c.t / .12);
+    c.col[0] = 1 - .87 * ch + wh; c.col[1] = .62 - .51 * ch + wh; c.col[2] = .38 - .28 * ch + wh;
+    if (s < 0) {   // still on its feet: runs on, slowing as it burns, staggering (no further than the hull)
+      const k = Math.exp(-c.t / .35);
+      if (c.run) {
+        let dx = c.run[0] * k * dt, dz = c.run[1] * k * dt;
+        const r = Math.hypot(p.x, p.z), L = Math.hypot(dx, dz);
+        if (r - L < c.stopR) { const f = Math.max(0, r - c.stopR) / Math.max(L, 1e-6); dx *= f; dz *= f; }
+        p.x += dx; p.z += dz;
+        if (c.walk && dx * dx + dz * dz > 0) walkStep(c, Math.hypot(dx, dz));
+      }
+      m.rotation.z = .14 * (1 - k) * Math.sin(c.t * 15 + 3 * c.spin);
+    } else if (s < 1.6) {   // flying, tumbling; it bounces once
+      v[1] -= 20 * dt;
+      p.x += v[0] * dt; p.y += v[1] * dt; p.z += v[2] * dt;
+      if (p.y < 0) { p.y = 0; v[0] *= .5; v[1] *= -.25; v[2] *= .5; c.spin *= .5; }
+      m.rotation.z += c.spin * dt;
+    } else p.y = Math.min(p.y, 0) - .8 * dt;   // smouldering, it sinks
+    // flames on the body until about a second after it lands, then smoke as it smoulders out (the
+    // flames blended over: added, orange turns lime on the grass and reads as sparks; the smoke greys
+    // as it spreads: left dark, it stains the bright grass in dots)
+    const fire = 1 - _sstep(.9, 1.9, s), smoke = 1 - _sstep(1.4, 2.4, s), tr = s >= 0 && s < 1.6 ? .25 : 0;   // (trailing as it flies)
+    for (c.fireAcc += dt * 16 * fire * share; c.fireAcc >= 1; c.fireAcc--)
+      emitParticle(_smoke, p.x + (R() - .5) * .5, p.y + .2 + R() * .25, p.z + (R() - .5) * .5, v[0] * 2 * tr + (R() - .5) * .4, v[1] * 2 * tr + .8 + R() * .8, v[2] * 2 * tr + (R() - .5) * .4,
+        .25 + R() * .2, (.45 + .25 * R()) * (.6 + .4 * fire), .1, .85, 0xffcc66, 0xe02c04, -1.5, 1, 0);
+    for (c.smokeAcc += dt * 4 * smoke * share; c.smokeAcc >= 1; c.smokeAcc--)
+      emitParticle(_smoke, p.x + (R() - .5) * .3, p.y + .45, p.z + (R() - .5) * .3, v[0] * tr * .5 + (R() - .5) * .3, .5 + R() * .4, v[2] * tr * .5 + (R() - .5) * .3,
+        1.4 + R() * .8, .35, 1.6, .26, 0x24201c, 0x8a847c, -.2, .4, 1);
+    return s < 2.4 && camera.position.distanceTo(p) > 1.5;   // gone once sunk (or as it comes at the close-up camera's lens)
   }
 
   // ── Entity factories ─────────────────────────────────────────────────────
@@ -1974,6 +2025,23 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     }
   }
 
+  // ── Nuke timeline (the desktop's nk::, nuke_fx.h) ──────────────────────────
+  // Closed-form curves of a blast t s old (game time), so every part and every frame reads the
+  // same blast: the shock front (its ring, the cracks it opens, when it throws a victim, when its
+  // boom reaches the bunker). StarCraft II's own keys (NB) time the rest, read at seqMs(t).
+  const nk = (() => {
+    const S_MAX = 30, S_TAU = .9;   // the front: 33 u/s at the blast, 15 u/s as it passes the kill radius (16 at 0.69 s)
+    return {
+      frontR: t => t <= 0 ? 0 : S_MAX * (1 - Math.exp(-t / S_TAU)),
+      frontT: r => -S_TAU * Math.log(1 - Math.min(r, S_MAX - .01) / S_MAX),
+      // SC2's nuke (Nuke.m3, its Death sequence) keys its parts in ms: a blast t s old reads them at
+      // seqMs(t), so its flash star opens as ours goes off and its detonation frame follows 0.24 s later
+      seqMs: t => t * 1000 + 130,
+      FRONT_END: 2,    // the front ring has faded out past the screen
+      SCAR_END: 16,    // the scar has faded
+    };
+  })();
+
   // ── Nuke: 1 warhead, massive radius, laser designator then detonation ──────
   // SC2 lore: Terran nuclear missile. Bunker survives (hardened structure).
   // Enemies within blast radius are wiped. ~2s warning laser before impact.
@@ -1981,7 +2049,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
 
   // force = cheat launch: skips the wave unlock, cooldown and in-flight checks
   let _nukeTargetTex = null;   // SC2 nuke reticle for the target marker, loaded at boot
-  ModelLoader.texture(DECALS.nukeTarget).then(t => { _nukeTargetTex = t; })
+  ModelLoader.texture(DECALS.nukeTarget).then(t => { _nukeTargetTex = t; warmNukeShaders(); })
     .catch(() => console.warn('Nuke target texture failed to load — using a plain ring.'));
   function doNuke(force){
     if(!force){
@@ -2089,6 +2157,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     let warnT = 0, detonated = false;
     const WARN_DUR = 2.0; // seconds
     const NUKE_RADIUS = 16; // kills everything within this range
+    const NUKE_VAPOR_R = 3.5; // this close to ground zero they vanish in the fireball; the rest are flung
     // (one ticker to the end of the trail's fade: a ticker added from inside a ticker would be dropped)
     addTicker(dt => {
       warnT += dt;
@@ -2142,13 +2211,14 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     // ── Phase 3: DETONATION (2.0s) ──────────────────────────────────────
     function detonate() {
       SFX.play('nukeBoom');
-      // The shock front (33 u/s at ground zero, slowing to 15 past the kill radius: the desktop's
-      // nk::frontT) reaches the bunker: a crack and a deep thud, then a long rumble
-      const toBunker = Math.min(Math.hypot(tx, tz), 29.99);
-      after(-0.9 * Math.log(1 - toBunker / 30), () => { SFX.play('nukeShock'); after(0.3, () => SFX.play('nukeRumble')); });
-      // The blast, timed from SC2's (flash star, glows, shock ring and bubble, dust ring, fire
-      // ring, stem, cap, smoke rings, scorch), and its light (at night it lights the field)
-      nukeBlasts.push({x: tx, z: tz, t: 0, parts: _nbMake(tx, tz)});
+      // The shock front reaches the bunker: a crack and a deep thud, then a long rumble
+      after(nk.frontT(Math.hypot(tx, tz)), () => { SFX.play('nukeShock'); after(0.3, () => SFX.play('nukeRumble')); });
+      // The blast, timed from SC2's (flash star, glows, dust ring, fire ring, burn ring, stem, cap,
+      // smoke rings) and nk:: (the shock front under its dome), the scar it leaves, and its light (at
+      // night it lights the field)
+      const seed = Math.random() * 50;
+      nukeBlasts.push({x: tx, z: tz, t: 0, parts: _nbMake(tx, tz, seed)});
+      addNukeScar(tx, tz, seed);
       _nukeLightT = 0;
       _nukeLight.position.set(tx, 2.3, tz);
 
@@ -2157,16 +2227,22 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
 
       // (no sparks or debris flung across the field: hard to read; the blast carries it)
 
-      // Kill ALL enemies in radius — bunker excluded (hardened); burnt: no blood
+      // Kill ALL enemies in radius — bunker excluded (hardened); burnt: no blood. Vaporised near
+      // ground zero; the rest catch fire in the flash and run on until the front flings them out
       let killed = 0;
+      _killBatch = true;
       allEnemies().forEach(e => {
         if(e.dead) return;
-        const dx=e.mesh.position.x-tx, dz=e.mesh.position.z-tz;
-        if(Math.sqrt(dx*dx+dz*dz) <= NUKE_RADIUS){
-          killEnemy(e, true, false);
-          killed++;
-        }
+        const dx=e.mesh.position.x-tx, dz=e.mesh.position.z-tz, d=Math.sqrt(dx*dx+dz*dz);
+        if(d > NUKE_RADIUS) return;
+        killed++;
+        if(d < NUKE_VAPOR_R){ e.mesh.visible = false; killEnemy(e, true, false); return; }   // nothing left
+        e.mesh.visible = true;   // (out in the night's dark too: the flash shows them, then the blast lights the field)
+        const k = 1 - d / 24, j = .8 + .4 * Math.random(), h = (3 + 10 * k) * j;
+        killEnemy(e, true, false, { zero: [tx, tz], delay: nk.frontT(d), vel: [dx / d * h, 3 + 5 * k * Math.random(), dz / d * h],
+          spin: (Math.random() < .5 ? -1 : 1) * (6 + 6 * Math.random()) });
       });
+      _killBatch = false; updateHUD();
       achMultiKill('nuke', killed);
 
       setStatus(`Nuclear detonation — ${killed} unit${killed!==1?'s':''} annihilated. Bunker intact.`);
@@ -2192,7 +2268,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   // NUKE_LIGHT_F (fog far ≈ 40: past the spawn ring) — _dnEffFactor.
   const NUKE_LIGHT_DUR = 4, NUKE_LIGHT_F = 0.32;
   let _nukeLightT = -1;          // seconds since the blast (game time); -1 = none
-  function _nukeLightK() { return _nukeLightT < 0 ? 0 : _nbKey(NB.light, _nukeLightT * 1000 + NB_LEAD); }
+  function _nukeLightK() { return _nukeLightT < 0 ? 0 : _nbKey(NB.light, nk.seqMs(_nukeLightT)); }
   function updateNukeLight(dt) {   // live frames only, before updateDayNight (the lights follow it)
     if (_nukeLightT >= 0 && (_nukeLightT += dt) >= NUKE_LIGHT_DUR) _nukeLightT = -1;
     if (_nukeLight) _nukeLight.intensity = _nukeLightK() * (1 + 3 * _dnFactor);
@@ -2200,12 +2276,13 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
 
   // ── Nuke blast ───────────────────────────────────────────────────────────
   // Timed from StarCraft II's own nuke (Nuke.m3, its Death sequence), built light: soft glow
-  // cards, rings of fire cloud with scrolling textures, a lumpy dust ring, sprite smoke, a
-  // scorch mark with cracks glowing red. Each part follows SC2's key tracks (ms -> value);
-  // a blast at t s reads them at t * 1000 + NB_LEAD ms, so the flash star is already opening
+  // cards, rings of fire cloud with scrolling textures, a lumpy dust ring, sprite smoke, a slow
+  // ring of burning ground; the shock front under its dome follows nk::, the scar is its own
+  // (nukeScars). Each SC2 part follows SC2's key tracks (ms -> value);
+  // a blast at t s reads them at nk.seqMs(t) ms, so the flash star is already opening
   // at the detonation frame. Sizes are SC2's units (ours match: the bunker is 3 wide), the
   // rings along the ground x NB_RING. The textures are drawn here (no art for them).
-  const NB_LEAD = 130, NB_END = 13000, NB_RING = 1.25;
+  const NB_END = 13000, NB_RING = 1.25;
   let nukeBlasts = [];   // {x, z, t: s since the blast, parts}
   const NB = {
     flashSide:  [[0, 1.15], [200, 2.2], [300, 6.6], [400, 12.3], [500, 16.7], [566, 17.8]],
@@ -2213,10 +2290,6 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     glowSide:   [[0, 1.25], [333, 1.4], [433, 2.8], [700, 15.4], [933, 22.5], [1166, 22.1], [2000, 15.8], [3166, 2.7], [3233, .8]],
     glow2Side:  [[0, .9], [500, 3.7], [766, 13.1], [1066, 15.8], [1800, 12.6], [2400, 7.9], [3100, 2.4], [3233, .57]],
     glowLight:  [[333, 0], [633, 1], [5033, 0]],
-    shockDiam:  [[666, 2.3], [1000, 5.3], [1700, 17.1], [1966, 18.9]],
-    shockLight: [[300, 0], [700, 1], [1466, .6], [1966, 0]],
-    domeDiam:   [[0, .47], [166, 1.8], [500, 7.6], [900, 15.6], [1300, 21.8], [1600, 23.6]],
-    domeLight:  [[0, 0], [233, 1], [733, .9], [1233, .5], [1300, .6], [1600, 0]],
     dustDiam:   [[0, .19], [333, 1.2], [566, 3.5], [800, 8.5], [933, 10.25], [2000, 11.6], [3300, 12.5]],
     dustAlpha:  [[0, 0], [333, .8], [1500, 1], [3633, 0]],
     ringDiam:   [[666, 2.4], [800, 5.7], [1300, 11.1], [1666, 13.5]],
@@ -2228,9 +2301,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     topLight:   [[1566, 0], [2100, 1], [4433, .6], [5500, 0]],
     light:      [[333, 0], [400, .1], [466, .35], [533, .65], [600, .9], [666, 1], [1966, 1], [2200, .96], [2466, .84], [2633, .75],
                  [2900, .57], [3266, .32], [3466, .19], [3633, .11], [3766, .05], [3900, .02], [4000, 0]],
-    markSize:   [[333, .3], [833, 1]],
-    markGlow:   [[833, 1], [13000, .25]],
-    markAlpha:  [[333, 0], [450, 1], [12800, 1], [13000, 0]],
+    burnR:      [[633, 3.8], [1700, 9.3], [3000, 16]],         // the burn ring (radius: SC2's half-width x 1.83, our blast's footprint)
+    burnLight:  [[633, 0], [933, 1], [1700, 2], [3000, 0]],
   };
   function _nbKey(tr, ms) {   // piecewise linear, held at both ends
     if (ms <= tr[0][0]) return tr[0][1];
@@ -2241,7 +2313,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   const _puffHash = (i, salt) => { const s = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453; return s - Math.floor(s); };
   const _sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 
-  // textures: tileable noise (fire cloud, smoke), the flash star, the scorch and its cracks
+  // textures: tileable noise (fire cloud, smoke), the flash star
   function _nbNoise(w, h, cells, seed, oct) {   // fbm of value noise that wraps in both axes, ~0..0.94
     const out = new Float32Array(w * h);
     for (let o = 0, amp = .5, cx = cells; o < oct; o++, amp *= .5, cx *= 2) {
@@ -2301,38 +2373,6 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       g.lineTo(64 + Math.cos(a) * len, 64 + Math.sin(a) * len); g.lineTo(64 + Math.cos(a + wd) * 4, 64 + Math.sin(a + wd) * 4); g.fill();
     }
   });
-  // scorch: churned brown earth, darkest in the pit, a ragged rim
-  const _nbMarkTex = _nbCanvasTex(256, 256, (g, w, h) => {
-    const n = _nbNoise(w, h, 8, 31, 4);
-    _nbPixels(g, w, h, (x, y, i) => {
-      const r = Math.hypot(x - 127.5, y - 127.5) / 128, v = n[i], pit = 1 - _sstep(.08, .4, r);
-      return [70 - 50 * pit + 30 * v, 48 - 36 * pit + 20 * v, 30 - 24 * pit + 12 * v, 255 * (1 - _sstep(.5, .98, r + .2 * (v - .45))) * (.7 + .3 * v)];
-    });
-  });
-  // cracks: short jagged fissures out of the pit, glowing red (drawn over black, added)
-  const _nbCrackTex = _nbCanvasTex(256, 256, (g) => {
-    g.fillStyle = '#000'; g.fillRect(0, 0, 256, 256);
-    const pit = g.createRadialGradient(128, 128, 0, 128, 128, 48);
-    pit.addColorStop(0, 'rgba(255,70,20,.55)'); pit.addColorStop(1, 'rgba(255,40,10,0)');
-    g.fillStyle = pit; g.fillRect(0, 0, 256, 256);
-    g.lineCap = 'round'; g.shadowColor = 'rgba(255,50,10,1)'; g.shadowBlur = 7;
-    const crack = (a, r0, r1, w0, s) => {
-      let x = 128 + Math.cos(a) * r0, y = 128 + Math.sin(a) * r0;
-      for (let r = r0, j = 0; r < r1; j++) {
-        const step = 7 + 6 * _puffHash(j, s), na = a + (_puffHash(j, s + 1) - .5) * .9 * (12 / Math.max(r, 12));
-        r += step; const nx = 128 + Math.cos(na) * r, ny = 128 + Math.sin(na) * r;
-        g.lineWidth = Math.max(.8, w0 * (1 - (r - r0) / (r1 - r0)));
-        g.strokeStyle = `rgba(255,${(80 + 60 * (1 - r / r1)) | 0},30,1)`;
-        g.beginPath(); g.moveTo(x, y); g.lineTo(nx, ny); g.stroke();
-        x = nx; y = ny;
-      }
-    };
-    for (let k = 0; k < 11; k++) {
-      const a = (k + .6 * _puffHash(k, 40)) * Math.PI * 2 / 11, r1 = 60 + 50 * _puffHash(k, 41);
-      crack(a, 10, r1, 3.2, 100 + k * 7);
-      crack(a + (_puffHash(k, 42) < .5 ? -.35 : .35), 30 + 20 * _puffHash(k, 43), r1 * .8, 1.8, 300 + k * 7);   // its fork
-    }
-  });
   // shapes: flat quad, lumpy dust doughnut, flat fire ring, open hemisphere, the stem's spindle, a fat cap doughnut
   const _nbQuad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   const _nbDustGeo = (() => {
@@ -2346,7 +2386,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     return g;
   })();
   const _nbRingGeo = new THREE.TorusGeometry(1, .26, 8, 48).rotateX(-Math.PI / 2).scale(1, .45, 1);
-  const _nbDomeGeo = new THREE.SphereGeometry(.5, 32, 10, 0, Math.PI * 2, 0, Math.PI / 2);
+  const _nbDomeGeo = new THREE.SphereGeometry(.5, 64, 16, 0, Math.PI * 2, 0, Math.PI / 2);   // (16 across: its silhouette, 16 wide, would show facets)
   const _nbStemGeo = new THREE.LatheGeometry([[1.65, 0], [1.3, .18], [.85, .45], [.68, 1], [.6, 2.5], [.62, 4.5], [.7, 6.3], [.5, 7.15]]
     .map(([r, y]) => new THREE.Vector2(r, y)), 24);
   const _nbCapGeo = new THREE.TorusGeometry(1, .7, 12, 32).rotateX(-Math.PI / 2);   // diameter 3.4
@@ -2362,11 +2402,149 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     mat.customProgramCacheKey = () => 'nbCoverGlow';
     return mat;
   }
-  const _nbDomeMat = () => new THREE.ShaderMaterial({   // the shock bubble: only its rim shows (SC2 draws it as heat haze)
-    uniforms: { uK: { value: 0 } },
-    vertexShader: 'varying vec3 vN, vV; void main() { vec4 mv = modelViewMatrix * vec4(position, 1.); vN = normalMatrix * normal; vV = -mv.xyz; gl_Position = projectionMatrix * mv; }',
-    fragmentShader: 'uniform float uK; varying vec3 vN, vV; void main() { float a = pow(1. - abs(dot(normalize(vN), normalize(vV))), 3.) * uK; gl_FragColor = vec4(vec3(1., .95, .86) * a, a * ' + NB_COVER.toFixed(2) + '); }',
-    transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor });
+  // ── Nuke shaders (the desktop's nuke_fx.cpp) ─────────────────────────────
+  // The shock front, its dome, the burn ring and the scar, drawn procedurally: value noise from
+  // integer hashes (no texture; sampled round a circle it is periodic), fbm over it, the fire ramp.
+  // Premultiplied like _nbCoverGlow: they whiten and warm the grass instead of tinting it lime.
+  const NK_NOISE = `
+    float h12(vec2 p) { vec3 q = fract(vec3(p.xyx) * .1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+    float h13(vec3 p) { p = fract(p * .1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
+    vec2 h22(vec2 p) { vec3 q = fract(vec3(p.xyx) * vec3(.1031, .1030, .0973)); q += dot(q, q.yzx + 33.33); return fract((q.xx + q.yz) * q.zy); }
+    float n2(vec2 x) {
+      vec2 i = floor(x), f = fract(x); f = f * f * (3. - 2. * f);
+      return mix(mix(h12(i), h12(i + vec2(1., 0.)), f.x), mix(h12(i + vec2(0., 1.)), h12(i + vec2(1., 1.)), f.x), f.y);
+    }
+    float n3(vec3 x) {
+      vec3 i = floor(x), f = fract(x); f = f * f * (3. - 2. * f);
+      return mix(mix(mix(h13(i), h13(i + vec3(1., 0., 0.)), f.x), mix(h13(i + vec3(0., 1., 0.)), h13(i + vec3(1., 1., 0.)), f.x), f.y),
+                 mix(mix(h13(i + vec3(0., 0., 1.)), h13(i + vec3(1., 0., 1.)), f.x), mix(h13(i + vec3(0., 1., 1.)), h13(i + vec3(1., 1., 1.)), f.x), f.y), f.z);
+    }
+    float fbm2(vec2 p, int o) { float s = 0., a = .5; for (int i = 0; i < 4; i++) { if (i >= o) break; s += a * n2(p); p = p * 2.03 + vec2(5.1, 1.3); a *= .5; } return s; }
+    vec3 fireCol(float T) {   // fire by temperature: soot, deep red, orange, yellow, white-hot
+      T = clamp(T, 0., 1.15);
+      float k = min(T, 1.) * 4.;
+      vec3 c = k < 1. ? mix(vec3(.18, .14, .12), vec3(.54, .16, .05), k) : k < 2. ? mix(vec3(.54, .16, .05), vec3(.94, .42, .09), k - 1.)
+             : k < 3. ? mix(vec3(.94, .42, .09), vec3(1., .71, .23), k - 2.) : mix(vec3(1., .71, .23), vec3(1., .94, .75), k - 3.);
+      return c * (1. + .25 * T);
+    }
+    varying vec3 vW; varying vec3 vN;
+  `;
+  const NK_VS = `varying vec3 vW; varying vec3 vN;
+    void main() { vec4 w = modelMatrix * vec4(position, 1.); vW = w.xyz; vN = mat3(modelMatrix) * normal; gl_Position = projectionMatrix * viewMatrix * w; }`;
+  // the shock front: a bright ragged ring (a Mach stem) racing over the ground, a luminous zone trailing it
+  const NK_FRONT_FS = `
+    uniform vec2 uC; uniform float uR, uW, uI, uTime, uSeed;
+    void main() {
+      vec2 dv = vW.xz - uC; float r = length(dv);
+      float x0 = (r - uR) / uW;
+      if (x0 > 3. || x0 < -8.) discard;   // (the rag moves the ring by under 0.6 band widths)
+      vec2 dir = dv / max(r, 1e-4);
+      float R = uR * (1. + .03 * (n2(dir * 3. + vec2(uSeed, uTime * 2.)) - .5) + .012 * (n2(dir * 11. + uSeed) - .5));
+      float x = (r - R) / uW;
+      float clump = .6 + .4 * n2(dir * 9. + vec2(uTime * 1.3, uSeed));
+      float trail = .3 * smoothstep(-7., -.5, x) * step(x, 0.) * smoothstep(.5, .8, r / max(uR, 1e-3)) * (.5 + .5 * n2(dir * 14. + vec2(r * .8)));
+      float k = uI * (exp(-x * x * 3.) * clump + trail);
+      gl_FragColor = vec4(vec3(1., .86, .62) * k, clamp(.5 * k, 0., .85));
+    }`;
+  // the shock dome: a hemisphere of compressed air over the front, seen at its rim (fading out right at
+  // the silhouette: the rim alone ends in a hard line, a wall of light seen from the close-up)
+  const NK_DOME_FS = `
+    uniform float uA, uTime;
+    void main() {
+      vec3 N = normalize(vN), V = normalize(cameraPosition - vW);
+      float c = abs(dot(N, V));
+      float a = uA * (2.6 * pow(1. - c, 3.) + .04) * smoothstep(0., .35, c) * (.7 + .3 * n3(vW * .7 + vec3(uTime * 3.)));
+      gl_FragColor = vec4(vec3(1., .95, .88) * a, a * ${NB_COVER.toFixed(2)});
+    }`;
+  // SC2's burn ring: a band of burning ground spreading at a steady pace, torn along the ring and across
+  // it. Drawn straight to the screen the fire covers the bright grass and stays under 1 (added, or past
+  // 1, it turns yellow-white there, lime at its edges)
+  const NK_BURN_FS = `
+    uniform vec2 uC; uniform float uR, uW, uK, uTime, uSeed;
+    void main() {
+      vec2 dv = vW.xz - uC; float r = length(dv);
+      float x = (r - uR) / uW;
+      if (abs(x) > 3.) discard;
+      vec2 dir = dv / max(r, 1e-4);
+      float tear = fbm2(dir * 5. + vec2(uSeed, r * .35 - uTime * .4), 3);
+      float band = exp(-x * x * 2.2) * smoothstep(.25, .6, tear) + .3 * exp(-x * x * 7.) * tear;
+      float k = 1. - exp(-2. * uK * band);
+      gl_FragColor = vec4(fireCol(.45 + .25 * n2(dir * 13. + vec2(r * 1.3, uTime * 2.))) * k, k);
+    }`;
+  // The scar: a small scorched pit of churned earth. Short cracks run out of it (each forking once)
+  // and its floor is shattered; they open behind the shock front and glow a deep red-orange through
+  // the soil, dimming over ~8 s, then the pit fades. The earth darkens the grass (fogged like the
+  // ground, dimmed with the night: uLit), the cracks glow
+  const NK_SCAR_FS = `
+    uniform vec2 uC; uniform float uAge, uSeed, uFront, uK, uLit;
+    #ifdef USE_FOG
+      uniform vec3 fogColor; uniform float fogNear, fogFar;
+    #endif
+    const float TAU = 6.2831853;
+    float adiff(float a, float b) { return mod(a - b + 3.14159265, TAU) - 3.14159265; }
+    float ln1(float x) { float i = floor(x); return mix(h12(vec2(i, uSeed)), h12(vec2(i + 1., uSeed)), fract(x)); }   // linear: a polyline
+    // a crack's lateral wander (world units) at radius r: straight runs with sharp kinks, and a fine jag
+    float wander(float r, float i) { return (ln1(r * 2.4 + i * 7.31) - .5) * .4 + (ln1(r * 7.5 + i * 3.17 + 40.) - .5) * .11; }
+    // a line of half-width h, x off its centre: no thinner than a pixel px (thinner, it breaks into dots), dimmed as it widens
+    float line(float x, float h, float px) { float w = max(h, px); return (1. - smoothstep(w * .35, w + .5 * px, x)) * h / w; }
+    void main() {
+      vec2 d = vW.xz - uC; float r = length(d), px = fwidth(r);   // (a pixel, in world units)
+      if (r > 4.) discard;
+      float ang = atan(d.y, d.x);
+      float mott = fbm2(vW.xz * .8 + uSeed, 3);
+      float pit = 1. - smoothstep(.5, 1.2 + .4 * mott, r);    // the churned centre
+      float soil = 1. - smoothstep(1.6, 2.4 + .8 * mott, r);   // scorched earth
+      float tint = 1. - smoothstep(2.3, 3.8, r);               // a faint singe on the grass
+      float crack = 0.;
+      for (int i = 0; i < 10; i++) {
+        float fi = float(i);
+        float len = 1.3 + 1.2 * h12(vec2(fi + 31., uSeed));
+        if (r > len + .2) continue;
+        float phi = (fi + .7 * h12(vec2(fi, uSeed))) * TAU / 10.;
+        float da = adiff(ang, phi) * r;   // arc distance from the crack's base line
+        if (abs(da) > 1.4) continue;
+        float w = wander(r, fi);
+        float taper = 1. - smoothstep(.2, len, r);
+        float wid = .025 + .045 * taper;
+        crack = max(crack, line(abs(da - w), wid, px) * smoothstep(.2, .45, r) * sqrt(taper));
+        float rb = .6 + .4 * len * h12(vec2(fi + 7., uSeed));   // the fork leaves at rb, bending off ~25 deg
+        if (r > rb) {
+          float side = h12(vec2(fi + 13., uSeed)) < .5 ? -1. : 1.;
+          float tb = 1. - smoothstep(rb, rb + len * (.35 + .25 * h12(vec2(fi + 17., uSeed))), r);
+          float xb = abs(da - w - side * (r - rb) * .5 - (ln1(r * 6. + fi * 5.1 + 90.) - .5) * .12);
+          float wb = .018 + .035 * tb;
+          crack = max(crack, line(xb, wb, px) * tb);
+        }
+      }
+      if (r < 1.8) {   // the shattered floor: Voronoi cell edges
+        vec2 x = vW.xz * 3.2 + uSeed * 3.; vec2 g = floor(x), f = fract(x); float F1 = 8., F2 = 8.;
+        for (int j = -1; j <= 1; j++) for (int i = -1; i <= 1; i++) {
+          vec2 o = vec2(float(i), float(j)); vec2 dd = o + h22(g + o) - f; float q = dot(dd, dd);
+          if (q < F1) { F2 = F1; F1 = q; } else if (q < F2) F2 = q;
+        }
+        crack = max(crack, line((sqrt(F2) - sqrt(F1)) / 3.2, .028, px) * (1. - smoothstep(.8, 1.7, r)));
+      }
+      crack *= 1. - smoothstep(uFront * .9 - .3, uFront * .9, r);   // opened by the front
+      // a deep red-orange glow, brightest in the pit, flickering a little, dimming over ~8 s
+      float E = .85 * exp(-uAge / 3.) + .15 * exp(-uAge / 8.);
+      float T = E * (1. - .12 * r) * (.75 + .5 * n2(vW.xz * 3. + uAge * .6));
+      vec3 hot = mix(vec3(.54, .1, .03), vec3(1., .23, .06), clamp(T, 0., 1.)), earth = vec3(.3, .19, .11);   // dull red .. glowing red
+      float under = mix(.35, 1., smoothstep(1., 3., uAge));   // dim while the fireball sits on it (no veins through the fire)
+      vec3 glow = mix(earth * .5, hot, .65) * crack * smoothstep(0., .25, T) * under;   // red through the soil
+      glow += hot * .22 * pit * E * under * (.5 + .5 * mott);   // the pit floor smoulders
+      float a = clamp(uK * (pit * .35 + soil * (.45 + .25 * mott) + tint * .12 + crack * .35), 0., .9);
+      vec3 ch = mix(vec3(.16, .11, .07), vec3(.07, .05, .035), max(pit, crack)) * uLit;   // churned brown earth, darker in the pit and cracks
+      #ifdef USE_FOG
+        ch = mix(ch, fogColor, smoothstep(fogNear, fogFar, length(vW.xz)));
+      #endif
+      gl_FragColor = vec4(ch * a + glow * uK, a);
+    }`;
+  const _nkU = (o) => { const u = {}; for (const k in o) u[k] = { value: o[k] }; return u; };   // {name: value} -> uniforms
+  function _nkMat(fs, uniforms, o) {
+    return new THREE.ShaderMaterial(Object.assign({ uniforms, vertexShader: NK_VS, fragmentShader: NK_NOISE + fs,
+      transparent: true, depthWrite: false, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneMinusSrcAlphaFactor }, o));
+  }
+  const _nkRingGeo = new THREE.RingGeometry(.5, 1.12, 192).rotateX(-Math.PI / 2);   // the front's band (scaled out past its glow)
 
   // the sprites: smoke rings fired along the ground, fire sucked into the stem, rising embers
   const _nbSmoke = makeParticleSystem(500, THREE.NormalBlending), _nbFire = makeParticleSystem(260, THREE.AdditiveBlending);
@@ -2434,16 +2612,15 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     }
   }
 
-  function _nbMake(x, z) {
+  function _nbMake(x, z, seed) {
     const add = (geo, mat, order, y = 0) => { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.renderOrder = order; m.visible = false; scene.add(m); return m; };
     const basic = (o) => new THREE.MeshBasicMaterial(Object.assign({ transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide }, o));
     const glow = (o) => _nbCoverGlow(basic(o));
     const fire = (o) => basic(o);   // fire cloud: blended over (SC2 adds it, onto its darker ground; added onto bright grass it turns white)
     return {
-      mark:   add(_nbQuad, new THREE.MeshBasicMaterial({ map: _nbMarkTex, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 }), 0, .03),
-      cracks: add(_nbQuad, basic({ map: _nbCrackTex, blending: THREE.AdditiveBlending }), 1, .04),   // (red on black: added)
-      shock:  add(_glowRingGeo, glow({ map: _glowTex, color: 0xfff1d8 }), 1, .15),
-      dome:   add(_nbDomeGeo, _nbDomeMat(), 4),
+      burn:   add(_nbQuad, _nkMat(NK_BURN_FS, _nkU({ uC: new THREE.Vector2(x, z), uR: 0, uW: 1, uK: 0, uTime: 0, uSeed: seed })), 1, .06),   // with the ground decals
+      front:  add(_nkRingGeo, _nkMat(NK_FRONT_FS, _nkU({ uC: new THREE.Vector2(x, z), uR: 0, uW: 1, uI: 0, uTime: 0, uSeed: seed })), 1, .12),
+      dome:   add(_nbDomeGeo, _nkMat(NK_DOME_FS, _nkU({ uA: 0, uTime: 0 })), 4),
       dust:   add(_nbDustGeo, new THREE.MeshLambertMaterial({ map: _nbSmokeTex, color: 0xb4a694, transparent: true, depthWrite: false }), 2, 1.6),
       ring:   add(_nbRingGeo, fire({ map: _nbRingTex }), 3, 2.6),
       stem:   add(_nbStemGeo, fire({ map: _nbStemTex }), 3),
@@ -2455,7 +2632,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   }
   function _nbDispose(b) {
     const P = b.parts;
-    for (const m of [P.mark, P.cracks, P.shock, P.dome, P.dust, P.ring, P.stem, ...P.caps, P.top, ...P.glows, P.star]) { scene.remove(m); m.material.dispose(); }
+    for (const m of [P.burn, P.front, P.dome, P.dust, P.ring, P.stem, ...P.caps, P.top, ...P.glows, P.star]) { scene.remove(m); m.material.dispose(); }
     b.parts = null;
   }
   function _nbPose(b, ms) {
@@ -2463,8 +2640,25 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     const flat = (m, d, k = 1) => m.scale.set(d, k, d);
     if (on(P.star, 133, 566)) { flat(P.star, K(NB.flashSide)); P.star.material.opacity = K(NB.flashLight); }
     for (const [i, m] of P.glows.entries()) if (on(m, 333, 3233)) { flat(m, K(i ? NB.glow2Side : NB.glowSide)); m.material.opacity = .32 * K(NB.glowLight); }   // (additive on bright grass: it saturates fast)
-    if (on(P.shock, 666, 1966)) { flat(P.shock, NB_RING * K(NB.shockDiam) / 2); P.shock.material.opacity = .6 * K(NB.shockLight); }
-    if (on(P.dome, 0, 1600)) { P.dome.scale.setScalar(NB_RING * K(NB.domeDiam)); P.dome.material.uniforms.uK.value = .45 * K(NB.domeLight); }
+    // nk::: the shock front racing over the ground (a soft band of light, not a drawn line) under its dome (gone by 0.8 s)
+    const t = b.t, R0 = nk.frontR(t);
+    if ((P.front.visible = t < nk.FRONT_END)) {
+      const w = .45 + .04 * R0, U = P.front.material.uniforms;
+      flat(P.front, Math.max(.05, R0 + 2 * w) / 1.12);   // the band's mesh (r 0.5-1.12) out past its glow
+      U.uR.value = R0; U.uW.value = w; U.uTime.value = t;
+      U.uI.value = Math.min(1.2, (6 * Math.exp(-t / .3) + .9) * (1 - _sstep(1.2, nk.FRONT_END, t)));
+    }
+    if ((P.dome.visible = t < .8 && gfxQuality === 'HIGH')) {   // (not on LOW: a faint rim, but the whole screen drawn over)
+      const U = P.dome.material.uniforms;
+      P.dome.scale.setScalar(2 * Math.max(.05, R0));
+      U.uA.value = Math.min(.8, 2.2 * _sstep(0, .04, t) * (1 - _sstep(.2, .8, t))); U.uTime.value = t;
+    }
+    // SC2's burn ring: burning ground spreading at a steady pace well behind the front, brightest at 1.7 s
+    if (on(P.burn, 633, 3000)) {
+      const r = K(NB.burnR), w = .9 + .06 * r, U = P.burn.material.uniforms;
+      flat(P.burn, 2 * (r + 3 * w));
+      U.uR.value = r; U.uW.value = w; U.uK.value = K(NB.burnLight); U.uTime.value = t;
+    }
     if (on(P.dust, 0, 3633)) { P.dust.scale.setScalar(NB_RING * K(NB.dustDiam) / 2.8); P.dust.material.opacity = .85 * K(NB.dustAlpha); }
     if (on(P.ring, 566, 1700)) { flat(P.ring, NB_RING * K(NB.ringDiam) / 2.52); P.ring.material.opacity = .8 * K(NB.ringLight); }
     if (on(P.stem, 966, 4700)) P.stem.material.opacity = .85 * K(NB.stemLight);
@@ -2484,14 +2678,12 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       flat(P.top, d / 3.4, 1.5 * d / 3.4);
       P.top.material.opacity = .6 * K(NB.topLight);
     }
-    if (on(P.mark, 333, NB_END)) { flat(P.mark, 7 * K(NB.markSize)); P.mark.material.opacity = .85 * K(NB.markAlpha); }
-    if (on(P.cracks, 333, NB_END)) { flat(P.cracks, 7 * K(NB.markSize)); P.cracks.material.opacity = K(NB.markGlow) * K(NB.markAlpha); }
   }
   const _nbOrder = [];
   let _nbClock = 0;
   function syncNukeBlasts(dt) {   // live frames: they age in game time
     _nbClock += dt;
-    for (const b of nukeBlasts) { b.t += dt; if (b.t * 1000 + NB_LEAD >= NB_END) _nbDispose(b); }
+    for (const b of nukeBlasts) { b.t += dt; if (nk.seqMs(b.t) >= NB_END) _nbDispose(b); }
     nukeBlasts = nukeBlasts.filter(b => b.parts);
     _nbCapTex.offset.x = -.47 * _nbClock;    // the cap's fire rolls round it
     _nbStemTex.offset.y = -.46 * _nbClock;   // the stem's fire runs up it
@@ -2499,7 +2691,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     _nbSmokeTex.offset.x = -.09 * _nbClock;
     _nbSmoke.n = _nbFire.n = 0;
     const lit = 1 - .75 * _dnLitF;
-    for (const b of nukeBlasts) { const ms = b.t * 1000 + NB_LEAD; _nbPose(b, ms); _nbSprites(b, ms, lit); }
+    for (const b of nukeBlasts) { const ms = nk.seqMs(b.t); _nbPose(b, ms); _nbSprites(b, ms, lit); }
+    syncNukeScars(dt, lit);
     // smoke back to front (normal blending): reorder the buffers by view depth
     const S = _nbSmoke, N = S.n, v = camera.matrixWorldInverse.elements;
     if (N > 1) {
@@ -2518,7 +2711,54 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       for (const k of ['position', 'aColor', 'aSize', 'aAlpha']) geo.attributes[k].needsUpdate = true;
     }
   }
-  function clearNukeBlasts() { nukeBlasts.forEach(_nbDispose); nukeBlasts = []; syncNukeBlasts(0); }
+  function clearNukeBlasts() { nukeBlasts.forEach(_nbDispose); nukeBlasts = []; nukeScars.forEach(_dropScar); nukeScars = []; syncNukeBlasts(0); }
+  // The nuke's programs, compiled at load (again as the reticle and the warhead load, and when the
+  // graphics quality changes them) off a set of its materials kept hidden for good: the first nuke
+  // does not stall a frame, and a material disposed with its launch or its blast does not take its
+  // program with it (the next nuke would compile it again). The launch's own (designator, warning
+  // ring, the warhead's trail) are plain MeshBasicMaterials: unlit, one- or two-sided, the reticle's map
+  let _nbKeep = null;
+  function warmNukeShaders() {
+    const hidden = (mat) => { const m = new THREE.Mesh(_nbQuad, mat); m.visible = false; scene.add(m); return m; };
+    if (!_nbKeep) {
+      _nbKeep = { parts: _nbMake(0, 0, 0), scar: _nbScarMesh(0, 0, 0),
+        launch: [{}, { side: THREE.DoubleSide }].map(o => hidden(new THREE.MeshBasicMaterial(Object.assign({ fog: false }, o)))) };
+      _nbKeep.scar.visible = false;
+      for (const t of [_nbCapTex, _nbStemTex, _nbRingTex, _nbSmokeTex, _nbStarTex, _glowTex]) renderer.initTexture(t);
+    }
+    if (_nukeTargetTex && !_nbKeep.dot) _nbKeep.dot = hidden(new THREE.MeshBasicMaterial({ map: _nukeTargetTex, fog: false }));
+    if (!_nbKeep.missile && (_nbKeep.missile = ModelLoader.clone('nukeMissile'))) { _nbKeep.missile.visible = false; scene.add(_nbKeep.missile); }
+    renderer.compile(scene, camera);
+  }
+
+  // ── Nuke scars ───────────────────────────────────────────────────────────
+  // The pit a blast leaves (NK_SCAR_FS), its cracks opened by the front: kept apart from the blasts
+  // (it outlives them, to nk.SCAR_END), at most NUKE_SCARS
+  const NUKE_SCARS = 3;
+  let nukeScars = [];   // {age: s since the blast, mesh}, oldest first
+  function _nbScarMesh(x, z, seed) {
+    const mat = _nkMat(NK_SCAR_FS, Object.assign(THREE.UniformsUtils.clone(THREE.UniformsLib.fog), _nkU({ uC: new THREE.Vector2(x, z), uAge: 0, uSeed: seed, uFront: 0, uK: 0, uLit: 1 })),
+      { fog: true, polygonOffset: true, polygonOffsetFactor: -2, extensions: { derivatives: true } });   // (fog: the renderer keeps its uniforms; fwidth on WebGL 1)
+    const m = new THREE.Mesh(_nbQuad, mat);
+    m.position.set(x, .03, z); m.scale.set(8.5, 1, 8.5); m.renderOrder = 0;   // before every other transparent: it lies on the ground
+    scene.add(m);
+    return m;
+  }
+  function addNukeScar(x, z, seed) {
+    if (nukeScars.length >= NUKE_SCARS) _dropScar(nukeScars.shift());
+    nukeScars.push({ age: 0, mesh: _nbScarMesh(x, z, seed) });
+  }
+  function _dropScar(s) { scene.remove(s.mesh); s.mesh.material.dispose(); }
+  function syncNukeScars(dt, lit) {
+    for (const s of nukeScars) {
+      const U = s.mesh.material.uniforms;
+      s.age += dt;
+      // it shows as the flash dies (not a dark pit under the flash star), fades by nk.SCAR_END
+      U.uAge.value = s.age; U.uFront.value = nk.frontR(s.age); U.uLit.value = lit;
+      U.uK.value = _sstep(.1, .45, s.age) * (1 - _sstep(nk.SCAR_END - 5, nk.SCAR_END, s.age));
+    }
+    while (nukeScars.length && nukeScars[0].age >= nk.SCAR_END) _dropScar(nukeScars.shift());
+  }
 
   // ── Kill / upgrade ────────────────────────────────────────────────────────
   // Zerg blood: Zergling, Roach — fresh → dried
@@ -2537,21 +2777,30 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     for (let i = 0; i < (r ? 10 : 7); i++)
       emitParticle(_smoke, p.x, p.y + .35, p.z, (R() - .5) * 2.6, .8 + R() * 2, (R() - .5) * 2.6, .45 + R() * .35, .11, .06, .9, c0, c1, 16, .8, 0);
   }
-  // splash: its blood (not for a nuke: burnt)
-  function killEnemy(e,reward,splash=true){
+  // splash: its blood (not for a nuke: burnt); fling: a nuke's victim {zero, delay, vel, spin} (its
+  // shock front throws the body: updateCorpses)
+  let _killBatch = false;   // a nuke kills a wave in one frame: the HUD once after them (each refresh forces a layout)
+  function killEnemy(e,reward,splash=true,fling=null){
     if(e.dead)return; e.dead=true;
+    const slowF=slowedEnemies.get(e.mesh.uuid)?.factor??1;   // (a nuke's victim runs on at the pace it had)
     slowedEnemies.delete(e.mesh.uuid);
     if(splash) deathFx(e);
     scene.remove(e.mesh);
     SFX.play(e.type==='r'?'rdie':'zdie');
     if(e.pool&&e.mesh.visible){                       // death animation (instanced corpse)
-      if(corpses.length>=80) corpses.shift();
-      corpses.push({mesh:e.mesh,pool:e.pool,corpse:true,t:0,spin:Math.random()<.5?-1:1});
+      if(corpses.length>=CORPSE_CAP) corpses.shift();
+      const c={mesh:e.mesh,pool:e.pool,corpse:true,t:0,spin:Math.random()<.5?-1:1};
+      if(fling){                                      // burning, it runs on at the bunker (one at the hull writhes there, in its attack pose)
+        Object.assign(c, fling, {flung:true, thrown:false, col:[1,1,1], stopR:attackReach(e), fireAcc:Math.random(), smokeAcc:Math.random()});   // (flames out of step)
+        const p=e.mesh.position, d=Math.hypot(p.x,p.z);
+        if(d>=c.stopR&&d>.01){ const v=e.speed*slowF*60/d; c.run=[-p.x*v,-p.z*v]; c.walk=e.walk; c.stride=e.stride; c.step=e.step; }
+      }
+      corpses.push(c);
     }
     if(reward){
       score+=e.reward.score; kills++; waveKills++;
       minerals+=e.reward.minerals; gas+=e.reward.gas;
-      updateHUD();
+      if(!_killBatch) updateHUD();
       achKill(kills);
     }
   }
@@ -4924,6 +5173,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   ['zergling','zergling_upgrade','zergling_webby','roach','roach_ex1a','roach_ex3']
     .forEach(k => ModelLoader.ready(k).then(() => enemyLook(k)));
   buildScene();
+  warmNukeShaders(); ModelLoader.ready('nukeMissile').then(warmNukeShaders);   // (the warhead: once it has loaded)
   initPortrait(); // hologram builds itself as soon as the bunker model is cached
   loop();
 
@@ -5539,6 +5789,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     _applyDNLights(_dnLitF); // light levels for this quality, blended with day/night (and a flare)
 
     if (hi && _sunLight && _sunLight.shadow.map) { _sunLight.shadow.map.dispose(); _sunLight.shadow.map = null; }
+    warmNukeShaders();   // (the shadows are in every program's key)
     _syncGfxUI();
   }
 
