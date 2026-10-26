@@ -34,13 +34,13 @@ An internet connection is needed for three.js (loaded from a CDN). The UI fonts 
 
 ## How to play
 
-New players get a **tutorial**. The first game opens with a **HUD tour**: the HP and ammo bars, minerals and gas, then each command-card button in turn are spotlit (the rest of the screen dims) with what they do — BACK / NEXT, and **OK, LET'S ROLL** on the last page. After that, the first time something new happens (out of ammo, a cleared wave, an upgrade you can afford, room in the roster, the first Roach, the nuke, a damaged bunker, the Stimpack) the game pauses on a short hint that spotlights the control it is about. On a narrow screen the tour skips buttons that do not fit. Each shows once; **Menu → TUTORIAL** turns the hints off, starts them over or runs the tour again. **HOW TO PLAY** on the title screen has all the rules on one card, and its HUD TOUR button.
+New players get a **tutorial**. The first game opens with a **HUD tour**: the HP and ammo bars, minerals and gas, then each command-card button in turn are spotlit (the rest of the screen dims) with what they do — BACK / NEXT, and **OK, LET'S ROLL** on the last page. After that, the first time something new happens (out of ammo, a cleared wave, an upgrade you can afford, room in the roster, the first Roach, the nuke, a damaged bunker, the Stimpack and, once Super Stimpack is researched, its autocast) the game pauses on a short hint that spotlights the control it is about. On a narrow screen the tour skips buttons that do not fit. Each shows once; **Menu → TUTORIAL** turns the hints off, starts them over or runs the tour again. **HOW TO PLAY** on the title screen has all the rules on one card, and its HUD TOUR button.
 
 - **Campaign** — clear wave 15 (a bigger final assault) to win. Winning unlocks Endless for good (stored in the browser).
 - **Endless** — no wave limit. Past wave 15 the swarm keeps growing, and so does the bunker: every wave adds **+5% damage, +60 max HP, +10% repair speed and +2 rounds** (the ∞ chip on the console shows the total; the damage, hull and ammo tooltips list it too). Your best wave and score are shown on the title screen.
 - **Endless armory** — in Endless the roster panel (B) also sells repeatable upgrades for the minerals and gas that pile up once everything is researched: **Hull plating** +150 max HP, **Weapon tuning** +10% damage, **Magazine** +15 rounds (half a starting magazine), **Fleet logistics** airstrike and nuke cooldowns ×0.9 (down to 40%, i.e. an 8 s airstrike and a 6 s nuke). Each purchase costs 30% more (the Magazine 15%, so it can keep growing) than the last of its kind; the ROSTER button pulses between waves when you can afford one.
-- **Shooting** — each click fires one volley: every Marine and Ghost in the bunker shoots once at the cursor (the Marauders fire on their own, below). One volley costs one round of ammo. **Hold** the button for full auto: after 0.25 s it fires a volley every 0.1 s wherever the cursor is, until you let go or the magazine is empty.
-- **Ammo** — when the magazine is empty, press **R**: a Viking fires an air-to-ground missile at every enemy cluster and drops an ammo crate, which one of your units (the one you elected in the roster, else a Marine if one is free) runs out to fetch — at night with a twin white LED pod on its chest armour, two soft hot spots in one soft glow and a soft pool of light on the ground ahead with no edge anywhere, like the Marines' flashlights in StarCraft II, and a real spot light that lights the hull, the Zerg and the rocks it faces. The missiles leave the muzzles of its two launcher tubes (either side of the nose) in turn, run ahead, then dive on their targets, homing on the lead Zerg, with an exhaust flame, a light streak and a smoke trail. Ammo is also restocked after every wave by a supply crate — **one crate per wave**: if the Viking's crate is still on its way when the wave ends (its missiles killed the last Zerg), the next wave waits for that crate instead of a second one, and if it already came in this wave, the magazine is refilled on the spot.
+- **Shooting** — each click fires one volley: every Marine and Ghost in the bunker shoots once at the cursor (the Marauders fire on their own, below). One volley costs one round of ammo. **Hold** the button for full auto: after 0.25 s it fires a volley every 0.1 s wherever the cursor is, until you let go or the magazine is empty. The damage numbers ride above each Zerg's HP bar as a two-row queue: a new hit comes in just over the bar and pushes the older one up, and the one pushed out fades (Menu → Settings → DAMAGE NUMBERS hides them; the HP bars still show the damage). In the rain some rounds miss (see **Weather**).
+- **Ammo** — when the magazine is empty, press **R**: a Viking fires an air-to-ground missile at every enemy cluster and drops an ammo crate, which one of your units (the one you elected in the roster, else a Marine if one is free) runs out to fetch — at night with a twin white LED pod on its chest armour, two soft hot spots in one soft glow and a soft pool of light on the ground ahead with no edge anywhere, like the Marines' flashlights in StarCraft II, and a real spot light that lights the hull, the Zerg and the rocks it faces. The bunker blocks it (a cylinder fitted to its walls): a runner coming home lights the hull it faces, not the ground, Zerg or rocks behind it, and the pool on the ground is cut by the same shadow. The missiles leave the muzzles of its two launcher tubes (either side of the nose) in turn, run ahead, then dive on their targets, homing on the lead Zerg, with an exhaust flame, a light streak and a smoke trail. Ammo is also restocked after every wave by a supply crate — **one crate per wave**: if the Viking's crate is still on its way when the wave ends (its missiles killed the last Zerg), the next wave waits for that crate instead of a second one, and if it already came in this wave, the magazine is refilled on the spot.
 - **Resources** — kills and cleared waves pay minerals ◆ and vespene gas ▲.
 
 ### Units (bunker roster, 6 slots — press B)
@@ -69,7 +69,7 @@ Dismissing a unit refunds 75%. Units fight from inside the bunker; you see them 
 
 The command card and the upgrade chips use StarCraft II button art that follows the level: Infantry Weapons Level 0 → 3 for damage; Magrail Munitions (Lv0–1), Magfield Accelerator (Lv2) and Enhanced Munitions (Lv3) for ammo; Fleet Calldown for the airstrike, the co-op nuke, the Detector eye for the view. Research has its own art (Super Stimpack — which also replaces the STIM icon once researched —, Explosive Shrapnel Shells for Concussive Shells, Laser Targeting System for Snipe), and the Shrike turret shows as a Hi-Sec Auto Tracking chip that pulses red in overdrive.
 
-The **nuke** (N) unlocks at wave 5: a two-second warning, then the warhead streaks down the targeting laser from the sky, trailing one straight white-hot streak as in StarCraft; huge blast radius, 15 s cooldown. It goes up in a mushroom cloud of fire as StarCraft II draws it — a cap rolling on a fiery stem, white-yellow inside and orange at the edges, cooling to dark red and soot over 7 s — with a grey dust ring surging along the ground and the shockwave, and nothing flung across the field; its fireball lights the field, and the Zerg it burns leave no blood. A round hitting a Zerg spurts a little of its blood out the far side, and a dying Zerg leaves a low splash of blood (sparks flung up and out read as fireworks). Below 50% HP the bunker starts to burn.
+The **nuke** (N) unlocks at wave 5: a two-second warning, then the warhead streaks down the targeting laser from the sky, trailing one straight white-hot streak as in StarCraft; huge blast radius, 15 s cooldown. It goes up in a mushroom cloud of fire as StarCraft II draws it — a cap rolling on a fiery stem, white-yellow inside and orange at the edges, cooling to dark red and soot over 7 s — with a grey dust ring surging along the ground and the shockwave, and nothing flung across the field; the shock booms as its front passes the bunker (sooner the closer the blast), then a long rumble; its fireball lights the field, and the Zerg it burns leave no blood. A round hitting a Zerg spurts a little of its blood out the far side, and a dying Zerg leaves a low splash of blood (sparks flung up and out read as fireworks). Below 50% HP the bunker starts to burn.
 
 ## Controls
 
@@ -79,13 +79,13 @@ The **nuke** (N) unlocks at wave 5: a two-second warning, then the warhead strea
 | Hold left button | Full auto: a volley every 0.1 s (empties the magazine fast) |
 | R | Airstrike + resupply (only when out of ammo) |
 | N | Nuke (wave 5+) |
-| T | Stimpack (six Marines in the bunker; fewer with Super Stimpack's tiers) — the Marines and Marauders fire 50% faster for 11 s |
+| T | Stimpack (six Marines in the bunker; fewer with Super Stimpack) — the Marines and Marauders fire 50% faster for 11 s |
 | B | Bunker roster — hire units, research (pauses the game) |
 | 1 · 2 · 3 · 4 | Upgrade damage · armor · bunker · ammo |
 | Mouse wheel, + / − | Zoom in on the bunker / back out |
 | Insert / Delete | Rotate the view 90° left / right (the view stays on the bunker) |
 | Home | Reset the view |
-| M or Esc | Menu (pauses), in tabs: GAME (save / load), SETTINGS (graphics, sound, day/night), CONTROLS, TUTORIAL, CHEATS — ↑ ↓ switch tabs. On the title screen the SETTINGS button (beside HOW TO PLAY) opens it on SETTINGS |
+| M or Esc | Menu (pauses), in tabs: GAME (save / load), SETTINGS (graphics, sound, damage numbers, day/night, weather), CONTROLS, TUTORIAL, ACHIEVEMENTS, CHEATS — ↑ ↓ switch tabs. On the title screen the SETTINGS button (beside HOW TO PLAY) opens it on SETTINGS |
 | Q | Graphics quality HIGH / LOW |
 | Y | Day/night cycle (experimental): a 3-minute cycle — day 78 s, dusk 24 s, night 54 s, dawn 24 s |
 | K | Sound on / off |
@@ -96,16 +96,42 @@ Hover a command-card button for a tooltip with its cost, effect, and why it is d
 
 **At night** (Y) the light reaches only about 9 units from the bunker, and the Zerg come in from 13–15. The top bar shows the phase and the time to the next one (`☀ DAY  DUSK IN 0:42`, then `NIGHT IN`, `DAWN IN`, `DAY IN`). Tracers burn through the dark — white-hot in a soft halo over a faint pool of light on the ground — so a volley shows where it goes past the lit edge (every round from the bunker and the Shrike draws the same streak, so both are as bright); the nuke's laser, trail, reticle and warning ring glow in the dark too. The **Sensor Tower** research in the roster (B — needs no unit; 100 ◆ 25 ▲, then 175 ◆ 50 ▲ and 275 ◆ 100 ▲) shows Zerg in the dark as pulsing red **!** blips, without telling which kind, out to 10.75 / 12.5 / 16 units — lying flat on the ground under them, upright as the camera sees them — inside a glowing ring at its range marked with 12 small equilateral triangles pointing at the bunker, which fades in when researched, crossfades on an upgrade and follows the night out (each blip fades in as it crosses into range and out only as its Zerg comes out of the dark — well inside the lit edge, where the fog still leaves it 60% black, or in a Marauder grenade's light; until then the Zerg itself is not drawn, nor its HP bar, whose size and ARM / LGT badge would tell which kind, and it shows just as its blip has faded out — no gap, and no Zerg seen under a blip); the Shrike turret engages blips as it does Zerg in the light. Its icon is a placeholder radar glyph until the StarCraft II button art is exported. An airstrike (R) called at night also drops a **Viking flare**: for 7.5 s it lifts the darkness enough to show the whole field; a nuke's fireball lights it for a few seconds as it cools.
 
+## Achievements
+
+27 achievements worth 600 points (StarCraft II's 10 / 20 / 30 / 50), in five categories:
+
+| Category | Achievements |
+|---|---|
+| Campaign | Boot Camp (finish the HUD tour) · First Blood · Hold the Line (wave 5) · Dig In (wave 10) · The Dominion Stands (win the campaign) |
+| Endless | No End in Sight (wave 20) · The Swarm Grows (25) · Legend of Korhal (30) |
+| Combat | Exterminator (100 kills in a game) · Four Stars (GENERAL in a game) · Veteran (1,000 kills in all) · Hive Breaker (5,000 in all) · Nuclear Option (10 with one nuke) · Air Superiority (10 with one airstrike) · Shrapnel (5 with one Marauder grenade) · One Shot, One Kill (50 snipes in all) |
+| Command | Fully Upgraded (damage, armor, hull, ammo maxed) · Shrike Online · Overdrive · Combined Arms (a Marine, a Marauder and a Ghost at once) · Super Soldiers (every Super Stimpack tier) · Eyes in the Dark (Sensor Tower 3) |
+| Feats | Untouchable (a wave from 5 on without the Zerg damaging the bunker) · Last Stand (hidden) · Night Watch (a wave at night) · Band of Brothers (win without a Marauder or a Ghost) · No Air Support (win without an airstrike or a nuke) |
+
+A pop-up below the top bar announces each one as it is earned, with a chime, over the roster and the menu too: one box with the icon, the name, what it was for, and the points large with the date. **ACHIEVEMENTS** on the title screen opens the full list, a tab per category, each achievement drawn as StarCraft II does: the icon, a blue panel with the name and what to do, and a box with the points and the date it was earned (`24 OCT 2026`) — or LOCKED, or the progress (`412/1,000`) for those that count across games. **Menu → ACHIEVEMENTS** shows them all as icons; the one under the cursor is shown as its full row. The results screen shows the (up to three) best the game earned.
+
+**A cheat code turns achievements off for the rest of that game** (any code but `help`, before it takes effect): the top bar shows a red CHEATS chip (on screens wider than 1200 px), the results screen says so, and the game counts toward nothing — not even the lifetime kills (BOOT CAMP too: a tour finished in that game does not count). What was earned before the cheat stays earned. The flag is saved with the game, so loading does not wash it out; a save made before achievements existed has no flag, so its game earns none either (the chip reads OLD SAVE). What has been earned and the lifetime stats (kills, snipes) are stored in `localStorage` (`dotd_achievements`); two tabs of the game merge their records instead of writing over each other.
+
+## Weather
+
+The sky wanders at random on game time: clear for 80–170 s, then clouds roll in over ~18 s and stay 25–45 s, then a shower about half the time (40–90 s), else clear again; after a shower it mostly clears. Every new game starts clear, the first change 45–100 s in. A shower is a **drizzle** (few fine, short, slow drops, a light wind) or a **downpour** (dense long streaks falling nearly twice as fast, a stronger wind, the day darker), even odds, and every 15–30 s it may turn from one to the other; the strength also wavers a little as it falls. Clouds dim the sun and grey the light. The rain has its own sound (band-limited noise and the patter of drops, as loud as it is heavy).
+
+- **The rain** has no per-drop state: each drop is a quad the vertex shader places from its index (a hash gives its place; the distance fallen and the wind's drift build up on the CPU, so a change of speed never makes them jump) — up to 12 000 streaks and 2 000 splash rings on GFX HIGH (5 000 and 800 on LOW) in a box over the field, fixed in the world. None fall close to the lens, and at night it shows only in the light.
+- **The aim**: in the rain 5% of the rounds from the bunker and the Shrike miss in a drizzle, 10% in a downpour (in between as the rain grows): a missed round flies on past its Zerg (it may hit one behind) and a pale blue MISS rises. Marauder grenades still burst; Ghost snipes, Viking missiles and nukes still strike. The status line names the shower and its miss chance when it starts.
+
+Menu → Settings → WEATHER switches it off (the sky clears; stored, on by default). Cheat `rain`, in turn: a downpour now, a drizzle, clear.
+
 ## Saving
 
 - **Menu → SAVE / LOAD** — one manual save slot.
 - **Autosave** after every cleared wave — **CONTINUE** on the title screen (also a checkpoint after the bunker falls).
 - A save made during a wave restarts that wave; a save made between waves resumes at the next one.
-- Everything is stored in the browser's `localStorage`: `dotd_save_v1`, `dotd_autosave_v1`, `dotd_endless_unlocked`, `dotd_endless_best`, `dotd_volume`, `dotd_muted`, `dotd_music`, `dotd_tutorial` (hints on / off and which ones were seen).
+- Everything is stored in the browser's `localStorage`: `dotd_save_v1`, `dotd_autosave_v1`, `dotd_endless_unlocked`, `dotd_endless_best`, `dotd_volume`, `dotd_muted`, `dotd_music`, `dotd_tutorial` (hints on / off and which ones were seen), `dotd_dmg_numbers`, `dotd_weather`, `dotd_achievements` (what has been earned, and when, and the lifetime kills and snipes).
+- A save also records whether a cheat was used in its game (and whether an airstrike or nuke was called, or a Marauder or Ghost hired, for the achievements); a save made before achievements loads as OLD SAVE and earns none.
 
 ## Cheat codes
 
-Type `dotd` during play to open the cheat console. `help` prints the full list to the browser console (F12).
+Type `dotd` during play to open the cheat console. `help` lists the codes in the console itself. Any code but `help` turns achievements off for the rest of that game.
 
 | Code | Effect |
 |---|---|
@@ -121,6 +147,7 @@ Type `dotd` during play to open the cheat console. `help` prints the full list t
 | `wave` · `zergrush` | finish the current wave · jump ahead 5 waves (stops at the final wave in Campaign) |
 | `airstrike` · `nuclear` · `kaboom` | 5 airstrikes · 3 nukes · a strike on every enemy |
 | `general` | +280 kills (rank General) |
+| `rain` | a downpour now (again: a drizzle, then clear) |
 | `endv` · `endd` | win the campaign · lose the bunker |
 
 ## Project structure
