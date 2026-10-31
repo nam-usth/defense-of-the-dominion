@@ -8,7 +8,8 @@ const G = (() => {
   let _logW = 0, _logH = 0; // logical (CSS) canvas dimensions — never multiplied by devicePixelRatio
 
   let gfxQuality = 'HIGH'; // 'LOW' | 'HIGH'
-  let _ambientLight, _sunLight, _fillLight, _bunkerLight, _fireLight, _muzzleLight, _nukeLight;
+  let _ambientLight, _sunLight, _fillLight, _bunkerLight, _fireLight, _muzzleLight, _gunLight, _nukeLight;
+  let _gunI = 0;   // its strength before the night's share (muzzleFlash)
 
   // ── Day/Night cycle (experimental) ──────────────────────────────────────
   let dnEnabled = false;     // opt-in toggle
@@ -30,7 +31,16 @@ const G = (() => {
     return _dnColA.lerp(_dnColB, t);
   }
 
-  const renderer = new THREE.WebGLRenderer({canvas, antialias:true});
+  // A float render target (WebGL2 + EXT_color_buffer_float) runs the HDR post-processing (see there), whose
+  // scene target is multisampled itself: the canvas then only takes the composite and needs no MSAA of its own
+  const HDR_OK = (() => {
+    try {
+      const gl = document.createElement('canvas').getContext('webgl2'), ok = !!(gl && gl.getExtension('EXT_color_buffer_float'));
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+      return ok;
+    } catch (e) { return false; }
+  })();
+  const renderer = new THREE.WebGLRenderer({canvas, antialias:!HDR_OK, powerPreference:'high-performance'});   // (a laptop's discrete GPU, if the browser lets us)
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -414,6 +424,292 @@ const G = (() => {
   let waveKills=0, waveNukes=0, waveAirs=0;
   let mx=0.5, my=0.5;
 
+  // ── Ground ─────────────────────────────────────────────────────────────
+  // The field is drawn procedurally (the desktop's TERRAIN shader, render.cpp) from three tiling 512² maps: the
+  // noise (R, G two unrelated fields; BA the slope of a fine pebbly height), the grass (thousands of short blades)
+  // and the soil (pebbles on crumbly earth), these two R height, G tone, BA slope. assets/textures holds the desktop
+  // game's own maps (dotd --dump-ground), the same texels, so both editions draw the same field. Flat until loaded.
+  const _flatTex = new THREE.DataTexture(new Uint8Array([128, 128, 128, 128]), 1, 1, THREE.RGBAFormat);
+  _flatTex.needsUpdate = true;
+  const _groundU = { terrainTex: { value: _flatTex }, grassTex: { value: _flatTex }, soilTex: { value: _flatTex },
+    groundHD: { value: 1 },                   // 1 HD, 0 SD (applyGfx: a uniform, no recompile)
+    uTime: { value: 0 }, uRain: { value: 0 }, uWet: { value: 0 }, uPuddle: { value: 0 },   // the weather (syncGround)
+    uNight: { value: 0 }, uNightDesat: { value: 0 }, uMoonTint: { value: new THREE.Color(.20, .27, .42) }, uMoonDir: { value: new THREE.Vector3(0, 1, 0) },   // the night (_applyDNLights)
+    uGrassClear: { value: [new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, -1)] } };   // where the grass is gone: x, z, radius
+  for (const [u, file] of [['terrainTex', 'ground_noise'], ['grassTex', 'ground_grass'], ['soilTex', 'ground_soil']])
+    new THREE.TextureLoader().load(`assets/textures/${file}.png?v=1`, t => {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.flipY = false;                        // (the rows as the desktop uploaded them)
+      t.anisotropy = Math.min(2, renderer.capabilities.getMaxAnisotropy());   // (the camera is never low: 8 looks the same and costs a close-up 3 ms)
+      t.needsUpdate = true;
+      _groundU[u].value = t;
+      if (u === 'terrainTex') GLOW_LIGHTS.cloudTex.value = t;
+    }, undefined, () => console.warn(`Ground map ${file}.png did not load: the field stays plain`));
+  // ground(): the field at xz, from the noise at rotated scales: tiles of 150 and 36 units for the broad layers (the
+  // field is 120 across: the first never repeats, the second has too many cells to band), 6 for the fine one and 1.3
+  // for a speckle, and the detail maps: single blades and pebbles close up, the blades read larger as clumps from
+  // afar. Two grass tones in soft patches, lighter and darker swathes, soft dirt patches frayed by the blades with a
+  // darker seam, a worn ring round the bunker, a fine slope for the light, shade at the bunker's foot. Every fine term
+  // is zero-mean, so a softer read keeps the tone:
+  //  - HD (GFX HIGH): all layers; detail (0..1, from the pixel's footprint) raises the fine ones close up;
+  //  - SD (GFX LOW): the broad layers a mip softer and no fine ones (two fetches, a flat light);
+  //  - lod >= 0: blurred mips (the grass, coloured from the ground at its root).
+  // The weather: water stands where the ground is low, in the dirt and the worn ring, rising with the rain that has
+  // fallen; the whole field darkens as it wets. The tones are the desktop's: its lights are these, so they carry over.
+  const _GROUND_FS = `uniform sampler2D terrainTex, grassTex, soilTex;
+uniform float groundHD, uTime, uRain, uWet, uPuddle, uNight, uNightDesat; uniform vec3 uMoonTint, uMoonDir;
+const mat2 ROT1 = mat2( 0.825, 0.565, -0.565, 0.825 ), ROT2 = mat2( -0.320, 0.947, -0.947, -0.320 ), ROT3 = mat2( 0.199, -0.980, 0.980, 0.199 ), ROT4 = mat2( 0.545, 0.839, -0.839, 0.545 );
+const mat2 ROT5 = mat2( 0.454, 0.891, -0.891, 0.454 ), ROT6 = mat2( 0.921, 0.389, -0.389, 0.921 ), ROT7 = mat2( -0.600, 0.800, -0.800, -0.600 ), ROT8 = mat2( 0.309, 0.951, -0.951, 0.309 );
+const mat2 ROT3T = mat2( 0.199, 0.980, -0.980, 0.199 ), ROT6T = mat2( 0.921, -0.389, 0.389, 0.921 ), ROT7T = mat2( -0.600, -0.800, 0.800, -0.600 ), ROT8T = mat2( 0.309, -0.951, 0.951, 0.309 );   // their transposes (none in GLSL ES 1)
+const vec3 GRASS_LUSH = vec3( .184, .290, .102 ), GRASS_DRY = vec3( .290, .310, .133 ), DIRT_DARK = vec3( .290, .224, .141 ), DIRT_LIGHT = vec3( .431, .353, .227 );
+const vec3 LUMA_G = vec3( 0.299, 0.587, 0.114 );
+struct Ground { vec3 alb, dry; vec3 N; float ao, wet, water, dirt; };
+Ground ground( vec2 xz, float lod, float wpp ) {
+  float detail = 1.0 - smoothstep( 0.011, 0.020, wpp ), soft = 0.5 * ( 1.0 - smoothstep( 0.02, 0.03, wpp ) );
+  vec2 u1 = ROT1 * xz / 150.0 + vec2( 0.89, 0.85 ), u2 = ROT2 * xz / 36.0, u3 = ROT3 * xz / 6.0;
+  vec4 a, b, c = vec4( 0.5 ), gf = vec4( 0.5 ), gc = vec4( 0.5 ), sf = vec4( 0.5 );
+  float s = 0.5;
+  bool hd = lod < 0.0 && groundHD > 0.5;
+  if ( lod >= 0.0 ) { a = NOISE_LOD( terrainTex, u1, lod ); b = NOISE_LOD( terrainTex, u2, lod ); }
+  else if ( hd ) {
+    a = texture2D( terrainTex, u1 ); b = texture2D( terrainTex, u2 ); c = texture2D( terrainTex, u3, soft );   // (c, gc: half a mip softer in a large window's overview: their top mips are the dearest reads)
+    s = texture2D( terrainTex, ROT4 * xz / 1.3 ).r;
+    gf = texture2D( grassTex, ROT6 * xz / 2.7 ); gc = texture2D( grassTex, ROT7 * xz / 7.3, soft ); sf = texture2D( soilTex, ROT8 * xz / 3.1 );
+  } else { a = texture2D( terrainTex, u1, 1.0 ); b = texture2D( terrainTex, u2, 1.0 ); }
+  float blade = ( gf.r - 0.5 ) * mix( 0.3, 1.0, detail ) + ( gc.r - 0.5 ) * mix( 1.0, 0.5, detail );
+  float tone = ( gf.g - 0.5 ) * mix( 0.3, 1.0, detail ) + ( gc.g - 0.5 ) * mix( 0.9, 0.3, detail );
+  float r = length( xz );
+  vec3 grass = mix( GRASS_LUSH, GRASS_DRY, smoothstep( 0.36, 0.70, 0.6 * b.g + 0.4 * a.g + ( c.g - 0.5 ) * 0.12 + tone * 0.28 ) )
+             * ( 0.8 + 0.4 * a.r ) * ( 1.0 + 0.16 * ( c.r - 0.5 ) ) * ( 1.0 + mix( 0.06, 0.24, detail ) * ( s - 0.5 ) ) * ( 1.0 + 0.55 * blade );
+  float dn = a.g * 0.65 + b.r * 0.35, ring = 0.85 * ( 1.0 - smoothstep( 2.0, 4.6, r + ( b.r - 0.5 ) * 1.6 + blade * 1.1 ) );
+  float dirt = max( smoothstep( 0.632, 0.732, dn + ( c.r - 0.5 ) * 0.05 - blade * 0.09 ), ring );
+  // the seam only round dirt the broad layers make (no dark specks where the fine term alone tips over)
+  float seam = 0.64 * dirt * ( 1.0 - dirt ) * smoothstep( 0.15, 0.5, max( smoothstep( 0.632, 0.732, dn ), ring ) );
+  vec3 soil = mix( DIRT_DARK, DIRT_LIGHT, clamp( 0.5 + ( b.g - 0.5 ) * 1.2 + ( c.r - 0.5 ) * 1.0 + ( sf.g - 0.5 ) * 0.55, 0.0, 1.0 ) ) * ( 0.9 + 0.2 * a.r ) * ( 1.0 + 0.4 * ( sf.r - 0.5 ) );
+  Ground G;
+  G.alb = mix( grass, soil, dirt ) * ( 1.0 - seam );
+  vec2 g = ROT3T * ( c.ba * 2.0 - 1.0 ) * mix( mix( 0.3, 0.45, detail ), 0.75, dirt );
+  if ( hd ) {
+    vec2 gg = ROT6T * ( gf.ba * 2.0 - 1.0 ) * mix( 0.15, 0.7, detail ) + ROT7T * ( gc.ba * 2.0 - 1.0 ) * mix( 0.4, 0.25, detail );
+    g += mix( gg, ROT8T * ( sf.ba * 2.0 - 1.0 ) * mix( 0.35, 0.9, detail ), dirt );
+  }
+  G.N = normalize( vec3( -g.x, 1.0, -g.y ) );
+  G.ao = mix( 0.55, 1.0, smoothstep( 1.4, 2.8, r ) );
+  G.dry = G.alb;
+  G.wet = uWet;
+  G.water = 0.0;
+  G.dirt = dirt;
+  if ( uWet > 0.0 || uPuddle > 0.0 ) {
+    float p = lod < 0.0 ? texture2D( terrainTex, ROT5 * xz / 21.9 ).r : NOISE_LOD( terrainTex, ROT5 * xz / 21.9, lod ).r;
+    float low = p * ( 0.55 + 0.45 * dirt ), T = 1.0 - 0.36 * uPuddle;
+    G.water = smoothstep( T, T + max( 0.015, lod < 0.0 ? 1.5 * fwidth( low ) : 0.05 ), low );   // a crisp shore, never a jagged one
+    G.wet = max( uWet, smoothstep( T - 0.1, T, low ) * min( 1.0, 4.0 * uPuddle ) );
+    G.alb *= 1.0 - G.wet * mix( 0.3, 0.45, dirt ) - 0.2 * G.water;
+  }
+  return G;
+}
+// What the water mirrors: the sky, brighter toward the horizon, under a cloud deck 40 up drifting with the wind
+vec3 skyMirror( vec3 P, vec3 R ) {
+  float up = max( R.y, 0.0 );
+  vec2 c = ( P.xz + R.xz * ( 40.0 / max( up, 0.2 ) ) + cloudDrift ) / 480.0;
+  float cl = texture2D( terrainTex, c, 1.0 ).r;
+  return mix( skyHor, skyZen, sqrt( up ) ) * ( 1.0 + cloudAmt * ( cl - 0.5 ) );
+}
+// The rain's rings on standing water (the slope of the surface): in each 0.45 cell a drop may land every ~0.6 s
+vec2 h22( vec2 p ) { vec3 q = fract( vec3( p.xyx ) * vec3( .1031, .1030, .0973 ) ); q += dot( q, q.yzx + 33.33 ); return fract( ( q.xx + q.yz ) * q.zy ); }
+vec2 ripples( vec2 p ) {
+  const float CELL = 0.45, K = 78.0, S2 = 0.0025;
+  vec2 c0 = floor( p / CELL ), g = vec2( 0.0 );
+  for ( int j = -1; j <= 1; j++ )
+    for ( int i = -1; i <= 1; i++ ) {
+      vec2 c = c0 + vec2( float( i ), float( j ) ), h = h22( c );
+      float cyc = uTime * ( 1.3 + 0.7 * h.y ) + 7.3 * h.x, life = fract( cyc );
+      vec2 q = h22( c + 1.618 * floor( cyc ) );
+      if ( fract( q.x * 13.7 + q.y * 7.1 ) > 0.1 + 0.9 * uRain ) continue;
+      vec2 d = p - ( c + 0.25 + 0.5 * q ) * CELL;
+      float r = length( d ), u = r - 0.3 * life, e = ( 1.0 - life ) * ( 1.0 - life ) * exp( -u * u / S2 );
+      g += d / max( r, 1e-4 ) * ( 0.003 * e * ( K * cos( K * u ) - 2.0 * u / S2 * sin( K * u ) ) );
+    }
+  return g;
+}
+// a surface's moonlit value at night: its brightness, moon-blue, lit by the moon
+vec3 nightOf( vec3 alb, vec3 N ) { return dot( alb, LUMA_G ) * uMoonTint * ( 0.45 + 0.55 * max( dot( N, uMoonDir ), 0.0 ) ); }
+vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
+`;
+  // The shared hooks of the ground and the grass: colour, normal, light and fog from ground()
+  const _groundHooks = (fs, colour) => fs
+    .replace('#include <fog_pars_fragment>', `#include <fog_pars_fragment>\n${_GROUND_FS}`)
+    .replace('#include <color_fragment>', `#include <color_fragment>\n${colour}
+  diffuseColor.rgb = mix( G.alb, vec3( dot( G.alb, LUMA_G ) ), uNightDesat );
+  sceneFogT = mix( fogColor, nightOf( G.dry, G.N ) * G.ao, uNight );`)
+    .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+  vec3 Nw = G.N;
+  if ( G.water > 0.0 ) {   // standing water lies flat, but for the rain's rings on it
+    vec3 Nf = vec3( 0.0, 1.0, 0.0 );
+    if ( uRain > 0.0 ) { vec2 rg = ripples( vGroundW.xz ) * min( 1.0, 0.4 + uRain ); Nf = normalize( vec3( -rg.x, 1.0, -rg.y ) ); }
+    Nw = normalize( mix( Nw, Nf, G.water ) );
+  }
+  normal = normalize( ( viewMatrix * vec4( Nw, 0.0 ) ).xyz );`)
+    // wet ground takes a dull sheen, the water sharp glints of every light
+    .replace('#include <lights_phong_fragment>', `#include <lights_phong_fragment>
+  float wetSpec = G.wet * mix( 0.3, 1.0, G.water );
+  if ( wetSpec > 0.0 ) { material.specularColor = mix( material.specularColor, vec3( 0.25 ), wetSpec ); material.specularShininess = mix( 30.0, 400.0, G.water ); }`)
+    // the shade at the bunker's foot dims the ambient light, and a little of the direct (the field faces up: it takes the plain ambient)
+    .replace('#include <aomap_fragment>', `#include <aomap_fragment>
+  reflectedLight.indirectDiffuse *= G.ao / vec3( 1.05, 1.05, 1.1 ); reflectedLight.directDiffuse *= mix( 1.0, G.ao, 0.35 );`)
+    // the water mirrors the sky: by day far brighter than the lit ground, so even from overhead it shows
+    .replace('gl_FragColor = vec4( outgoingLight, diffuseColor.a );', `if ( G.water > 0.0 ) {
+    vec3 Vw = normalize( cameraPosition - vGroundW );
+    float F = 0.02 + 0.98 * pow( 1.0 - clamp( dot( Nw, Vw ), 0.0, 1.0 ), 5.0 );
+    outgoingLight = mix( outgoingLight, skyMirror( vGroundW, reflect( -Vw, Nw ) ), G.water * min( 1.0, mix( 0.55, 0.25, uNight ) + F ) );
+  }
+  gl_FragColor = vec4( outgoingLight, diffuseColor.a );`);
+  function groundMaterial() {
+    const m = new THREE.MeshPhongMaterial({ color: 0x2d4a18, specular: 0x080808, shininess: 4 });   // (the colour: unused)
+    m.extensions = { derivatives: true };   // (WebGL 1: dFdx)
+    m.onBeforeCompile = sh => {
+      Object.assign(sh.uniforms, _groundU);
+      sh.vertexShader = 'varying vec3 vGroundW;\n' + sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+  vGroundW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;`);
+      // the close-up detail by the pixel's footprint: crisp grass close up, calm where a pixel spans more of the fine
+      // layer (no hatching); the footprint along the screen's axes, the same at any yaw
+      sh.fragmentShader = '#define FOG_TARGET sceneFogT\nvarying vec3 vGroundW;\n' + _groundHooks(sh.fragmentShader, `
+  float wpp = max( length( dFdx( vGroundW.xz ) ), length( dFdy( vGroundW.xz ) ) );
+  Ground G = ground( vGroundW.xz, -1.0, wpp );`);
+    };
+    m.customProgramCacheKey = () => 'ground';   // (every hook reads the same through radial-fog.js's wrapper)
+    return m;
+  }
+
+  // ── Grass ──────────────────────────────────────────────────────────────
+  // Thousands of little tufts of blades over the field (none under the bunker), one static mesh, drawn on HIGH: the
+  // desktop's (Game::buildGrass, the same seed). Each vertex carries its tuft's root and sway in its normal, its tint
+  // and how far up the blade it is in its uv. The wind runs through in slow gusts, stronger in the rain. A blade takes
+  // the colour of the ground at its tuft's root, dark at the root, pale at the tip; none on bare earth, in water, or
+  // where a nuke has scorched the field
+  function _grassMesh() {
+    let st = 0x2545f491;
+    const rn = () => { st ^= st << 13; st ^= st >>> 17; st ^= st << 5; return (st & 0xffffff) / 16777216; };
+    const TUFTS = 7500, BLADES = 4, nv = TUFTS * BLADES * 5;
+    const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), UV = new Float32Array(nv * 2), I = new Uint32Array(TUFTS * BLADES * 9);
+    let v = 0, ii = 0;
+    for (let t = 0; t < TUFTS; t++) {
+      const a0 = rn() * 2 * Math.PI, r0 = 3.6 + (30 - 3.6) * Math.sqrt(rn()), rx = Math.cos(a0) * r0, rz = Math.sin(a0) * r0;
+      const h0 = .14 + .16 * rn(), tint = .84 + .32 * rn();
+      for (let b = 0; b < BLADES; b++) {
+        const a = rn() * 2 * Math.PI, c = Math.cos(a), s = Math.sin(a), h = h0 * (.7 + .3 * rn()), lean = (.25 + .5 * rn()) * h, w = .016 + .012 * rn();
+        const oa = rn() * 2 * Math.PI, od = .08 * rn(), bx = rx + Math.cos(oa) * od, bz = rz + Math.sin(oa) * od, i = v;
+        const put = (x, y, z, f) => {
+          P.set([x, y, z], v * 3); N.set([rx, .45 * h * f * f, rz], v * 3); UV.set([tint, f], v * 2); v++;
+        };
+        const ml = lean * .35, mw = w * .65;
+        put(bx + s * w, 0, bz - c * w, 0);
+        put(bx - s * w, 0, bz + c * w, 0);
+        put(bx + c * ml + s * mw, .55 * h, bz + s * ml - c * mw, .55);
+        put(bx + c * ml - s * mw, .55 * h, bz + s * ml + c * mw, .55);
+        put(bx + c * lean, h, bz + s * lean, 1);
+        for (const q of [0, 1, 3, 0, 3, 2, 2, 3, 4]) I[ii++] = i + q;
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(P, 3));
+    g.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(UV, 2));
+    g.setIndex(new THREE.BufferAttribute(I, 1));
+    const m = new THREE.MeshPhongMaterial({ color: 0x2d4a18, specular: 0x080808, shininess: 4, side: THREE.DoubleSide });
+    m.extensions = { derivatives: true };
+    m.onBeforeCompile = sh => {
+      Object.assign(sh.uniforms, _groundU);
+      sh.vertexShader = `uniform float uTime, uRain;\nvarying vec3 vGroundW; varying vec2 vRoot; varying vec2 vTuft;\n` + sh.vertexShader
+        .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3( 0.0, 1.0, 0.0 );')
+        .replace('#include <begin_vertex>', `vec2 root = normal.xz;
+  float gust = 0.65 + 0.35 * sin( dot( root, vec2( 0.21, 0.13 ) ) + uTime * 1.3 ) + 0.2 * sin( dot( root, vec2( -0.43, 0.57 ) ) + uTime * 2.9 );
+  vec3 transformed = position;
+  transformed.xz += vec2( 0.8, 0.6 ) * ( gust * normal.y * ( 1.0 + 1.2 * uRain ) );
+  vRoot = root; vTuft = uv; vGroundW = transformed;`);
+      sh.fragmentShader = '#define FOG_TARGET sceneFogT\nvarying vec3 vGroundW; varying vec2 vRoot; varying vec2 vTuft;\nuniform vec3 uGrassClear[ 3 ];\n' + _groundHooks(sh.fragmentShader, `
+  Ground G = ground( vRoot, 1.5, 1.0 );
+  if ( G.dirt > 0.3 || G.water > 0.05 ) discard;
+  for ( int i = 0; i < 3; i++ ) if ( distance( vRoot, uGrassClear[ i ].xy ) < uGrassClear[ i ].z ) discard;
+  G.alb *= mix( 0.62, 1.32, vTuft.y ) * vTuft.x;`);
+    };
+    m.customProgramCacheKey = () => 'tuft';
+    const mesh = new THREE.Mesh(g, m);
+    mesh.frustumCulled = false; mesh.receiveShadow = true;
+    return mesh;
+  }
+  let _grass = null;
+  // A frame's values for the ground and the sky over it
+  function syncGround() {
+    const U = _groundU, G = GLOW_LIGHTS;
+    U.uTime.value = wx.t % 2048; U.uRain.value = wx.rain; U.uWet.value = wx.wet; U.uPuddle.value = wx.puddle;
+    G.cloudAmt.value = wx.cloud;
+    G.cloudDrift.value.set(wx.driftX % 480, wx.driftZ % 480);
+    const dx = wx.driftX + 1.1 * _gameT, dz = wx.driftZ + .45 * _gameT;
+    G.shadeDrift.value.set(((dx % 480) + 480) % 480, ((dz % 480) + 480) % 480);   // (it wraps at a whole number of the tiles it reads)
+    for (let i = 0; i < 3; i++) {             // the grass is gone where a nuke's front has passed, and grows back as its scar fades
+      const s = nukeScars[nukeScars.length - 1 - i], v = U.uGrassClear.value[i];
+      if (s) v.set(s.mesh.position.x, s.mesh.position.z, nk.frontR(s.age) * (1 - _sstep(nk.SCAR_END - 5, nk.SCAR_END, s.age)));
+      else v.z = -1;
+    }
+  }
+
+  // ── Contact shadows ─────────────────────────────────────────────────────
+  // A soft dark blob under every Zerg, corpse and unit out of the bunker: what the shadow map misses (the
+  // ground right under a body; by night and on LOW, with no sun shadow at all). None under a Zerg the night
+  // hides (it is not drawn), fainter as the dark takes it, gone as a body rises. One instanced draw that
+  // darkens what is under it (dst × (1 − k·blob): a black blob at alpha k), sized per kind.
+  const _blobTex = (() => {   // dark in the middle, gone well before the edge
+    const N = 32, d = new Uint8Array(N * N * 4);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+      const x = (i + .5) / N * 2 - 1, y = (j + .5) / N * 2 - 1, r = Math.hypot(x, y), e = Math.min(1, Math.max(0, (r - .7) / .3));
+      d.fill(Math.round(255 * Math.exp(-3.5 * r * r) * (1 - e * e * (3 - 2 * e))), (j * N + i) * 4, (j * N + i) * 4 + 4);
+    }
+    const t = new THREE.DataTexture(d, N, N, THREE.RGBAFormat);
+    t.magFilter = t.minFilter = THREE.LinearFilter; t.needsUpdate = true;
+    return t;
+  })();
+  const _blobGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+  const _blobMat = new THREE.MeshBasicMaterial({ map: _blobTex, transparent: true, depthWrite: false, fog: false,
+    blending: THREE.CustomBlending, blendSrc: THREE.ZeroFactor, blendDst: THREE.OneMinusSrcColorFactor });
+  let _blobIM = null;
+  const _rockBlobs = [];   // the boulders' (buildScene)
+  function _growBlobs(cap) {
+    if (_blobIM) { scene.remove(_blobIM); _blobIM.dispose?.(); }
+    _blobIM = new THREE.InstancedMesh(_blobGeo, _blobMat, cap);
+    _blobIM.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    _blobIM.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3).setUsage(THREE.DynamicDrawUsage);   // its darkness
+    _blobIM.frustumCulled = false; _blobIM.count = 0; _blobIM.visible = false;
+    _blobIM.renderOrder = -1;   // on the ground before the glows and pools over it
+    scene.add(_blobIM);
+  }
+  _growBlobs(128);
+  function syncBlobs() {
+    const need = zerglings.length + roaches.length + corpses.length + marines.length + _rockBlobs.length;
+    if (need > _blobIM.instanceMatrix.count) _growBlobs(1 << Math.ceil(Math.log2(need)));
+    const M = _blobIM.instanceMatrix.array, C = _blobIM.instanceColor.array, f = _dnLitF;
+    let n = 0;
+    const blob = (p, rotY, w, l, k) => {   // a w x l blob (l along the body) turned by rotY
+      const nd = _nightDark(p.x, p.z);
+      k *= (1 - _sstep(.1, 1.6, p.y)) * (1 - f * nd) * (1 - nd) * (1 - .25 * f);   // (the last (1 − nd): the desktop's fog on it)
+      if (k <= .02) return;
+      const c = Math.cos(rotY), s = Math.sin(rotY), o = n * 16;
+      M[o] = c * w; M[o + 1] = 0; M[o + 2] = -s * w; M[o + 3] = 0;
+      M[o + 4] = 0; M[o + 5] = 1; M[o + 6] = 0; M[o + 7] = 0;
+      M[o + 8] = s * l; M[o + 9] = 0; M[o + 10] = c * l; M[o + 11] = 0;
+      M[o + 12] = p.x; M[o + 13] = .02; M[o + 14] = p.z; M[o + 15] = 1;
+      C[n * 3] = C[n * 3 + 1] = C[n * 3 + 2] = k;
+      n++;
+    };
+    for (const e of zerglings) if (!e.dead && e.pool && e.mesh.visible) blob(e.mesh.position, e.mesh.rotation.y, 1, 1.3, .55);
+    for (const e of roaches) if (!e.dead && e.pool && e.mesh.visible) blob(e.mesh.position, e.mesh.rotation.y, 1.5, 1.9, .6);
+    for (const c of corpses) if (c.pool && c.mesh.visible) blob(c.mesh.position, c.mesh.rotation.y, 1.1, 1.4, .45 * Math.max(0, 1 - c.t * 1.4));
+    for (const m of marines) if (m.mesh.visible) blob(m.mesh.position, m.mesh.rotation.y, .8, .8, .5);
+    for (const r of _rockBlobs) blob(r, 0, r.s, r.s, .6);   // the boulders settle into the ground
+    _blobIM.count = n; _blobIM.visible = n > 0;
+    _blobIM.instanceMatrix.needsUpdate = true; _blobIM.instanceColor.needsUpdate = true;
+  }
+
   // ── Build scene ─────────────────────────────────────────────────────────
   function buildScene() {
     // Ambient — neutral warm-cool so textures read accurately
@@ -422,7 +718,7 @@ const G = (() => {
 
     // Sun — primary directional light with shadow
     _sunLight = new THREE.DirectionalLight(0xfff4cc, 1.8);
-    _sunLight.position.set(10, 28, 8);
+    _sunLight.position.set(14, 24, 9);   // (65° before: lower, longer shadows, the shapes stand out)
     _sunLight.castShadow = true;
     _sunLight.shadow.mapSize.set(2048, 2048);
     _sunLight.shadow.camera.near = 1;
@@ -439,16 +735,19 @@ const G = (() => {
     scene.add(_fillLight);
 
     // Bunker point light — used at night to illuminate the bunker area
-    _bunkerLight = new THREE.PointLight(0xff9944, 0, 14, 2);
-    _bunkerLight.position.set(0, 2.5, 0);
+    _bunkerLight = new THREE.PointLight(0xffd2a0, 0, 15, 2);   // warm white (on the greyed grass: khaki, not lime)
+    _bunkerLight.position.set(0, 2.6, 0);
     scene.add(_bunkerLight);
 
     // Muzzle light — a brief orange flash on the hull at the firing slit / barrel
     _muzzleLight = new THREE.PointLight(0xffb060, 0, 4.5, 2);
     scene.add(_muzzleLight);
+    // Gunfire on the ground: a warm pool of light in front of the port (lime on the grass if yellower)
+    _gunLight = new THREE.PointLight(0xffa055, 0, 7, 1.5);
+    scene.add(_gunLight);
 
     // Fire light — flickers on the hull while the bunker burns (HP < 50%)
-    _fireLight = new THREE.PointLight(0xff6a1a, 0, 6, 2);
+    _fireLight = new THREE.PointLight(0xff6a1a, 0, 9.5, 1.5);   // the hull round the flames, the ground and the Zerg out to ~7
     _fireLight.position.set(0, 1.8, 0);
     scene.add(_fireLight);
 
@@ -463,25 +762,107 @@ const G = (() => {
     groundMesh = new THREE.Mesh(
       new THREE.PlaneGeometry(120,120), // large enough that the edge is lost in the fog from the low close-up angle
       // Phong = per-pixel lighting: the bunker light can pool on the ground at night
-      // (Lambert lights per vertex — on this 4-vertex quad that was no light at all)
-      new THREE.MeshPhongMaterial({color:0x2d4a18,specular:0x080808,shininess:4})
+      // (Lambert lights per vertex — on this 4-vertex quad that was no light at all);
+      // drawn procedurally (groundMaterial: two grass tones, soft dirt patches, a worn ring)
+      groundMaterial()
     );
     groundMesh.rotation.x = -Math.PI/2; groundMesh.receiveShadow=true;
     scene.add(groundMesh);
 
-    // Dirt patches + rocks: laid out as before, then merged into one mesh per
-    // material (36 draw calls → 2)
-    const props=new THREE.Group(), dirtMat=new THREE.MeshPhongMaterial({color:0x4a3a18,specular:0x080808,shininess:4}), rockMat=new THREE.MeshLambertMaterial({color:0x554433});
-    for(let i=0;i<20;i++){
-      const m=new THREE.Mesh(new THREE.PlaneGeometry(Math.random()*2+.4,Math.random()*1.2+.3),dirtMat);
-      m.rotation.x=-Math.PI/2; m.position.set((Math.random()-.5)*36,.01,(Math.random()-.5)*22); props.add(m);
+    // The grass (HIGH)
+    _grass = _grassMesh();
+    _grass.visible = gfxQuality === 'HIGH';
+    scene.add(_grass);
+
+    // Boulders: clusters of rocks (a big one, two or three small ones) out past the Sensor ring and the Zerg's spawn
+    // band (r 17.5-24), sunk a quarter into the ground; three shapes, the desktop's (the same seeds), each a sphere
+    // chiselled by random planes into faces that meet in ridges, a little uneven. A corner's normal averages the
+    // faces round it within 40° (smooth across a face, a crease along a ridge). Instanced
+    const rockGeo = [0, 1, 2].map(k => {
+      let st = Math.imul(0x5bd1e995, k + 1);
+      const rn = () => { st ^= st << 13; st ^= st >>> 17; st ^= st << 5; return (st & 0xffffff) / 16777216; };
+      const cuts = [];
+      for (let i = 0; i < 16; i++) {
+        const y = 2 * rn() - 1, a = rn() * 2 * Math.PI, h = Math.sqrt(1 - y * y), d = .62 + .33 * rn();
+        cuts.push([Math.cos(a) * h, y, Math.sin(a) * h, d]);
+      }
+      const s1 = rn() * 6.28, s2 = rn() * 6.28, g = new THREE.IcosahedronGeometry(1, 4), p = g.attributes.position, n = p.count;   // (not indexed: a corner per face)
+      const d = new THREE.Vector3(), corners = new Map();
+      for (let i = 0; i < n; i++) {
+        d.set(p.getX(i), p.getY(i), p.getZ(i)).normalize();
+        const key = `${Math.round(d.x * 2000)},${Math.round(d.y * 2000)},${Math.round(d.z * 2000)}`;   // (the faces sharing a corner move it alike: it depends on d alone)
+        (corners.get(key) || corners.set(key, []).get(key)).push(i);
+        let rad = 1;
+        for (const c of cuts) { const dc = d.x * c[0] + d.y * c[1] + d.z * c[2]; if (dc > .05) rad = Math.min(rad, c[3] / dc); }
+        rad *= 1 + .045 * Math.sin(3.1 * d.x + s1) * Math.sin(2.7 * d.y + s2) + .025 * Math.sin(7.3 * d.z + s2) * Math.sin(6.1 * d.x + s1);
+        p.setXYZ(i, d.x * rad, Math.min(d.y * rad, .55) * .68, d.z * rad * .85);   // a flattish top
+      }
+      g.computeVertexNormals();   // flat facets
+      const N = g.attributes.normal, flat = N.array.slice();
+      const out = new THREE.Vector3();
+      for (const list of corners.values())
+        for (const i of list) {
+          out.set(0, 0, 0);
+          for (const j of list)
+            if (flat[i * 3] * flat[j * 3] + flat[i * 3 + 1] * flat[j * 3 + 1] + flat[i * 3 + 2] * flat[j * 3 + 2] > .766) { out.x += flat[j * 3]; out.y += flat[j * 3 + 1]; out.z += flat[j * 3 + 2]; }
+          out.normalize();
+          N.setXYZ(i, out.x, out.y, out.z);
+        }
+      return g;
+    });
+    const ROCK_COL = [0x4a3f32, 0x423e39, 0x534735], rocks = [[], [], []], ro = new THREE.Object3D();   // dark: in the sun their tops still read pale
+    const rock = (x, z, s) => {
+      const k = Math.min(2, Math.floor(Math.random() * 3));
+      ro.position.set(x, .42 * s, z); ro.rotation.set((Math.random() - .5) * .5, Math.random() * 2 * Math.PI, (Math.random() - .5) * .5); ro.scale.setScalar(s);
+      ro.updateMatrix();
+      rocks[k].push([ro.matrix.clone(), new THREE.Color(ROCK_COL[k]).multiplyScalar(.9 + .2 * Math.random())]);
+      _rockBlobs.push({ x, y: 0, z, s: 2.5 * s });
+    };
+    for (let i = 0; i < 18; i++) {
+      const a = i / 18 * 2 * Math.PI + (Math.random() - .5) * .25, r = i % 3 === 2 ? 21 + 3 * Math.random() : 17.5 + 3.5 * Math.random();
+      const cx = Math.cos(a) * r, cz = Math.sin(a) * r;
+      rock(cx, cz, .55 + .3 * Math.random());
+      for (let j = 0, n = 2 + (Math.random() < .5); j < n; j++) {
+        const b = Math.random() * 2 * Math.PI, d = .5 + .5 * Math.random();
+        rock(cx + Math.cos(b) * d, cz + Math.sin(b) * d, .18 + .22 * Math.random());
+      }
     }
-    for(let i=0;i<16;i++){
-      const a=i/16*Math.PI*2, r=14+Math.random()*2.5;
-      const m=new THREE.Mesh(new THREE.DodecahedronGeometry(Math.random()*.5+.25),rockMat);
-      m.position.set(Math.cos(a)*r,.3,Math.sin(a)*r); m.rotation.set(Math.random(),Math.random(),Math.random()); props.add(m);
-    }
-    bakeTemplate(props).forEach(p=>scene.add(new THREE.Mesh(p.geo,p.mat)));
+    // Stone (the ground's maps, projected on three axes): mottled, grainy, faintly banded, a chipped surface, lichen on
+    // the faces turned up, darker at its foot where the earth is damp. At night the fog leaves its own moonlit, colourless
+    // trace, paler than the field: a boulder in the dark reads as a stone, not a crouching Zerg
+    const rockMat = new THREE.MeshPhongMaterial({ specular: 0x0a0a0a, shininess: 8 });
+    rockMat.extensions = { derivatives: true };
+    rockMat.onBeforeCompile = sh => {
+      Object.assign(sh.uniforms, _groundU);
+      sh.vertexShader = 'varying vec3 vGroundW;\n' + sh.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+  vGroundW = ( modelMatrix * instanceMatrix * vec4( transformed, 1.0 ) ).xyz;`);
+      sh.fragmentShader = '#define FOG_TARGET sceneFogT\nvarying vec3 vGroundW;\n' + sh.fragmentShader
+        .replace('#include <fog_pars_fragment>', `#include <fog_pars_fragment>\n${_GROUND_FS}`)
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+  vec3 Nw = inverseTransformDirection( normal, viewMatrix );
+  if ( groundHD > 0.5 ) {
+    vec3 w = Nw * Nw; w *= w; w /= w.x + w.y + w.z;
+    vec2 u1 = vGroundW.zy, u2 = vGroundW.xz, u3 = vGroundW.xy;
+    vec4 t = texture2D( terrainTex, u1 / 2.3 ) * w.x + texture2D( terrainTex, u2 / 2.3 ) * w.y + texture2D( terrainTex, u3 / 2.3 ) * w.z;
+    vec4 f1 = texture2D( soilTex, u1 / 1.4 ), f2 = texture2D( soilTex, u2 / 1.4 ), f3 = texture2D( soilTex, u3 / 1.4 );
+    float grain = f1.r * w.x + f2.r * w.y + f3.r * w.z;
+    vec3 stone = diffuseColor.rgb * ( 0.62 + 0.76 * t.r ) * ( 1.0 + 0.55 * ( grain - 0.5 ) ) * ( 1.0 + 0.09 * sin( vGroundW.y * 17.0 + t.g * 6.0 ) );
+    float mo = smoothstep( 0.62, 0.92, Nw.y + ( t.g - 0.5 ) * 1.3 ) * 0.6;
+    diffuseColor.rgb = mix( stone, GRASS_DRY * ( 0.55 + 0.7 * t.r ), mo ) * mix( 0.55, 1.0, smoothstep( 0.0, 0.32, vGroundW.y ) );
+    Nw = normalize( Nw - 0.7 * ( ( vec3( 0.0, f1.a, f1.b ) - vec3( 0.0, 0.5, 0.5 ) ) * w.x + ( vec3( f2.b, 0.0, f2.a ) - vec3( 0.5, 0.0, 0.5 ) ) * w.y + ( vec3( f3.b, f3.a, 0.0 ) - vec3( 0.5, 0.5, 0.0 ) ) * w.z ) );
+    normal = normalize( ( viewMatrix * vec4( Nw, 0.0 ) ).xyz );
+  }
+  diffuseColor.rgb = mix( diffuseColor.rgb, vec3( dot( diffuseColor.rgb, LUMA_G ) ), uNightDesat ) * ( 1.0 - 0.3 * uWet );   // (wet stone darkens)
+  sceneFogT = mix( fogColor, nightOf( 1.5 * diffuseColor.rgb, Nw ), uNight );`);
+    };
+    rockMat.customProgramCacheKey = () => 'rock';
+    rocks.forEach((list, k) => {
+      if (!list.length) return;
+      const im = new THREE.InstancedMesh(rockGeo[k], rockMat, list.length);
+      list.forEach(([m, c], i) => { im.setMatrixAt(i, m); im.setColorAt(i, c); });
+      im.castShadow = im.receiveShadow = true;
+      scene.add(im);
+    });
 
     // Bunker — procedural base always present; OBJ swaps in async when loaded
     function _buildProceduralBunker(parent) {
@@ -837,6 +1218,7 @@ const G = (() => {
       im.count = pool.n; im.visible = pool.n > 0;   // walk / attack frames nobody is on: skipped (also in the shadow pass)
       im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true;
     }
+    syncBlobs();   // their contact shadows (and the units')
   }
 
   // Dying enemies: pop, roll onto their side, then sink into the ground (~1.2 s). A nuke's victims
@@ -1223,6 +1605,14 @@ const G = (() => {
     }
     emitParticle(_smoke, x + dx * .2, y + .05, z + dz * .2, dx * .6, .5, dz * .6,                                   // smoke wisp
       .5 + R() * .3, .18 * k, .55 * k, .22, 0x6a6a6a, 0x9a9a9a, -.3, 1.2, 1);
+    // the gun's light on the ground: low and a little out in front of the port (the Shrike's off its roof: higher, further
+    // out), each shot a little stronger or weaker and off to one side so sustained fire flickers; a volley's shots mix
+    if (_gunLight) {
+      const roof = y > 1.2, out = (roof ? 1.1 : .7) + (R() - .5) * .2, side = (R() - .5) * .3, w = (big ? 3.4 : 2.6) * (.7 + .6 * R());
+      const gx = x + dx * out - dz * side, gy = roof ? 1.3 : .75, gz = z + dz * out + dx * side, p = _gunLight.position;
+      if (_gunI > .05) p.set((p.x * _gunI + gx * w) / (_gunI + w), (p.y * _gunI + gy * w) / (_gunI + w), (p.z * _gunI + gz * w) / (_gunI + w)); else p.set(gx, gy, gz);
+      _gunI = Math.min(4.5, Math.max(_gunI, w) + .15 * Math.min(_gunI, w));
+    }
     if (_muzzleLight) { _muzzleLight.position.set(x + dx * .3, y + .1, z + dz * .3); _muzzleLight.intensity = Math.max(_muzzleLight.intensity, big ? 3.2 : 2.2); }
   }
 
@@ -4088,6 +4478,218 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     grid.addEventListener('mouseleave',()=>{ _tipCmd=null; tip.classList.remove('on'); });
   })();
 
+  // ── HDR post-processing ──────────────────────────────────────────────────
+  // (the desktop's post.h) The scene renders into a float target (R11G11B10F, RGBA16F if refused; 4x MSAA on
+  // HIGH), then a bloom chain and a composite pass (exposure, a hue-preserving tone curve, a vignette, dither)
+  // write the canvas. The scene stays display-referred: lit surfaces are clamped at 1 (below), so only emitters —
+  // fire, tracers, lamps, additive sprites — go past 1, and only they bloom. The DOM HUD is not touched. No
+  // float target (WebGL1, no EXT_color_buffer_float, a refused allocation): straight to the canvas as before.
+  //
+  // The lit term is clamped as the 8-bit canvas clamped it, emission on top: lit surfaces look as before and
+  // never bloom, smoke over a bright hull stays as dense. (Only lit materials have an emissive: Basic has none.)
+  // Patched before any material compiles.
+  THREE.ShaderChunk.emissivemap_pars_fragment += '\n#define LIT_CLAMP';
+  THREE.ShaderChunk.dithering_fragment = `#ifdef LIT_CLAMP
+	gl_FragColor.rgb = min( gl_FragColor.rgb, 1.0 + totalEmissiveRadiance );
+#endif
+` + THREE.ShaderChunk.dithering_fragment;
+  const POST_DPR = 1.5;                              // the post path's pixel ratio at most (HiDPI: 4x MSAA float targets at DPR 2 are ~230 MB)
+  // per quality: on, MSAA samples, bloom levels, the first level's size (1/div of the scene), the bloom's gain (fewer levels: less)
+  const POST_Q = { HIGH: { on: true, samples: 4, levels: 6, div: 2, gain: 1 }, LOW: { on: true, samples: 0, levels: 4, div: 4, gain: 1.3 } };
+  const POST_FMT = [['R11F_G11F_B10F', THREE.RGBAFormat], [null, THREE.RGBAFormat]];   // (null: RGBA16F. Half the size: on an integrated GPU, 4x MSAA in RGBA16F costs 12 ms a frame)
+  const _post = { ok: HDR_OK && renderer.capabilities.isWebGL2, on: false, q: null, w: 0, h: 0, rt: null, bloom: [] };   // q: the settings allocated
+  _post.on = _post.ok && POST_Q[gfxQuality].on;
+  let _hdr = false;      // the last frame went through the post passes: emitters burn past 1 (they bloom)
+  const POST_VS = 'varying vec2 vUv;\nvoid main() { vUv = position.xy * 0.5 + 0.5; gl_Position = vec4( position.xy, 0.0, 1.0 ); }';
+  // Bloom level 0: the 13-tap downsample of Jimenez (CoD AW), its four outer groups luma-weighted (Karis) so a
+  // lone hot spark does not flicker, the centre group plain so small emitters (tracers) still bloom; then a soft
+  // threshold at 1
+  const POST_PRE = `uniform sampler2D uSrc; uniform vec2 uTexel; uniform vec4 uThr;   // T, T-K, 2K, 0.25/K
+    varying vec2 vUv;
+    vec3 S( vec2 d ) { vec3 c = min( texture2D( uSrc, vUv + d * uTexel ).rgb, vec3( 64.0 ) ); return any( isnan( c ) ) ? vec3( 0.0 ) : c; }
+    float W( vec3 c ) { return 1.0 / ( 1.0 + 0.25 * dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ) ); }
+    void main() {
+      vec3 A = S( vec2( -1, -1 ) ), B = S( vec2( 1, -1 ) ), C = S( vec2( -1, 1 ) ), D = S( vec2( 1, 1 ) );
+      vec3 E = S( vec2( -2, -2 ) ), F = S( vec2( 0, -2 ) ), G = S( vec2( 2, -2 ) ), H = S( vec2( -2, 0 ) ), I = S( vec2( 0, 0 ) );
+      vec3 J = S( vec2( 2, 0 ) ), K = S( vec2( -2, 2 ) ), L = S( vec2( 0, 2 ) ), M = S( vec2( 2, 2 ) );
+      vec3 g0 = ( A + B + C + D ) * 0.25, g1 = ( E + F + H + I ) * 0.25, g2 = ( F + G + I + J ) * 0.25;
+      vec3 g3 = ( H + I + K + L ) * 0.25, g4 = ( I + J + L + M ) * 0.25;
+      float w1 = 0.125 * W( g1 ), w2 = 0.125 * W( g2 ), w3 = 0.125 * W( g3 ), w4 = 0.125 * W( g4 );
+      vec3 c = ( g0 * 0.5 + g1 * w1 + g2 * w2 + g3 * w3 + g4 * w4 ) / ( 0.5 + w1 + w2 + w3 + w4 );
+      float br = max( c.r, max( c.g, c.b ) );
+      float rq = clamp( br - uThr.y, 0.0, uThr.z );
+      rq = uThr.w * rq * rq;
+      gl_FragColor = vec4( c * max( rq, br - uThr.x ) / max( br, 1e-4 ), 1.0 );
+    }`;
+  const POST_DOWN = `uniform sampler2D uSrc; uniform vec2 uTexel;
+    varying vec2 vUv;
+    vec3 S( vec2 d ) { return texture2D( uSrc, vUv + d * uTexel ).rgb; }
+    void main() {
+      vec3 c = ( S( vec2( -1, -1 ) ) + S( vec2( 1, -1 ) ) + S( vec2( -1, 1 ) ) + S( vec2( 1, 1 ) ) ) * 0.125
+             + ( S( vec2( -2, -2 ) ) + S( vec2( 2, -2 ) ) + S( vec2( -2, 2 ) ) + S( vec2( 2, 2 ) ) ) * 0.03125
+             + ( S( vec2( 0, -2 ) ) + S( vec2( -2, 0 ) ) + S( vec2( 2, 0 ) ) + S( vec2( 0, 2 ) ) ) * 0.0625
+             + S( vec2( 0, 0 ) ) * 0.125;
+      gl_FragColor = vec4( c, 1.0 );
+    }`;
+  // up the chain with a 3x3 tent, added into the next larger level
+  const POST_UP = `uniform sampler2D uSrc; uniform vec2 uTexel;
+    varying vec2 vUv;
+    vec3 S( vec2 d ) { return texture2D( uSrc, vUv + d * uTexel ).rgb; }
+    void main() {
+      vec3 c = S( vec2( 0, 0 ) ) * 4.0 + ( S( vec2( 1, 0 ) ) + S( vec2( -1, 0 ) ) + S( vec2( 0, 1 ) ) + S( vec2( 0, -1 ) ) ) * 2.0
+             + S( vec2( 1, 1 ) ) + S( vec2( -1, 1 ) ) + S( vec2( 1, -1 ) ) + S( vec2( -1, -1 ) );
+      gl_FragColor = vec4( c / 16.0, 1.0 );
+    }`;
+  // Scene + bloom, exposure and a radial flash, then a hue-preserving tone curve: the identity below the knee;
+  // above it the brightest channel rolls off and the others keep their ratio, so fire stays orange; only very hot
+  // light (> ~4) runs on to white. Then the vignette and a dither (no banding in the fog and the bloom's tails)
+  const POST_COMP = `uniform sampler2D uScene, uBloom; uniform vec2 uBloomTexel;
+    uniform float uBloomStrength, uExposure, uKnee, uAspect, uVignette;
+    uniform vec3 uFlashColor; uniform vec2 uFlashPos; uniform float uFlashRadius, uFlashGlobal;
+    uniform sampler2D uHaze; uniform float uHazeOn;   // the nuke's heat haze: uv offsets (see _hz)
+    varying vec2 vUv;
+    float ign( vec2 p ) { return fract( 52.9829189 * fract( dot( p, vec2( 0.06711056, 0.00583715 ) ) ) ); }
+    void main() {
+      vec2 uv = vUv;
+      if ( uHazeOn > 0.5 ) { vec4 h = texture2D( uHaze, vUv ); uv += ( h.xz - h.yw ) * ${HZ_RANGE.toFixed(2)}; }
+      vec3 c = texture2D( uScene, uv ).rgb;
+      vec2 bt = uBloomTexel * 0.5;   // four bilinear taps: a tent over the bloom's first level
+      vec3 b = texture2D( uBloom, vUv - bt ).rgb + texture2D( uBloom, vUv + bt ).rgb
+             + texture2D( uBloom, vUv + vec2( bt.x, -bt.y ) ).rgb + texture2D( uBloom, vUv + vec2( -bt.x, bt.y ) ).rgb;
+      c += b * ( 0.25 * uBloomStrength );
+      vec2 fd = ( vUv - uFlashPos ) * vec2( uAspect, 1.0 );
+      c = c * uExposure + uFlashColor * ( uFlashGlobal + exp( -dot( fd, fd ) / max( uFlashRadius * uFlashRadius, 1e-4 ) ) );
+      c = max( c, vec3( 0.0 ) );
+      float m = max( c.r, max( c.g, c.b ) );
+      if ( m > uKnee ) {
+        float s = min( ( m - uKnee ) / ( 1.0 - uKnee ), 1e4 );
+        float mt = uKnee + ( 1.0 - uKnee ) * s / ( 1.0 + s );
+        c *= mt / m;
+        c = mix( c, vec3( mt ), clamp( ( m - 4.0 ) / 8.0, 0.0, 1.0 ) );   // white-hot
+      }
+      float r = length( ( vUv - 0.5 ) * vec2( uAspect, 1.0 ) ) / length( vec2( 0.5 * uAspect, 0.5 ) );
+      c *= 1.0 - uVignette * smoothstep( 0.6, 1.1, r );
+      gl_FragColor = vec4( c + ( ign( gl_FragCoord.xy ) - 0.5 ) / 255.0, 1.0 );
+    }`;
+  const _postMat = (fs, uniforms, add) => new THREE.ShaderMaterial({ vertexShader: POST_VS, fragmentShader: fs, uniforms, depthTest: false, depthWrite: false,
+    blending: add ? THREE.CustomBlending : THREE.NoBlending, blendSrc: THREE.OneFactor, blendDst: THREE.OneFactor });
+  const _postSrcU = () => ({ uSrc: { value: null }, uTexel: { value: new THREE.Vector2() } });
+  const _postPre = _postMat(POST_PRE, { ..._postSrcU(), uThr: { value: new THREE.Vector4(1, 1 - .15, 2 * .15, .25 / .15) } });   // threshold 1, knee 0.15
+  const _postDown = _postMat(POST_DOWN, _postSrcU()), _postUp = _postMat(POST_UP, _postSrcU(), true);
+  const _postComp = _postMat(POST_COMP, { uScene: { value: null }, uBloom: { value: null }, uBloomTexel: { value: new THREE.Vector2() },
+    uBloomStrength: { value: .6 }, uExposure: { value: 1 }, uKnee: { value: .9 }, uAspect: { value: 1 }, uVignette: { value: 0 },
+    uFlashColor: { value: new THREE.Color(0, 0, 0) }, uFlashPos: { value: new THREE.Vector2(.5, .5) }, uFlashRadius: { value: .35 }, uFlashGlobal: { value: 0 }, uHaze: { value: null }, uHazeOn: { value: 0 } });
+  // one triangle over the whole target
+  const _postTri = new THREE.Mesh(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3)), _postComp);
+  _postTri.frustumCulled = false;
+  const _postCam = new THREE.Camera(), _postV = new THREE.Vector2(), _gl = renderer.getContext();
+  // three r128 will not allocate an RGB float target (it asks for RGBA), and R11F_G11F_B10F takes only RGB: the upload's format is put right here
+  const _glTexImage2D = _gl.texImage2D;
+  _gl.texImage2D = function (...a) { if (a.length === 9 && a[2] === _gl.R11F_G11F_B10F) a[6] = _gl.RGB; return _glTexImage2D.apply(_gl, a); };
+  if (_post.ok) for (const m of [_postPre, _postDown, _postUp, _postComp]) { _postTri.material = m; renderer.compile(_postTri, _postCam); }   // no hitch on the first frame
+  // A target: the scene's has depth (24-bit with stencil: three's depth-only buffer is 16-bit) and 4x MSAA on HIGH
+  function _postTarget(w, h, fmt, sceneRT) {
+    const o = { format: fmt[1], type: THREE.HalfFloatType, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: sceneRT, stencilBuffer: sceneRT };
+    const rt = sceneRT && _post.q.samples ? new THREE.WebGLMultisampleRenderTarget(w, h, o) : new THREE.WebGLRenderTarget(w, h, o);
+    if (rt.isWebGLMultisampleRenderTarget) rt.samples = Math.min(_post.q.samples, renderer.capabilities.maxSamples);
+    rt.texture.internalFormat = fmt[0];
+    return rt;
+  }
+  function _postComplete(rt) {   // allocates it; false: refused
+    renderer.setRenderTarget(rt);
+    const ok = () => _gl.checkFramebufferStatus(_gl.FRAMEBUFFER) === _gl.FRAMEBUFFER_COMPLETE;
+    let good = ok();
+    if (good && rt.isWebGLMultisampleRenderTarget) {   // and the texture it resolves into
+      const p = renderer.properties.get(rt);
+      _gl.bindFramebuffer(_gl.FRAMEBUFFER, p.__webglFramebuffer); good = ok();
+      _gl.bindFramebuffer(_gl.FRAMEBUFFER, p.__webglMultisampledFramebuffer);
+    }
+    return good && _gl.getError() !== _gl.OUT_OF_MEMORY;
+  }
+  function _postFree() {
+    for (const rt of [_post.rt, ..._post.bloom]) rt?.dispose();
+    _post.rt = _post.q = null; _post.bloom = []; _post.w = _post.h = 0;
+  }
+  // (Re)allocates the targets for the drawing buffer's size and the quality (resize); a refused allocation turns
+  // the post off for the session
+  function _postEnsure() {
+    const v = renderer.getDrawingBufferSize(_postV), q = POST_Q[gfxQuality];
+    if (!_post.on) { _postFree(); return; }
+    if (_post.rt && v.x === _post.w && v.y === _post.h && q === _post.q) return;
+    _postFree();
+    if (v.x < 16 || v.y < 16) return;   // minimised or tiny: no post until the next resize
+    for (const fmt of POST_FMT) {
+      _post.q = q;
+      _post.rt = _postTarget(v.x, v.y, fmt, true);
+      let ok = _postComplete(_post.rt), bw = Math.max(1, Math.round(v.x / q.div)), bh = Math.max(1, Math.round(v.y / q.div));
+      for (let i = 0; ok && i < q.levels && Math.min(bw, bh) >= 8; i++) {
+        const l = _postTarget(bw, bh, fmt, false);
+        _post.bloom.push(l); ok = _postComplete(l);
+        bw = Math.max(1, bw >> 1); bh = Math.max(1, bh >> 1);
+      }
+      renderer.setRenderTarget(null);
+      if (ok && _post.bloom.length) { _post.w = v.x; _post.h = v.y; return; }
+      _postFree();
+    }
+    console.warn(`Post-processing: no float target at ${v.x}x${v.y}: drawing without it`);
+    _post.ok = _post.on = false;
+    resize();   // the canvas's own pixel ratio again
+  }
+  function _postPass(mat, dst, src) {
+    if (src) { mat.uniforms.uSrc.value = src.texture; mat.uniforms.uTexel.value.set(1 / src.width, 1 / src.height); }
+    _postTri.material = mat;
+    renderer.setRenderTarget(dst);
+    renderer.render(_postTri, _postCam);
+  }
+  // 4x MSAA costs an integrated GPU some 10 ms a frame (Iris Xe at 720p: 30 ms with it, 19 ms without, the rest of HIGH
+  // keeping 50 FPS). Under 45 FPS for two windows of 4 s with it on: off, for the session. (Frames over 250 ms are not
+  // counted: a hidden tab, a hitch)
+  const _aa = { t: 0, n: 0, last: 0, slow: 0 };
+  function _aaWatch() {
+    const q = _post.q, now = performance.now(), d = now - _aa.last;
+    _aa.last = now;
+    if (!q || !q.samples || d > 250) return;
+    _aa.t += d; _aa.n++;
+    if (_aa.t < 4000) return;
+    _aa.slow = _aa.t / _aa.n > 1000 / 45 ? _aa.slow + 1 : 0;
+    _aa.t = _aa.n = 0;
+    if (_aa.slow < 2) return;
+    q.samples = 0; _postFree(); _postEnsure();
+    console.info('Post-processing: under 45 FPS with 4x MSAA: drawing without it');
+  }
+  // The frame: through the post passes when they run, else straight to the canvas
+  function renderFrame() {
+    syncGround();
+    _aaWatch();
+    _hdr = !!_post.rt;
+    if (!_hdr) { renderer.setRenderTarget(null); renderScene(); return; }
+    const rt = _post.rt, B = _post.bloom, n = B.length, u = _postComp.uniforms;
+    renderer.setRenderTarget(rt);
+    renderer.render(scene, camera);   // (and resolves the MSAA)
+    // the heat haze: its offsets, by which the composite bends the scene
+    const hz = _hz.on;
+    if (hz) {
+      _hzTargets();
+      const a = renderer.getClearAlpha(), P = camera.projectionMatrix.elements;
+      _hz.U.uAspectInv.value = P[0] / P[5];
+      renderer.setRenderTarget(_hz.ht); renderer.setClearAlpha(0); renderer.render(_hz.scene, camera); renderer.setClearAlpha(a);
+    }
+    u.uHaze.value = hz ? _hz.ht.texture : null; u.uHazeOn.value = hz ? 1 : 0;
+    renderer.autoClear = false;
+    // bloom: prefilter into level 0, down the chain, then back up adding each level into the larger one
+    _postPass(_postPre, B[0], rt);
+    for (let i = 1; i < n; i++) _postPass(_postDown, B[i], B[i - 1]);
+    for (let i = n - 1; i >= 1; i--) _postPass(_postUp, B[i - 1], B[i]);
+    // composite into the canvas. Bloom carries further at night (the up chain sums every level into level 0:
+    // normalised by their number); a light vignette (the Zerg come in at the edges)
+    u.uScene.value = rt.texture; u.uBloom.value = B[0].texture; u.uBloomTexel.value.set(1 / B[0].width, 1 / B[0].height);
+    u.uBloomStrength.value = (0.6 + 0.3 * _dnFactor) / Math.max(1, n - 1) * _post.q.gain;
+    u.uVignette.value = 0.08 + 0.04 * _dnFactor;
+    u.uAspect.value = rt.width / rt.height;
+    _postPass(_postComp, null);
+    renderer.autoClear = true;
+  }
+
     // ── Resize ───────────────────────────────────────────────────────────────
   function resize(){
     W=Math.max(1,window.innerWidth); H=window.innerHeight;
@@ -4098,7 +4700,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     _logW=W; _logH=gameH;
     // DPR can change (window moved to another monitor, browser zoom) — re-read it
     const dpr=Math.min(window.devicePixelRatio||1,2);
-    renderer.setPixelRatio(gfxQuality==='HIGH'?dpr:1);
+    renderer.setPixelRatio(gfxQuality==='HIGH'?(_post.on?Math.min(dpr,POST_DPR):dpr):1);   // (the post path's: capped)
     // Overlay canvas: backing store at device pixels (crisp text), drawn in logical units
     chCanvas.width=Math.round(W*dpr); chCanvas.height=Math.round(gameH*dpr);
     chCtx.setTransform(dpr,0,0,dpr,0,0);
@@ -4106,6 +4708,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     camera.aspect=W/gameH; camera.updateProjectionMatrix();
     // Particle sprites: pixels per world unit at depth 1 (drawing-buffer pixels)
     _partScale.value=gameH*renderer.getPixelRatio()/(2*Math.tan(camera.fov*Math.PI/360));
+    _postEnsure();
   }
   window.addEventListener('resize',resize); resize();
 
@@ -4411,7 +5014,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     }
     if (_fireLight) {
       _fireLight.position.set(lx / lit, 1.8, lz / lit);
-      _fireLight.intensity = (0.6 + 2.2 * sev) * (0.8 + 0.2 * Math.sin(_gameT * 23) * Math.sin(_gameT * 7.3));
+      _fireLight.intensity = (0.5 + 2.3 * sev) * (0.8 + 0.2 * Math.sin(_gameT * 23) * Math.sin(_gameT * 7.3)) * (0.7 - 0.1 * _dnLitF);
     }
   }
 
@@ -4453,23 +5056,24 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   };
   function _applyDNLights(f) {
     const b = GFX_LIGHTS[gfxQuality];
-    // Ambient: day base → night 0x112233 @ 0.18
     if (_ambientLight) {
-      _ambientLight.color.copy(_dnLerpCol(b.ambCol, 0x112233, f));
-      _ambientLight.intensity = b.amb * (1 - f) + 0.18 * f;
+      _ambientLight.color.copy(_dnLerpCol(b.ambCol, 0x223459, f));
+      _ambientLight.intensity = b.amb * (1 - f) + 0.26 * f;
     }
-    // Sun: day full → night off, through a warm low sun at dusk / dawn
+    // Sun: day full → night off, through a warm low sun at dusk / dawn. (A little stronger than it was when higher: the field keeps its tone)
     if (_sunLight) {
       _sunLight.color.copy(f < 0.45 ? _dnLerpCol(0xfff4cc, 0xff9a55, f / 0.45) : _dnLerpCol(0xff9a55, 0x001122, (f - 0.45) / 0.55));
-      _sunLight.intensity = b.sun * (1 - f);
+      _sunLight.intensity = b.sun * 1.12 * (1 - f);
     }
-    // Fill: day present → night off
+    // the day's fill light becomes a cool moon from behind left (no shadows: cheaper, and a shadow could give a hidden Zerg away)
     if (_fillLight) {
-      _fillLight.intensity = b.fill * (1 - f);
+      _fillLight.color.copy(_dnLerpCol(0x4488cc, 0x8fa8e8, f));
+      _fillLight.position.set(-8 - f, 10 + 6 * f, -6 - 6 * f);
+      _fillLight.intensity = b.fill * (1 - f) + 0.32 * f;
     }
-    // Bunker light: off during day, warm glow at night
+    // Bunker light: off during day, warm white at night
     if (_bunkerLight) {
-      _bunkerLight.intensity = f * 5.5;
+      _bunkerLight.intensity = f * 4.4;
     }
     // Fog: the radius shrinks by the same ratio every second (geometric blend).
     // Blended linearly, it stayed outside the battlefield for the first 60% of
@@ -4477,13 +5081,22 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if (scene.fog) {
       scene.fog.near  = DN_DAY_FOG_NEAR * Math.pow(DN_NIGHT_FOG_NEAR / DN_DAY_FOG_NEAR, f);
       scene.fog.far   = DN_DAY_FOG_FAR  * Math.pow(DN_NIGHT_FOG_FAR  / DN_DAY_FOG_FAR,  f);
-      // Fog color: day sky green → night deep blue
-      scene.fog.color.copy(_dnLerpCol(0x2a3a18, 0x050a12, f));
+      // the sky: violet at dusk against the low orange sun, night blue (the fogged field itself fades to its own moonlit value)
+      scene.fog.color.copy(f < .5 ? _dnLerpCol(0x2a3a18, 0x1d1f33, f / .5) : _dnLerpCol(0x1d1f33, 0x070c18, (f - .5) / .5));
     }
     // Background matches fog
     if (scene.background) {
       scene.background.copy(scene.fog ? scene.fog.color : new THREE.Color(0x2a3a18));
     }
+    // the night's ground, and the sky the water and the polished surfaces mirror: blue, or the clouds' grey (dark under a
+    // downpour), a violet dusk, night blue
+    const cl = wx.cloud, rn = wx.rain, dusk = 4 * f * (1 - f), G = GLOW_LIGHTS, U = _groundU;
+    U.uNight.value = f; U.uNightDesat.value = .55 * f;
+    if (_fillLight) U.uMoonDir.value.copy(_fillLight.position).normalize();
+    G.fogNight.value = f;
+    G.fogGround.value.copy(U.uMoonTint.value).multiplyScalar(.24 * (.45 + .55 * U.uMoonDir.value.y));   // the mean grass's moonlit value
+    G.skyZen.value.setHex(0x5a7cab).lerp(_wxC.setHex(0x6c747a).multiplyScalar(1 - .4 * rn), cl).lerp(_wxC.setHex(0x141c30), f).lerp(_wxC.setHex(0x3a2f58), .5 * dusk);
+    G.skyHor.value.setHex(0x9db2c6).lerp(_wxC.setHex(0x858c90).multiplyScalar(1 - .3 * rn), cl).lerp(_wxC.setHex(0x222a40), f).lerp(_wxC.setHex(0x7a5060), .5 * dusk);
     _wxLights(f);   // under the clouds (weather)
   }
 
@@ -4542,7 +5155,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   const WX_KEY = 'dotd_weather', RAIN_MISS = [0.05, 0.10];
   let wxOn = (() => { try { return localStorage.getItem(WX_KEY) !== '0'; } catch (e) { return true; } })();   // (_store is defined further down)
   const wx = { sky: 'clear', hold: 0, afterRain: false, showerMax: 0, spell: 0, cloud: 0, rain: 0,
-               windX: 0, windZ: 0, blownX: 0, blownZ: 0, fall: 0, t: 0 };   // spell: before a shower may turn · blown / fall: the drops (m)
+               windX: 0, windZ: 0, blownX: 0, blownZ: 0, driftX: 0, driftZ: 0, fall: 0, t: 0, wet: 0, puddle: 0 };   // spell: before a shower may turn · blown / fall: the drops (m)
   let _wxLitC = 0, _wxLitR = 0, _wxSaid = 'CLEAR';   // the cloud / rain the lights were last applied at · the sky last announced
   const _uni = (a, b) => a + Math.random() * (b - a);
   const wxHeavy = () => wx.showerMax >= 0.5;
@@ -4582,6 +5195,17 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     wx.rain += Math.max(-dt / 4, Math.min(dt / 6, (on && wx.sky === 'rain' && wx.cloud > 0.75 ? wx.showerMax * waver : 0) - wx.rain));
     wx.blownX += wx.windX * dt; wx.blownZ += wx.windZ * dt;
     wx.fall += (5 + 7 * wx.rain) * dt;  // a drizzle's fine drops fall at ~6 m/s, a downpour's at 12
+    wx.driftX += wx.windX * 1.5 * dt; wx.driftZ += wx.windZ * 1.5 * dt;   // the clouds drift with the wind
+    // the ground: soaked after ~12 s of a downpour, the puddles full after ~45 s more; once the rain stops it dries in
+    // about a minute under the sun (two under clouds), the puddles seep away slower. Switched off, four times as fast
+    const off = on ? 1 : 4;
+    if (wx.rain > 0.02) {
+      wx.wet = Math.min(1, wx.wet + dt * wx.rain / 12);
+      wx.puddle = Math.min(1, wx.puddle + dt * wx.rain * wx.wet / 45);
+    } else {
+      wx.wet = Math.max(0, wx.wet - dt * off / (50 + 70 * wx.cloud));
+      wx.puddle = Math.max(0, wx.puddle - dt * off / (100 + 100 * wx.cloud));
+    }
   }
   function updateWeather(dt) {        // a live frame: the sky, the light under it, the rain
     wxUpdate(dt);
@@ -4610,13 +5234,13 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   // darkens the day a little more and hazes the distance. The night is left as it is: its fog is what
   // the player sees by, and the web has no moon (the desktop's fill turns into one, which clouds hide
   // in part; ours is off at night). A clear sky changes nothing
-  const _wxHaze = new THREE.Color(0x3c4648);
+  const _wxHaze = new THREE.Color(0x3c4648), _wxC = new THREE.Color();
   function _wxGrey(c, k) { const l = c.r * .299 + c.g * .587 + c.b * .114; c.r += (l - c.r) * k; c.g += (l - c.g) * k; c.b += (l - c.b) * k; }
   function _wxLights(f) {
     const cl = _wxLitC = wx.cloud, rn = _wxLitR = wx.rain, cd = cl * (1 - f), haze = Math.max(0.35 * cl, rn);
     if (!cl && !rn) return;
-    if (_ambientLight) { _wxGrey(_ambientLight.color, 0.5 * cd); _ambientLight.intensity *= (1 - 0.08 * cd) * (1 - 0.15 * rn * (1 - f)); }
-    if (_sunLight) { _wxGrey(_sunLight.color, 0.4 * cl); _sunLight.intensity *= (1 - 0.35 * cl) * (1 - 0.3 * rn); }
+    if (_ambientLight) { _wxGrey(_ambientLight.color, 0.5 * cd); _ambientLight.intensity *= (1 + 0.3 * cd) * (1 - 0.15 * rn * (1 - f)); }
+    if (_sunLight) { _wxGrey(_sunLight.color, 0.4 * cl); _sunLight.intensity *= (1 - 0.6 * cl) * (1 - 0.35 * rn); }
     if (_fillLight) _fillLight.intensity *= 1 - 0.4 * cl * f;
     if (scene.fog) {
       scene.fog.near *= Math.pow(1 - 0.45 * haze, 1 - f); scene.fog.far *= Math.pow(1 - 0.35 * haze, 1 - f);
@@ -4730,6 +5354,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     updateCamera(dt); // also while paused: the player can look around
     placeSlotOverlay();
     if(_muzzleLight) _muzzleLight.intensity=Math.max(0,_muzzleLight.intensity-dt*45); // flash decays in ~60 ms
+    _gunI*=Math.exp(-dt*11);                             // its pool on the ground: a quarter left by the next volley (sustained fire glows)
+    if(_gunLight) _gunLight.intensity=_gunI*(.4+.6*_dnLitF);
     RainBed.set(phase==='playing'?wx.rain:0,dt); // heard while paused too, not under the title / results
     if(phase!=='playing'||isPaused()){
       // Game clock, survival timer and scheduled events are frozen here
@@ -4738,7 +5364,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       // not game time: with the cycle off nothing else moves). Left frozen, the
       // title showed the night and the next game started in it.
       if(!dnEnabled&&_dnFactor>0) updateDayNight(dt);
-      drawCH();tickPortrait(dt);renderScene();return;
+      drawCH();tickPortrait(dt);renderFrame();return;
     }
     _gameT+=dt;
 
@@ -4952,7 +5578,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     syncEnemyPools();
     drawCH();
     tickPortrait(dt);
-    renderScene();
+    renderFrame();
   }
 
   // ── Start / game over ─────────────────────────────────────────────────────
@@ -6193,9 +6819,12 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     gfxQuality = q;
     const hi = q === 'HIGH';
     renderer.shadowMap.enabled = hi;
+    _post.on = _post.ok && POST_Q[q].on;
     resize(); // applies the quality's pixel ratio and keeps _logW/_logH accurate
 
     if (_sunLight) _sunLight.castShadow = hi;
+    _groundU.groundHD.value = GLOW_LIGHTS.cloudOn.value = hi ? 1 : 0;   // the ground's fine layers, the cloud shadows (uniforms: no recompile)
+    if (_grass) _grass.visible = hi;
     _applyDNLights(_dnLitF); // light levels for this quality, blended with day/night (and a flare)
 
     if (hi && _sunLight && _sunLight.shadow.map) { _sunLight.shadow.map.dispose(); _sunLight.shadow.map = null; }
@@ -6213,7 +6842,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     document.getElementById('menu-gfx-high') && document.getElementById('menu-gfx-high').classList.toggle('active', hi);
     document.getElementById('menu-gfx-low')  && document.getElementById('menu-gfx-low') .classList.toggle('active', !hi);
     const desc = document.getElementById('menu-gfx-desc');
-    if (desc) desc.textContent = hi ? 'Shadows • soft shadow maps • hi-res rendering' : 'No shadows • fast rendering • battery-friendly';
+    if (desc) desc.textContent = hi ? 'Shadows • 3D grass • detailed ground • cloud shadows • hi-res rendering' : 'No shadows or grass • plain ground • fast, battery-friendly';
   }
 
   function toggleGfx() { applyGfx(gfxQuality === 'HIGH' ? 'LOW' : 'HIGH'); }

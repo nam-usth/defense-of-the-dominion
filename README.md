@@ -117,6 +117,7 @@ A pop-up below the top bar announces each one as it is earned, with a chime, ove
 The sky wanders at random on game time: clear for 80–170 s, then clouds roll in over ~18 s and stay 25–45 s, then a shower about half the time (40–90 s), else clear again; after a shower it mostly clears. Every new game starts clear, the first change 45–100 s in. A shower is a **drizzle** (few fine, short, slow drops, a light wind) or a **downpour** (dense long streaks falling nearly twice as fast, a stronger wind, the day darker), even odds, and every 15–30 s it may turn from one to the other; the strength also wavers a little as it falls. Clouds dim the sun and grey the light. The rain has its own sound (band-limited noise and the patter of drops, as loud as it is heavy).
 
 - **The rain** has no per-drop state: each drop is a quad the vertex shader places from its index (a hash gives its place; the distance fallen and the wind's drift build up on the CPU, so a change of speed never makes them jump) — up to 12 000 streaks and 2 000 splash rings on GFX HIGH (5 000 and 800 on LOW) in a box over the field, fixed in the world. None fall close to the lens, and at night it shows only in the light.
+- **The ground** soaks through after ~12 s of a downpour and the puddles fill over ~45 s more; once the rain stops it dries in about a minute under the sun (two under clouds) and the puddles seep away slower.
 - **The aim**: in the rain 5% of the rounds from the bunker and the Shrike miss in a drizzle, 10% in a downpour (in between as the rain grows): a missed round flies on past its Zerg (it may hit one behind) and a pale blue MISS rises. Marauder grenades still burst; Ghost snipes, Viking missiles and nukes still strike. The status line names the shower and its miss chance when it starts.
 
 Menu → Settings → WEATHER switches it off (the sky clears; stored, on by default). Cheat `rain`, in turn: a downpour now, a drizzle, clear.
@@ -150,19 +151,33 @@ Type `dotd` during play to open the cheat console. `help` lists the codes in the
 | `rain` | a downpour now (again: a drizzle, then clear) |
 | `endv` · `endd` | win the campaign · lose the bunker |
 
+## Graphics
+
+The field, its light and its weather are the desktop game's, with the same shaders and the same textures.
+
+- **The ground** is drawn by a shader from three tiling 512² maps in `assets/textures/`: a noise for the broad patches of grass and dirt, single grass blades and pebbles on crumbly earth for the close-up detail (R height, G tone, BA slope). No part of the field repeats visibly and no mesh or quad is involved. The maps come from the desktop game, so both editions draw the same field: `dotd --dump-ground assets/textures` writes them again. They are data, not pictures: all four channels are read straight, with no colour conversion and no premultiplied alpha (in Chrome they read back from the GPU identical to the PNGs, texel for texel). Until they load the field is a flat colour.
+- **3D grass**: 7 500 tufts of four blades out to r 30 (one mesh, 90 000 triangles), each taking the colour of the ground at its root and swaying in slow gusts. There are none on bare earth, in water or where a nuke has scorched the field.
+- **The light**: a lower sun, soft cloud shadows drifting with the wind, ambient by which way a surface faces, the sky mirrored on polished surfaces. At night the field fades to its own moonlit value instead of going black.
+- **Boulders**: three shapes chiselled from a sphere by 16 random planes, with creased ridges, shaded as stone on HIGH (the ground's maps projected on three axes, lichen on the faces turned up), each on a soft contact shadow.
+- **Rain on the ground**: the field darkens as it soaks and water stands where the ground is low, mirroring the sky, with the rain's rings on it. It dries slowly once the rain stops.
+- **HDR**: the scene renders into a float target (R11G11B10F, RGBA16F if refused) with 4x MSAA on HIGH; a bloom chain and a hue-preserving tone curve composite it before the HUD, and the nuke's heat haze bends the scene there. Without float targets (WebGL 1) it draws straight to the canvas.
+- **GFX LOW** turns off shadows, MSAA, the grass and the cloud shadows, draws the field from its broad layers alone in the same tones, and drops HiDPI.
+- **Frame rate**: 4x MSAA costs an integrated GPU about 10 ms a frame, so under 45 FPS for 8 s HIGH gives it up for the session and the console says so. The renderer asks the browser for the discrete GPU on a hybrid laptop. On an Iris Xe at 1280×720 in a swarm, vsync off, HIGH runs at 49–60 FPS without MSAA (about 36 with it) and LOW at 84–148; before these graphics the same scene ran at 57–79 and 113–118. That chip's speed swings with its heat.
+
 ## Project structure
 
 ```
 index.html              page markup (top bar, console, menus) — loads the scripts below in order
 css/hud.css             all styles
 js/lib/obj-loader.js    minimal OBJ parser (THREE.OBJLoader) — for the bunker, Shrike and Viking
-js/radial-fog.js        fog measured as distance from the bunker (the night vision circle)
+js/radial-fog.js        fog measured as distance from the bunker (the night vision circle), and the light's shared patches: cloud shadows, ambient by facing, sky reflections
 js/config.js            game constants (CFG), model and texture paths (ASSETS), ranks
 js/model-loader.js      loads GLB/OBJ models, DDS/JPG textures and baked walk/attack animations; SC2 team colour and normal maps
 js/game.js              the game: scene, units, waves, combat, effects, HUD, menus, saving
 assets/models/terran/   bunker, Shrike, Viking (OBJ) · Marine, Marauder, Ghost, nuke, grenade (GLB, not loaded) — models and textures
 assets/models/zerg/     Zergling (base, Metabolic Boost, webby skin) and Roach (three skins) — GLB models and textures
 assets/ui/              HUD icons (PNG, converted from SC2 DDS)
+assets/textures/        the ground's three tiling maps (PNG, from the desktop game: see Graphics)
 assets/audio/           music: the StarCraft soundtrack, AAC
 assets/source/m3/       the original .m3 files of the converted models (and unused effect models)
 assets/source/terran/   extra model parts and a GLB that the game does not load
