@@ -212,8 +212,10 @@
               <div class="menu-row">
                 <button class="menu-gfx-btn" id="menu-gfx-high" onclick="G.setGfx('HIGH')">HIGH</button>
                 <button class="menu-gfx-btn" id="menu-gfx-low"  onclick="G.setGfx('LOW')">LOW</button>
+                <label class="menu-check"><input type="checkbox" id="menu-dust-cb" onchange="G.setDust(this.checked)">BATTLEFIELD DUST</label>
               </div>
               <div class="menu-note" id="menu-gfx-desc">Shadows • 3D grass • detailed ground • cloud shadows • hi-res rendering</div>
+              <div class="menu-note">Battlefield dust: the dust and smoke from gunfire, charred Zerg and the nuke's rolling dust ring.</div>
             </div>
             <div class="menu-section">
               <div class="menu-label">SOUND</div>
@@ -335,6 +337,6 @@
 <script src="js/radial-fog.js?v=3"></script>
 <script src="js/config.js?v=18"></script>
 <script src="js/model-loader.js?v=8"></script>
-<script src="js/game.js?v=47"></script>
+<script src="js/game.js?v=48"></script>
 </body>
 </html>
