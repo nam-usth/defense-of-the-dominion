@@ -2999,7 +2999,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       gl_FragColor = vec4(uCol * k, k * .8);
     }`;
   const _nbWilsonGeo = new THREE.RingGeometry(.8, 1, 160).rotateX(-Math.PI / 2);
-  // The heat haze: signed uv offsets the scene is bent by (renderScene), from its own noise, rising, strongest
+  // The heat haze: signed uv offsets the scene is bent by (renderFrame's composite, or renderScene), from its own noise, rising, strongest
   // face-on (SC2's inverted fresnel), fading out toward the ground; or a ripple band on the ground (uRing.y > 0).
   // RGBA: +x, -x, +y, -y over HZ_RANGE (added: no float target needed)
   const HZ_RANGE = .05;
@@ -3469,7 +3469,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
 
   // ── Nuke flash and heat haze ─────────────────────────────────────────────
   // The flash: the desktop blows the field out to white through its HDR exposure (x6) under a white bloom
-  // over ground zero. There is no HDR here: the field whitens, most round ground zero, under a quad drawn
+  // over ground zero. Here the field whitens, most round ground zero, under a quad drawn
   // over the scene (the HUD stays clear), then dims a little round the fireball as the eyes are dazzled.
   // The ambient light, the fog and the fireball's light (updateNukeLight) surge with it
   const NK_FLASH_VS = `uniform vec3 uPos; varying vec2 vUv; varying vec2 vC;
@@ -3509,7 +3509,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   }
 
   // The heat haze (the desktop's distortion pass; the shapes are each blast's, posed in _nbPose): while a blast
-  // is younger than nk.HAZE_END, the scene, drawn to the canvas as ever, is copied; the haze shapes draw their
+  // is younger than nk.HAZE_END, the post path's composite bends the scene by them (renderFrame). Without it, the
+  // scene, drawn to the canvas as ever, is copied; the haze shapes draw their
   // offsets (NK_HAZE_FS) into a target half the canvas's size in CSS pixels (a quarter on GFX LOW), then their
   // far sides are drawn again over the canvas, each pixel the copy bent by them (_hzBend). Drawn there they are
   // hidden by what the scene drew in front of them (its depth: the bunker, Zerg in the haze or near the lens are
