@@ -1892,7 +1892,11 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
     // the flames' cores and the streaks' burn white-hot: past 1 in the HDR target, so they bloom (clipped without it)
     for (const [im, c] of [[_vmFlameCoreIM, 0xfff2d0], [_streakCoreIM, 0xfff0c0], [_mgFlameCoreIM, 0xdff2ff], [_mgStreakCoreIM, 0xdff2ff]])
       im.material.color.setHex(c).multiplyScalar(_hdr ? 2.5 : 1);
-    if (_hdr) _streakCoreIM.material.color.multiply(_tmpCol.setHex(0xfff2d0));   // (as the desktop: its streak's colour under the flame core's)
+    _streakGlowIM.material.color.setHex(0xff8a3a);
+    if (_hdr) {   // (as the desktop: the orange streak's colours under its flame's)
+      _streakCoreIM.material.color.multiply(_tmpCol.setHex(0xfff2d0));
+      _streakGlowIM.material.color.multiply(_tmpCol.setHex(0xff6a1a));
+    }
     const put = (p, dir, len, trail, streakDur, F) => {
       if (n >= VM_CAP) return;
       const sk = len / VM_LEN;
