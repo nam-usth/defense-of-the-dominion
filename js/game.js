@@ -1889,6 +1889,10 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
   function syncMissiles() {
     let n = 0;
     for (const F of _fire) F.nf = F.ns = 0;
+    // the flames' cores and the streaks' burn white-hot: past 1 in the HDR target, so they bloom (clipped without it)
+    for (const [im, c] of [[_vmFlameCoreIM, 0xfff2d0], [_streakCoreIM, 0xfff0c0], [_mgFlameCoreIM, 0xdff2ff], [_mgStreakCoreIM, 0xdff2ff]])
+      im.material.color.setHex(c).multiplyScalar(_hdr ? 2.5 : 1);
+    if (_hdr) _streakCoreIM.material.color.multiply(_tmpCol.setHex(0xfff2d0));   // (as the desktop: its streak's colour under the flame core's)
     const put = (p, dir, len, trail, streakDur, F) => {
       if (n >= VM_CAP) return;
       const sk = len / VM_LEN;
@@ -1956,7 +1960,9 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
     mBlasts.push({ x: at.x, z: at.z, r: R, t: 0, blue: sl === 1 });
     // the burst: a small ball of light, white-hot at the heart in a wider soft glow, shrinking as it
     // fades, and a few sparks — icy blue for a concussive shell (as StarCraft II draws it), else warm
+    const n0 = _glow.n;
     emitParticle(_glow, at.x, .4, at.z, 0, .3, 0, .26, .85, .3, 1, MG_HEART[sl], MG_GLOW[sl], 0, 0, 0);
+    if (_hdr && _glow.n > n0) for (let c = n0 * 3; c < n0 * 3 + 3; c++) { _glow.c0[c] *= 3; _glow.c1[c] *= 2; }   // the heart burns past 1: it blooms (HDR)
     emitParticle(_glow, at.x, .4, at.z, 0, .2, 0, .34, 1.7, .7, .45, MG_GLOW[sl], MG_DEEP[sl], 0, 0, 0);
     const rnd = Math.random;
     for (let i = 0; i < 6; i++) {
@@ -1997,7 +2003,7 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
       const k = bl.t / MG_BLAST_DUR, r = bl.r * (.5 + .5 * THREE.MathUtils.smoothstep(k, 0, .2)), fade = (1 - k) * (1 - k);
       _vmM.makeScale(2.3 * r, 1, 2.3 * r).setPosition(bl.x, .04, bl.z);
       _blastWashIM.setMatrixAt(i, _vmM);
-      _blastWashIM.setColorAt(i, _tmpCol.setHex(bl.blue ? 0x2f7cff : 0xff7a2a).multiplyScalar(.5 * fade));
+      _blastWashIM.setColorAt(i, _tmpCol.setHex(bl.blue ? 0x2f7cff : 0xff7a2a).multiplyScalar((_hdr ? .9 : .5) * fade));   // (it blooms a little in HDR)
     });
     _blastWashIM.count = mBlasts.length;
     _blastWashIM.instanceMatrix.needsUpdate = true; _blastWashIM.instanceColor.needsUpdate = true;
