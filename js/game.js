@@ -3046,9 +3046,9 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       uniform float fogNear; uniform float fogFar;
       uniform vec4 glowPos[ 8 ]; uniform vec4 glowCol[ 8 ]; uniform int glowCount;   // small lights (radial-fog.js)
     #endif
-    vec3 fire(float T) {   // by temperature: soot, deep red, orange, yellow, pale yellow (white would read as a hole)
-      float k = clamp(T, 0., 1.) * 4.;
-      return k < 1. ? mix(vec3(.18, .14, .12), vec3(.54, .14, .04), k) : k < 2. ? mix(vec3(.54, .14, .04), vec3(.95, .4, .08), k - 1.)
+    vec3 fire(float T) {   // by temperature: warm ash, deep red, orange, yellow, pale yellow (white would read as a hole)
+      float k = clamp(T, 0., 1.) * 4.;   // (the coolest was near-black soot: the dying fire left a black crust of cracks)
+      return k < 1. ? mix(vec3(.5, .38, .3), vec3(.62, .2, .06), k) : k < 2. ? mix(vec3(.54, .14, .04), vec3(.95, .4, .08), k - 1.)
            : k < 3. ? mix(vec3(.95, .4, .08), vec3(1., .7, .22), k - 2.) : mix(vec3(1., .7, .22), vec3(1., .88, .56), k - 3.);
     }
     void main() {
@@ -3063,7 +3063,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         vec2 n = mat2(co, -s, s, co) * (t.gb * 2. - 1.);   // the cell's normal, turned back to the screen
         vec3 N = vec3(n, sqrt(max(0., 1. - dot(n, n))));
         float k = 1. - .2 * min(vBlur, 2.), dif = max(dot(N, uLightV), 0.);
-        col = col * mix(.85 + .2 * dif, .5 + .7 * dif, k) * (1. - .5 * k * t.a) + fire(T) * .3 * T;   // (and the fire's own glow on its smoke)
+        col = col * mix(.9 + .15 * dif, .7 + .45 * dif, k) * (1. - .25 * k * t.a) + fire(T) * .3 * T;   // (and the fire's own glow on its smoke; the hollows only a little darker)
         // burning all over, the billows are hottest at their crowns; cooling, the fire sinks into the hollows between
         // them (thr: how deep) in soft patches (crisp, they read as a network of cracks in lava), deepening to red (not
         // on the billow's thin rim: over the grass it would turn olive)
@@ -3149,11 +3149,14 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if ((s.mesh.visible = n > 0)) for (const a of [A.iPos, A.iCol, A.iCell, A.iShape]) { a.updateRange.count = n * a.itemSize; a.needsUpdate = true; }
   }
 
-  // Fire by temperature (the plain glows; the billows burn in NK_PUFF_FS): soot, deep red, orange, yellow, white-hot
-  const _NB_FIRE = [0x2e2420, 0x8a2a0c, 0xf06a18, 0xffb43a, 0xfff0c0].map(c => new THREE.Color(c));
+  // Fire by temperature (the plain glows; the billows burn in NK_PUFF_FS): dull ember, deep red, orange, yellow,
+  // white-hot. The coolest is an ember's glow, not soot: drawn over the scene, soot here left a dark disc
+  const _NB_FIRE = [0x6a3018, 0x8a2a0c, 0xf06a18, 0xffb43a, 0xfff0c0].map(c => new THREE.Color(c));
   function _nbFireRamp(T, out) { T = Math.max(0, Math.min(1, T)) * 4; const i = Math.min(3, Math.floor(T)); return out.copy(_NB_FIRE[i]).lerp(_NB_FIRE[i + 1], T - i); }
-  const _nbC = new THREE.Color(), _nbC2 = new THREE.Color(), _nbSoot0 = new THREE.Color(0x4a3a30), _nbSoot1 = new THREE.Color(0x665448), _nbStemSmoke = new THREE.Color(0x6a5a4c);
-  const _nbDust0 = new THREE.Color(0x7d6650), _nbDust1 = new THREE.Color(0xa48a6e);
+  // The cloud's smoke: warm ash lit by its fire, as SC2's nuke (never black: charcoal-brown read as a burnt-out
+  // black cloud); the stem's foot a little browner. The dust is the field's earth, pale
+  const _nbC = new THREE.Color(), _nbC2 = new THREE.Color(), _nbSoot0 = new THREE.Color(0x9a8270), _nbSoot1 = new THREE.Color(0xb4a08a), _nbStemSmoke = new THREE.Color(0xa08a76);
+  const _nbDust0 = new THREE.Color(0x9a8266), _nbDust1 = new THREE.Color(0xc2a888);
   const _nbEmb0 = new THREE.Color(0xf0941d), _nbEmb1 = new THREE.Color(0xd11d1d), _nbSuck0 = new THREE.Color(0xffc46a), _nbSuck1 = new THREE.Color(0xff4a10);
   const _nbCell = (i, salt) => Math.floor(_puffHash(i, salt + 1) * 3.999);   // a puff's atlas cell and its turn: fixed per puff
   const _nbTurn = (i, salt, turn) => _puffHash(i, salt) * 6.2831853 + turn;
@@ -3197,7 +3200,9 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       size *= .5 + .5 * go;
       if (a < .004) return;
       const vx = v[0] * n.x + v[4] * n.y + v[8] * n.z, vy = v[1] * n.x + v[5] * n.y + v[9] * n.z, sq = ring ? .5 * (1 - Math.abs(f)) / Math.max(Math.hypot(vx, vy), 1e-4) : 0;
-      _nbC.copy(alb).multiplyScalar(lit * (.4 + .75 * Math.max(0, n.dot(_nbSunW))) * shade);
+      // lit by the sun, and by the fireball and the sky on its shadowed sides (.4 there with its own shadow
+      // on top took the rim and the underside to near black)
+      _nbC.copy(alb).multiplyScalar(lit * (.68 + .45 * Math.max(0, n.dot(_nbSunW))) * (.7 + .3 * shade));
       _nbPut(_nbPuffs, b.x + x, Math.max(y, .35 * size), b.z + z, size, _nbC, a, _nbCell(k, salt), _nbTurn(k, salt, t * (_puffHash(k, salt + 2) - .5) * .8),
         0, T, _sstep(.8, .4, T), vx * sq, vy * sq, blur + 1.2 * _sstep(.6, 1, T));
     };
@@ -3387,7 +3392,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       const S = _sunLight.position, k = 1.6 * h / S.y;
       P.shadow.position.set(b.x - k * S.x, .05, b.z - k * S.z);
       flat(P.shadow, 2.6 * (cr + tb));
-      P.shadow.material.opacity = .65 * sk;
+      P.shadow.material.opacity = .3 * sk;   // (.65 read as black smoke lying on the ground)
     }
     // the condensation (Wilson) ring flashing out round the cap's foot (0.75-2.65 s), lit by the fire at night
     // (not on LOW: a wide ring of noise drawn over the field)
