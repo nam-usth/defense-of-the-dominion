@@ -1,19 +1,19 @@
 // Game constants, asset paths and rank table (globals shared by the scripts below).
 // ─── CONSTANTS ───────────────────────────────────────────────────────────────
 const CFG = {
-  base_ammo: 30,
+  base_ammo: 45,              // (a pack empties a magazine faster than a trickle does)
   victory_wave: 15,           // campaign: clearing this wave wins and unlocks Endless
   airstrike_cd: 20, nuke_cd: 15, nuke_wave: 5, roach_wave: 4,
   stim_duration: 11, stim_hp: 10, stim_hp_marauder: 20,   // SC2 Stimpack: 11 s, 10 HP per Marine, 20 per Marauder (paid by the bunker)
   stim_marines: [6, 4, 2, 1],       // Marines in the bunker Stimpack needs: base, then per Super Stimpack tier
-  superstim_heal: 6,                // Super Stimpack (Nova's Marines): no HP cost, repairs the bunker 6 HP/s while active
+  superstim_heal: [6, 12, 20, 30],  // Super Stimpack (Nova's Marines): no HP cost, repairs the bunker this many HP/s while active, by tier
   metabolic_wave: 8, metabolic_boost: 1.6,   // Metabolic Boost: from wave 8 Zerglings grow wings and run 60% faster (SC2: 4.13 → 6.58)
   webby_wave: 12,                   // the boosted Zerglings' "webby" collection skin
   repair_rate: 25,  // 25 HP/s — meaningful heal vs heavy Zerg pressure
   // Endless: every wave past the campaign's last one reinforces the bunker while the
   // swarm keeps growing — per wave +5% damage, +60 max HP, +10% repair, +2 rounds
   endless_dmg: 0.05, endless_hp: 60, endless_repair: 0.10, endless_ammo: 2,
-  // Endless armory (roster panel, Endless only): repeatable purchases for the surplus
+  // The armory (roster panel): repeatable purchases for the surplus
   // minerals and gas — each one costs 30% more than the last of its kind (ammo: 15%, so more can be bought).
   // Per purchase: +150 max HP · +10% damage · +15 rounds (half a starting magazine) · strike and nuke cooldowns ×0.9 (down to 40%)
   armory_growth: 1.3, armory_ammo_growth: 1.15, armory_hp: 150, armory_dmg: 0.10, armory_ammo: 15, armory_cd: 0.9, armory_cd_min: 0.4,
@@ -22,6 +22,25 @@ const CFG = {
   hp_costs:    [[150,40],[255,68],[434,116]],
   ammo_costs:  [[80,15],[130,25],[200,40]],
   // unit and research costs live in UNIT_DEF / UPGRADE_DEF in game.js
+};
+// The balance's numbers, the desktop's (config.h, namespace bal), tuned against whole games by its bot (--sim)
+const BAL = {
+  // a wave's Zerg: Zerglings a + b·w + c·w² up to wave 20, then late more a wave; Roaches k per wave from their first
+  zcA: 2, zcB: 1.3, zcC: 0.2, zcLate: 9, rcK: 1.8,
+  swarmCount: 1.25, swarmHp: 0.5,                     // a SWARM wave's Zerglings: more of them, each weaker (and worth less)
+  lingHp0: 45, lingHpW: 14, lingHpLate: 10, lingDmg0: 8, lingDmgW: 1.6, lingSpeedMax: 0.108,   // (HP: lingHpLate a wave past 20)
+  lingMin0: 3, lingMinW: 0.85, lingGas0: 0.25, lingGasW: 0.32,
+  roachHp0: 180, roachHpW: 60, roachDmg0: 14, roachDmgW: 2.8, roachSpeedMax: 0.058,
+  roachMin0: 11, roachMinW: 2.4, roachGas0: 3, roachGasW: 0.95,
+  clearM0: 40, clearMW: 15, clearG0: 12, clearGW: 6, nightPay: 1.25,   // a wave cleared; by night it pays more
+  marauderMult: 2.2, ghostMult: 1.8,
+  mgSplash: 0.8, mgInterval: 0.7,                     // Marauder grenades: the blast's share of a hit, seconds apart (radius: MG_RADIUS)
+  mgSlow: [0.8, 0.6], mgSlowDur: [1, 1.5],            // their slow: speed left, seconds; [1]: with Concussive Shells
+  lateGrow: 1.06,                                     // past the campaign's last wave the Zerg's HP grows by this factor a wave (upgrades add up, this multiplies)
+  snipeMult: 10,                                      // a snipe: this many Ghost rounds' damage
+  // a nuke's price: the gas is flat, StarCraft II's. Minerals a + b·wave, this many times dearer for each one already this wave, times
+  // Fleet logistics' factor, never under a: StarCraft II's too
+  nukeM0: 100, nukeMW: 20, nukeG: 100, nukeGrow: 1.6,
 };
 
 // ─── ASSET PATHS ─────────────────────────────────────────────────────────────

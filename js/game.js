@@ -11,15 +11,16 @@ const G = (() => {
   let _ambientLight, _sunLight, _fillLight, _bunkerLight, _fireLight, _muzzleLight, _gunLight, _nukeLight;
   let _gunI = 0;   // its strength before the night's share (muzzleFlash)
 
-  // ── Day/Night cycle (experimental) ──────────────────────────────────────
-  let dnEnabled = false;     // opt-in toggle
-  let _dnTime   = 0;         // seconds into current cycle (0..DN_CYCLE)
+  // ── A wave's sky (waveSky): the night falls or lifts in the break before it ──
+  const THEATRE_KEY = 'dotd_theatre';
+  const _storedTheatre = () => { try { return localStorage.getItem(THEATRE_KEY) === 'daylight' ? 'daylight' : 'daynight'; } catch (e) { return theatre; } };
+  let theatre = 'daynight';  // the sky a game is fought under: 'daylight' | 'daynight' (the title's choice, in its save)
+  theatre = _storedTheatre();
+  let skySeed = 0;           // Endless's forecast: a game's own (saved)
+  let _dnT = 0, _dnTarget = 0;   // _dnT runs linearly to _dnTarget; _dnFactor is it eased
   let _dnFactor = 0;         // 0=full day, 1=full night (smooth blend)
   let _dnLitF   = 0;         // effective factor the lights / fog were last applied at (a Viking flare lifts it)
-  // One cycle (3 min): day 78 s → dusk 24 s → night 54 s → dawn 24 s
-  const DN_DAY = 78, DN_FADE = 24, DN_NIGHT = 54;
-  const DN_CYCLE = DN_DAY + DN_FADE + DN_NIGHT + DN_FADE;
-  const DN_SLEW = 2.5;       // turning the cycle on / off blends over at most this many seconds
+  const DN_TURN = 6;         // the night falls or lifts over this many seconds
   const DN_NIGHT_FOG_NEAR = 2.5;
   const DN_NIGHT_FOG_FAR  = 9.0;
   const DN_DAY_FOG_NEAR   = 45;
@@ -63,6 +64,8 @@ const G = (() => {
     const k = Math.min(1, dt * 9);
     _zoom += (_zoomT - _zoom) * k;
     _camYaw += (_camYawT - _camYaw) * k;
+    if (Math.abs(_zoomT - _zoom) < 1e-4) _zoom = _zoomT;   // at rest (the ground's cache waits for that: _bakeGround)
+    if (Math.abs(_camYawT - _camYaw) < 1e-4) _camYaw = _camYawT;
     const z = _zoom * _zoom * (3 - 2 * _zoom);                  // smoothstep
     const dist = CAM.farDist + (CAM.nearDist - CAM.farDist) * z;
     const elev = CAM.farElev + (CAM.nearElev - CAM.farElev) * z;
@@ -336,12 +339,12 @@ const G = (() => {
                 bonusVs:[], bonusMult:1.0,
                 label:'M',  name:'MARINE',   cls:'m',
                 attrs:['light','biological'] },
-    marauder: { slots:2, cost:[150,25], dmgMult:1.2, bulletColor:0xff8800, bulletSpeed:0.5,
+    marauder: { slots:2, cost:[150,25], dmgMult:BAL.marauderMult, bulletColor:0xff8800, bulletSpeed:0.5,
                 // +100% vs Armored (Roach), normal vs Light
                 bonusVs:['armored'], bonusMult:2.0,
                 label:'Ma', name:'MARAUDER', cls:'ma',
                 attrs:['armored','biological','mechanical'] },
-    ghost:    { slots:2, cost:[200,50], dmgMult:1.4, bulletColor:0xcc44ff, bulletSpeed:0.75,
+    ghost:    { slots:2, cost:[200,50], dmgMult:BAL.ghostMult, bulletColor:0xcc44ff, bulletSpeed:0.75,
                 // +150% vs Light (Zergling, Hydralisk), normal vs Armored
                 bonusVs:['light'], bonusMult:2.5,
                 label:'Gh', name:'GHOST',    cls:'gh',
@@ -352,23 +355,29 @@ const G = (() => {
   // Within its range a Zerg is its blip only (not which kind) until the night leaves it this dark
   // (_nightDark); the blip fades out over the last stretch before, so the two never overlap
   const SENSOR_SHOW_DARK = 0.6, SENSOR_BLIP_FADE = 0.15;
+  // A Marauder grenade's blast radius: base, then per Concussive Shells tier; what the tier from a level buys, "2.0 → 2.6"
+  const MG_RADIUS = [2.0, 2.6, 3.4, 4.2];
+  const mgRadiusStep = l => `${MG_RADIUS[l].toFixed(1)} → ${MG_RADIUS[l + 1].toFixed(1)}`;
   const UPGRADE_DEF = {
     superstim:  { cost:[250,150], unit:'marine',   name:'Super Stimpack', icon:UI_ICONS.superstim,
-                  desc:'Stimpack costs no HP and repairs the bunker while it lasts. Its tiers cut the Marines it needs: 6 → 4 → 2 → 1 (or a Marauder)',
+                  desc:'Free, and repairs the bunker. Each tier needs fewer Marines (6 → 4 → 2 → 1) and repairs more (6 → 12 → 20 → 30 HP/s)',
                   tiers:[
-                    { cost:[200, 80],  desc:'Stimpack Lv.1 — needs 4 Marines' },
-                    { cost:[320,130],  desc:'Stimpack Lv.2 — needs 2 Marines' },
-                    { cost:[500,200],  desc:'Stimpack Lv.3 — needs 1 Marine or Marauder (MAX)' },
+                    { cost:[200, 80],  desc:'Stimpack Lv.1 — needs 4 Marines, repairs 12 HP/s' },
+                    { cost:[320,130],  desc:'Stimpack Lv.2 — needs 2 Marines, repairs 20 HP/s' },
+                    { cost:[500,200],  desc:'Stimpack Lv.3 — needs 1 Marine or Marauder, repairs 30 HP/s (MAX)' },
                   ]},
-    concussive: { cost:[300,75],  unit:'marauder', name:'Concussive Shell', icon:UI_ICONS.concussive,
-                  desc:'Marauder blasts slow harder: to 40% speed (from 70%) for 2.5s (from 1.5s)',
+    // (the speed a Zerg keeps, in words that cannot be read as the speed it loses; a tier's button names the radius it buys)
+    concussive: { cost:[300,75],  unit:'marauder', name:'Concussive Shells', icon:UI_ICONS.concussive,
+                  desc:`Zerg caught in a blast run at ${BAL.mgSlow[1] * 100}% speed for ${BAL.mgSlowDur[1]} s (now ${BAL.mgSlow[0] * 100}% for ${BAL.mgSlowDur[0]} s). Its tiers then widen the blast.`,
+                  done:`Concussive Shells — Zerg in a blast now run at ${BAL.mgSlow[1] * 100}% speed for ${BAL.mgSlowDur[1]} s`,
+                  tierLabel:l => 'BLAST RADIUS ' + mgRadiusStep(l), tierShort:l => mgRadiusStep(l),
                   tiers:[
-                    { cost:[250, 80],  desc:'AOE Lv.1 — blast radius 1.5 → 2.0' },
-                    { cost:[400,130],  desc:'AOE Lv.2 — radius 2.6' },
-                    { cost:[600,200],  desc:'AOE Lv.3 — radius 3.2 (MAX)' },
+                    { cost:[250, 80],  desc:'Blast radius ' + mgRadiusStep(0) },
+                    { cost:[400,130],  desc:'Blast radius ' + mgRadiusStep(1) },
+                    { cost:[600,200],  desc:'Blast radius ' + mgRadiusStep(2) + ' (MAX)' },
                   ]},
     snipe:      { cost:[250,100], unit:'ghost',    name:'Snipe', icon:UI_ICONS.snipe,
-                  desc:'Ghost auto-snipes highest-threat enemy (8s CD)',
+                  desc:'Ghost auto-snipes the most dangerous Zerg in sight: a heavy round (8s CD)',
                   tiers:[
                     { cost:[200, 80],  desc:'Snipe Lv.1 — CD 8s → 6s' },
                     { cost:[320,130],  desc:'Snipe Lv.2 — CD 6s → 4s' },
@@ -382,10 +391,8 @@ const G = (() => {
   };
   // Snipe CD per level (ms): base + 3 tiers
   const SNIPE_CD   = [8000, 6000, 4000, 2500];
-  // Marauder punisher grenades: the blast radius (base, then per Concussive Shell AOE tier); the rest of
-  // the blast takes MG_SPLASH of the round's damage; everyone in it slows to MG_SLOW of their speed for
-  // MG_SLOW_DUR s ([1]: Concussive Shells)
-  const MG_RADIUS = [1.5, 2.0, 2.6, 3.2], MG_SPLASH = 0.5, MG_SLOW = [0.7, 0.4], MG_SLOW_DUR = [1.5, 2.5];
+  // Marauder punisher grenades: the rest of the blast (MG_RADIUS) takes BAL.mgSplash of the round's damage; everyone in it
+  // slows (BAL.mgSlow, the more with Concussive Shells)
 
   let roster = ['marine','marine'];   // start with 2 marines (2 slots used)
   let snipeReady = [];                // per ghost, in roster order: _gameT when it may snipe again
@@ -394,17 +401,17 @@ const G = (() => {
   let concussiveUnlocked = false;
   let superStimUnlocked = false;   // Super Stimpack research (Marines)
   let superStimLvl = 0;            // its tiers: each lowers the Marines Stimpack needs (CFG.stim_marines)
-  // Endless armory: purchases of each kind (see CFG.armory_*)
+  // The armory: purchases of each kind (see CFG.armory_*). Gas near a third of the minerals, as the income and the research: the two run out together
   let armory = { hp: 0, dmg: 0, ammo: 0, cd: 0 };
   const ARMORY_DEF = {
-    hp:   { name: 'Hull plating',   cost: [300, 75],  icon: UI_DIR + 'btn-upgrade-terran-neosteelframe.png',
+    hp:   { name: 'Hull plating',   cost: [300, 100], icon: UI_DIR + 'btn-upgrade-terran-neosteelframe.png',
             fx: () => `+${CFG.armory_hp} max HP`, total: n => `+${n * CFG.armory_hp} HP` },
-    dmg:  { name: 'Weapon tuning',  cost: [400, 100], icon: UI_DIR + 'btn-upgrade-terran-infantryweaponslevel3.png',
+    dmg:  { name: 'Weapon tuning',  cost: [400, 150], icon: UI_DIR + 'btn-upgrade-terran-infantryweaponslevel3.png',
             fx: () => `+${Math.round(CFG.armory_dmg * 100)}% damage`, total: n => `+${Math.round(n * CFG.armory_dmg * 100)}% damage` },
-    ammo: { name: 'Magazine',       cost: [250, 60],  icon: UI_DIR + 'btn-upgrade-terran-enhancedmunitions.png',
+    ammo: { name: 'Magazine',       cost: [250, 80],  icon: UI_DIR + 'btn-upgrade-terran-enhancedmunitions.png',
             fx: () => `+${CFG.armory_ammo} rounds`, total: n => `+${n * CFG.armory_ammo} rounds` },
-    cd:   { name: 'Fleet logistics', cost: [350, 120], icon: UI_DIR + 'btn-progression-hornerhan-5-fleetcalldown.png',
-            fx: () => `strike & nuke cooldowns −${Math.round((1 - CFG.armory_cd) * 100)}%`, total: n => `cooldowns ×${armoryCdMult(n).toFixed(2)}`,
+    cd:   { name: 'Fleet logistics', cost: [350, 150], icon: UI_DIR + 'btn-progression-hornerhan-5-fleetcalldown.png',
+            fx: () => `cooldowns, nuke price −${Math.round((1 - CFG.armory_cd) * 100)}%`, total: n => `×${armoryCdMult(n).toFixed(2)}`,
             maxed: () => armoryCdMult() <= CFG.armory_cd_min },
   };
   let snipeUnlocked = false;
@@ -422,7 +429,7 @@ const G = (() => {
   let _hudTick = 0;         // throttle for HUD DOM refresh
   let _dmgFlashCD = 0;       // throttle for damage vignette flash
   let zerglings=[], roaches=[], bullets=[], crates=[], beams=[], marines=[];
-  let spawnQueue=[], spawnTimer=0, spawnInterval=1.2, wavePhase='idle', shootCD=0;
+  let spawnQueue=[], _waveT=0, waveSwarm=false, wavePhase='idle', shootCD=0;   // spawnQueue: this wave's Zerg to come, the next one last · seconds into the wave · a SWARM wave
   let waveKills=0, waveNukes=0, waveAirs=0;
   let mx=0.5, my=0.5;
 
@@ -437,7 +444,8 @@ const G = (() => {
     groundHD: { value: 1 },                   // 1 HD, 0 SD (applyGfx: a uniform, no recompile)
     uTime: { value: 0 }, uRain: { value: 0 }, uWet: { value: 0 }, uPuddle: { value: 0 },   // the weather (syncGround)
     uNight: { value: 0 }, uNightDesat: { value: 0 }, uMoonTint: { value: new THREE.Color(.20, .27, .42) }, uMoonDir: { value: new THREE.Vector3(0, 1, 0) },   // the night (_applyDNLights)
-    uGrassClear: { value: [new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, -1)] } };   // where the grass is gone: x, z, radius
+    uGrassClear: { value: [new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, -1)] },   // where the grass is gone: x, z, radius
+    groundCached: { value: 0 }, gc0: { value: null }, gc1: { value: null } };   // the ground's cache (_bakeGround)
   for (const [u, file] of [['terrainTex', 'ground_noise'], ['grassTex', 'ground_grass'], ['soilTex', 'ground_soil']])
     new THREE.TextureLoader().load(`assets/textures/${file}.png?v=1`, t => {
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -445,6 +453,7 @@ const G = (() => {
       t.anisotropy = Math.min(2, renderer.capabilities.getMaxAnisotropy());   // (the camera is never low: 8 looks the same and costs a close-up 3 ms)
       t.needsUpdate = true;
       _groundU[u].value = t;
+      _gc.baked = false;
       if (u === 'terrainTex') GLOW_LIGHTS.cloudTex.value = t;
     }, undefined, () => console.warn(`Ground map ${file}.png did not load: the field stays plain`));
   // ground(): the field at xz, from the noise at rotated scales: tiles of 150 and 36 units for the broad layers (the
@@ -458,15 +467,16 @@ const G = (() => {
   //  - lod >= 0: blurred mips (the grass, coloured from the ground at its root).
   // The weather: water stands where the ground is low, in the dirt and the worn ring, rising with the rain that has
   // fallen; the whole field darkens as it wets. The tones are the desktop's: its lights are these, so they carry over.
-  const _GROUND_FS = `uniform sampler2D terrainTex, grassTex, soilTex;
-uniform float groundHD, uTime, uRain, uWet, uPuddle, uNight, uNightDesat; uniform vec3 uMoonTint, uMoonDir;
+  const _GROUND_CORE = `uniform sampler2D terrainTex, grassTex, soilTex;
+uniform float groundHD, uWet, uPuddle;
 const mat2 ROT1 = mat2( 0.825, 0.565, -0.565, 0.825 ), ROT2 = mat2( -0.320, 0.947, -0.947, -0.320 ), ROT3 = mat2( 0.199, -0.980, 0.980, 0.199 ), ROT4 = mat2( 0.545, 0.839, -0.839, 0.545 );
 const mat2 ROT5 = mat2( 0.454, 0.891, -0.891, 0.454 ), ROT6 = mat2( 0.921, 0.389, -0.389, 0.921 ), ROT7 = mat2( -0.600, 0.800, -0.800, -0.600 ), ROT8 = mat2( 0.309, 0.951, -0.951, 0.309 );
 const mat2 ROT3T = mat2( 0.199, 0.980, -0.980, 0.199 ), ROT6T = mat2( 0.921, -0.389, 0.389, 0.921 ), ROT7T = mat2( -0.600, -0.800, 0.800, -0.600 ), ROT8T = mat2( 0.309, -0.951, 0.951, 0.309 );   // their transposes (none in GLSL ES 1)
 const vec3 GRASS_LUSH = vec3( .184, .290, .102 ), GRASS_DRY = vec3( .290, .310, .133 ), DIRT_DARK = vec3( .290, .224, .141 ), DIRT_LIGHT = vec3( .431, .353, .227 );
 const vec3 LUMA_G = vec3( 0.299, 0.587, 0.114 );
 struct Ground { vec3 alb, dry; vec3 N; float ao, wet, water, dirt; };
-Ground ground( vec2 xz, float lod, float wpp ) {
+float groundAo( vec2 xz ) { return mix( 0.55, 1.0, smoothstep( 1.4, 2.8, length( xz ) ) ); }
+Ground groundDry( vec2 xz, float lod, float wpp ) {
   float detail = 1.0 - smoothstep( 0.011, 0.020, wpp ), soft = 0.5 * ( 1.0 - smoothstep( 0.02, 0.03, wpp ) );
   vec2 u1 = ROT1 * xz / 150.0 + vec2( 0.89, 0.85 ), u2 = ROT2 * xz / 36.0, u3 = ROT3 * xz / 6.0;
   vec4 a, b, c = vec4( 0.5 ), gf = vec4( 0.5 ), gc = vec4( 0.5 ), sf = vec4( 0.5 );
@@ -474,10 +484,10 @@ Ground ground( vec2 xz, float lod, float wpp ) {
   bool hd = lod < 0.0 && groundHD > 0.5;
   if ( lod >= 0.0 ) { a = NOISE_LOD( terrainTex, u1, lod ); b = NOISE_LOD( terrainTex, u2, lod ); }
   else if ( hd ) {
-    a = texture2D( terrainTex, u1 ); b = texture2D( terrainTex, u2 ); c = texture2D( terrainTex, u3, soft );   // (c, gc: half a mip softer in a large window's overview: their top mips are the dearest reads)
-    s = texture2D( terrainTex, ROT4 * xz / 1.3 ).r;
-    gf = texture2D( grassTex, ROT6 * xz / 2.7 ); gc = texture2D( grassTex, ROT7 * xz / 7.3, soft ); sf = texture2D( soilTex, ROT8 * xz / 3.1 );
-  } else { a = texture2D( terrainTex, u1, 1.0 ); b = texture2D( terrainTex, u2, 1.0 ); }
+    a = GROUND_READ( terrainTex, u1, 0.0 ); b = GROUND_READ( terrainTex, u2, 0.0 ); c = GROUND_READ( terrainTex, u3, soft );   // (c, gc: half a mip softer in a large window's overview: their top mips are the dearest reads)
+    s = GROUND_READ( terrainTex, ROT4 * xz / 1.3, 0.0 ).r;
+    gf = GROUND_READ( grassTex, ROT6 * xz / 2.7, 0.0 ); gc = GROUND_READ( grassTex, ROT7 * xz / 7.3, soft ); sf = GROUND_READ( soilTex, ROT8 * xz / 3.1, 0.0 );
+  } else { a = GROUND_READ( terrainTex, u1, 1.0 ); b = GROUND_READ( terrainTex, u2, 1.0 ); }
   float blade = ( gf.r - 0.5 ) * mix( 0.3, 1.0, detail ) + ( gc.r - 0.5 ) * mix( 1.0, 0.5, detail );
   float tone = ( gf.g - 0.5 ) * mix( 0.3, 1.0, detail ) + ( gc.g - 0.5 ) * mix( 0.9, 0.3, detail );
   float r = length( xz );
@@ -496,20 +506,40 @@ Ground ground( vec2 xz, float lod, float wpp ) {
     g += mix( gg, ROT8T * ( sf.ba * 2.0 - 1.0 ) * mix( 0.35, 0.9, detail ), dirt );
   }
   G.N = normalize( vec3( -g.x, 1.0, -g.y ) );
-  G.ao = mix( 0.55, 1.0, smoothstep( 1.4, 2.8, r ) );
+  G.ao = groundAo( xz );
+  G.dirt = dirt;
+  return G;
+}
+void groundRain( inout Ground G, vec2 xz, float lod ) {
   G.dry = G.alb;
   G.wet = uWet;
   G.water = 0.0;
-  G.dirt = dirt;
+  float dirt = G.dirt;
   if ( uWet > 0.0 || uPuddle > 0.0 ) {
-    float p = lod < 0.0 ? texture2D( terrainTex, ROT5 * xz / 21.9 ).r : NOISE_LOD( terrainTex, ROT5 * xz / 21.9, lod ).r;
+    float p = lod < 0.0 ? GROUND_READ( terrainTex, ROT5 * xz / 21.9, 0.0 ).r : NOISE_LOD( terrainTex, ROT5 * xz / 21.9, lod ).r;
     float low = p * ( 0.55 + 0.45 * dirt ), T = 1.0 - 0.36 * uPuddle;
-    G.water = smoothstep( T, T + max( 0.015, lod < 0.0 ? 1.5 * fwidth( low ) : 0.05 ), low );   // a crisp shore, never a jagged one
+    G.water = smoothstep( T, T + max( 0.015, lod < 0.0 ? 1.5 * GROUND_FWIDTH( low ) : 0.05 ), low );   // a crisp shore, never a jagged one
     G.wet = max( uWet, smoothstep( T - 0.1, T, low ) * min( 1.0, 4.0 * uPuddle ) );
     G.alb *= 1.0 - G.wet * mix( 0.3, 0.45, dirt ) - 0.2 * G.water;
   }
+}
+Ground ground( vec2 xz, float lod, float wpp ) {
+  Ground G = groundDry( xz, lod, wpp );
+  groundRain( G, xz, lod );
   return G;
 }
+`;
+  // in a fragment shader (a read at a set mip: NOISE_LOD, radial-fog.js), and in the grass's vertex shader
+  const _GROUND_READ_FS = '#define GROUND_FWIDTH( x ) fwidth( x )\n#define GROUND_READ( t, u, b ) texture2D( t, u, b )\n';
+  const _GROUND_READ_VS = `#if __VERSION__ >= 300
+  #define NOISE_LOD( t, u, l ) textureLod( t, u, l )
+#else
+  #define NOISE_LOD( t, u, l ) texture2DLod( t, u, l )
+#endif
+#define GROUND_FWIDTH( x ) 0.0
+#define GROUND_READ( t, u, b ) NOISE_LOD( t, u, 0.0 )
+`;
+  const _GROUND_FS = _GROUND_READ_FS + _GROUND_CORE + `uniform float uTime, uRain, uNight, uNightDesat; uniform vec3 uMoonTint, uMoonDir;
 // What the water mirrors: the sky, brighter toward the horizon, under a cloud deck 40 up drifting with the wind
 vec3 skyMirror( vec3 P, vec3 R ) {
   float up = max( R.y, 0.0 );
@@ -537,13 +567,25 @@ vec2 ripples( vec2 p ) {
 // a surface's moonlit value at night: its brightness, moon-blue, lit by the moon
 vec3 nightOf( vec3 alb, vec3 N ) { return dot( alb, LUMA_G ) * uMoonTint * ( 0.45 + 0.55 * max( dot( N, uMoonDir ), 0.0 ) ); }
 vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
+// how far the fog has taken this point (the fog chunk's sum, radial-fog.js)
+float groundFogK() {
+  float k = smoothstep( fogNear, fogFar, length( vFogXZ ) ), lift = 0.0;
+  for ( int i = 0; i < 8; i ++ ) {
+    if ( i >= glowCount ) break;
+    float gd = length( vFogXZ - glowPos[ i ].xz ), gr = glowPos[ i ].w;
+    lift = max( lift, glowCol[ i ].a * ( 1.0 - smoothstep( 0.35 * gr, gr, gd ) ) );
+  }
+  return k * ( 1.0 - lift );
+}
 `;
   // The shared hooks of the ground and the grass: colour, normal, light and fog from ground()
   const _groundHooks = (fs, colour) => fs
     .replace('#include <fog_pars_fragment>', `#include <fog_pars_fragment>\n${_GROUND_FS}`)
     .replace('#include <color_fragment>', `#include <color_fragment>\n${colour}
   diffuseColor.rgb = mix( G.alb, vec3( dot( G.alb, LUMA_G ) ), uNightDesat );
-  sceneFogT = mix( fogColor, nightOf( G.dry, G.N ) * G.ao, uNight );`)
+  sceneFogT = mix( fogColor, nightOf( G.dry, G.N ) * G.ao, uNight );
+  // deep in the night's dark only the ground's moonlit value shows: none of the lights below would reach the eye
+  if ( groundFogK() >= 1.0 ) { gl_FragColor = vec4( sceneFogT, 1.0 ); return; }`)
     .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
   vec3 Nw = G.N;
   if ( G.water > 0.0 ) {   // standing water lies flat, but for the rain's rings on it
@@ -575,9 +617,22 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
   vGroundW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;`);
       // the close-up detail by the pixel's footprint: crisp grass close up, calm where a pixel spans more of the fine
       // layer (no hatching); the footprint along the screen's axes, the same at any yaw
-      sh.fragmentShader = '#define FOG_TARGET sceneFogT\nvarying vec3 vGroundW;\n' + _groundHooks(sh.fragmentShader, `
-  float wpp = max( length( dFdx( vGroundW.xz ) ), length( dFdy( vGroundW.xz ) ) );
-  Ground G = ground( vGroundW.xz, -1.0, wpp );`);
+      sh.fragmentShader = '#define FOG_TARGET sceneFogT\nvarying vec3 vGroundW;\nuniform float groundCached; uniform sampler2D gc0, gc1;\n' + _groundHooks(sh.fragmentShader, `
+  Ground G;
+#if __VERSION__ >= 300
+  if ( groundCached > 0.5 ) {   // the camera holds still: this pixel's dry ground is kept (_bakeGround); only the rain changes it
+    ivec2 gpx = ivec2( gl_FragCoord.xy );
+    vec4 c0 = texelFetch( gc0, gpx, 0 ); vec2 nxz = texelFetch( gc1, gpx, 0 ).rg;
+    G.alb = c0.rgb; G.dirt = c0.a;
+    G.N = vec3( nxz.x, sqrt( max( 0.0, 1.0 - dot( nxz, nxz ) ) ), nxz.y );
+    G.ao = groundAo( vGroundW.xz );
+    groundRain( G, vGroundW.xz, -1.0 );
+  } else
+#endif
+  {
+    float wpp = max( length( dFdx( vGroundW.xz ) ), length( dFdy( vGroundW.xz ) ) );
+    G = ground( vGroundW.xz, -1.0, wpp );
+  }`);
     };
     m.customProgramCacheKey = () => 'ground';   // (every hook reads the same through radial-fog.js's wrapper)
     return m;
@@ -587,8 +642,8 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
   // Thousands of little tufts of blades over the field (none under the bunker), one static mesh, drawn on HIGH: the
   // desktop's (Game::buildGrass, the same seed). Each vertex carries its tuft's root and sway in its normal, its tint
   // and how far up the blade it is in its uv. The wind runs through in slow gusts, stronger in the rain. A blade takes
-  // the colour of the ground at its tuft's root, dark at the root, pale at the tip; none on bare earth, in water, or
-  // where a nuke has scorched the field
+  // the colour of the ground at its tuft's root, dark at the root, pale at the tip: worked out in the vertex shader, and a
+  // tuft on bare earth, in water, where a nuke has scorched the field or deep in the night's dark has no triangle to shade
   function _grassMesh() {
     let st = 0x2545f491;
     const rn = () => { st ^= st << 13; st ^= st >>> 17; st ^= st << 5; return (st & 0xffffff) / 16777216; };
@@ -622,18 +677,24 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
     m.extensions = { derivatives: true };
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, _groundU);
-      sh.vertexShader = `uniform float uTime, uRain;\nvarying vec3 vGroundW; varying vec2 vRoot; varying vec2 vTuft;\n` + sh.vertexShader
+      sh.vertexShader = _GROUND_READ_VS + _GROUND_CORE + `uniform float uTime, uRain, fogFar; uniform int glowCount; uniform vec3 uGrassClear[ 3 ];
+varying vec3 vGroundW, vGAlb, vGDry, vGWet; varying vec2 vTuft;\n` + sh.vertexShader
         .replace('#include <beginnormal_vertex>', 'vec3 objectNormal = vec3( 0.0, 1.0, 0.0 );')
+        .replace('#include <project_vertex>', `#include <project_vertex>
+  Ground G = ground( root, 1.5, 1.0 );
+  bool gone = G.dirt > 0.3 || G.water > 0.05 || ( glowCount == 0 && length( root ) >= fogFar );
+  for ( int i = 0; i < 3; i++ ) if ( distance( root, uGrassClear[ i ].xy ) < uGrassClear[ i ].z ) gone = true;
+  if ( gone ) gl_Position = vec4( 2.0, 2.0, 2.0, 1.0 );
+  vGAlb = G.alb; vGDry = G.dry; vGWet = vec3( G.wet, G.water, G.ao );`)
         .replace('#include <begin_vertex>', `vec2 root = normal.xz;
   float gust = 0.65 + 0.35 * sin( dot( root, vec2( 0.21, 0.13 ) ) + uTime * 1.3 ) + 0.2 * sin( dot( root, vec2( -0.43, 0.57 ) ) + uTime * 2.9 );
   vec3 transformed = position;
   transformed.xz += vec2( 0.8, 0.6 ) * ( gust * normal.y * ( 1.0 + 1.2 * uRain ) );
-  vRoot = root; vTuft = uv; vGroundW = transformed;`);
-      sh.fragmentShader = '#define FOG_TARGET sceneFogT\nvarying vec3 vGroundW; varying vec2 vRoot; varying vec2 vTuft;\nuniform vec3 uGrassClear[ 3 ];\n' + _groundHooks(sh.fragmentShader, `
-  Ground G = ground( vRoot, 1.5, 1.0 );
-  if ( G.dirt > 0.3 || G.water > 0.05 ) discard;
-  for ( int i = 0; i < 3; i++ ) if ( distance( vRoot, uGrassClear[ i ].xy ) < uGrassClear[ i ].z ) discard;
-  G.alb *= mix( 0.62, 1.32, vTuft.y ) * vTuft.x;`);
+  vTuft = uv; vGroundW = transformed;`);
+      sh.fragmentShader = '#define FOG_TARGET sceneFogT\nvarying vec3 vGroundW, vGAlb, vGDry, vGWet; varying vec2 vTuft;\n' + _groundHooks(sh.fragmentShader, `
+  Ground G;
+  G.alb = vGAlb * mix( 0.62, 1.32, vTuft.y ) * vTuft.x;
+  G.dry = vGDry; G.N = vec3( 0.0, 1.0, 0.0 ); G.wet = vGWet.x; G.water = vGWet.y; G.ao = vGWet.z; G.dirt = 0.0;`);
     };
     m.customProgramCacheKey = () => 'tuft';
     const mesh = new THREE.Mesh(g, m);
@@ -1359,6 +1420,7 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
       : enemyPool(poolKey, makeProcedural);
     return { pool, model: !!skin, walk, attack, stride: skin ? ASSETS[skin].stride : 1, step: Math.random(), atkT: Math.random() };
   }
+  const _lateHp=()=>BAL.lateGrow**Math.max(0,wave-CFG.victory_wave);
   function makeZergling(x,z){
     const g = new THREE.Object3D();   // transform holder — drawn by its instance pool
     g.position.set(x,0,z);
@@ -1366,11 +1428,12 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
     // Each falls back to the previous skin, then to the procedural look of the wave tier.
     const boost = wave >= CFG.metabolic_wave;
     const skin = [wave>=CFG.webby_wave&&'zergling_webby', boost&&'zergling_upgrade', 'zergling'].find(k => k && ModelLoader.isReady(k));
-    const hp=60+wave*28;
+    // past wave 20 the swarm grows in number more than in hide: the count is the threat, and area damage its answer
+    const k=waveSwarm?BAL.swarmHp:1, hp=(BAL.lingHp0+BAL.lingHpW*Math.min(wave,20)+BAL.lingHpLate*Math.max(0,wave-20))*k*_lateHp();
     return {mesh:g,...enemyLook(skin, 'zergling:' + (wave>=7?2:wave>=4?1:0), _proceduralZergling),
-            type:'z',hp,maxHp:hp,dead:false,speed:(0.014+wave*0.004)*(boost?CFG.metabolic_boost:1),dmg:10+wave*3,leg:Math.random()*6.28,
+            type:'z',hp,maxHp:hp,dead:false,speed:Math.min(BAL.lingSpeedMax,(0.014+wave*0.004)*(boost?CFG.metabolic_boost:1)),dmg:BAL.lingDmg0+BAL.lingDmgW*wave,leg:Math.random()*6.28,
             attrs:['light','biological'],          // SC2: Zergling is Light
-            reward:{score:10+wave*2,minerals:6+wave*2,gas:Math.floor(wave/2)}};
+            reward:{score:10+wave*2,minerals:(BAL.lingMin0+BAL.lingMinW*wave)*k,gas:(BAL.lingGas0+BAL.lingGasW*wave)*k}};
   }
 
   function _proceduralRoach() {
@@ -1397,11 +1460,11 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
     g.position.set(x,0,z);
     // SC2 skin of this wave tier (falls back to the base skin, then procedural)
     const skin = [wave>=13&&'roach_ex3', wave>=9&&'roach_ex1a', 'roach'].find(k => k && ModelLoader.isReady(k));
-    const hp=200+wave*70;
+    const hp=(BAL.roachHp0+BAL.roachHpW*wave)*_lateHp();
     return {mesh:g,...enemyLook(skin, 'roach', _proceduralRoach),atkT:0,mouth:roachMouth(skin),
-            type:'r',hp,maxHp:hp,dead:false,speed:0.008+wave*0.002,dmg:18+wave*5,leg:Math.random()*6.28,
+            type:'r',hp,maxHp:hp,dead:false,speed:Math.min(BAL.roachSpeedMax,0.008+wave*0.002),dmg:BAL.roachDmg0+BAL.roachDmgW*wave,leg:Math.random()*6.28,
             attrs:['armored','biological'],        // SC2: Roach is Armored
-            reward:{score:30+wave*5,minerals:18+wave*4,gas:3+wave}};
+            reward:{score:30+wave*5,minerals:BAL.roachMin0+BAL.roachMinW*wave,gas:BAL.roachGas0+BAL.roachGasW*wave}};
   }
   // Advance an enemy's walk cycle by `dist` world units (one loop per stride,
   // sped up by ANIM_SPEED) and draw it from that frame's instance pool.
@@ -1942,7 +2005,7 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
 
   // ── Marauder grenade blasts ───────────────────────────────────────────────
   // A punisher grenade bursts at `at`: the enemy it struck (if any) already took the round's damage;
-  // everyone else within the blast radius takes MG_SPLASH of it (double vs Armored, as the round),
+  // everyone else within the blast radius takes BAL.mgSplash of it (double vs Armored, as the round),
   // and all of them, struck one too, are slowed (harder with Concussive Shells). Drawn: a ball of
   // light with a few sparks, over a soft glow on the ground (syncBlasts)
   let mBlasts = [];
@@ -1953,10 +2016,10 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
       if (o.dead) continue;
       const q = o.mesh.position, dx = q.x - at.x, dz = q.z - at.z;
       if (o !== struck && dx * dx + dz * dz > R * R) continue;
-      slowedEnemies.set(o.mesh.uuid, { until: _gameT + MG_SLOW_DUR[sl], factor: MG_SLOW[sl] });
+      slowedEnemies.set(o.mesh.uuid, { until: _gameT + BAL.mgSlowDur[sl], factor: BAL.mgSlow[sl] });
       if (o === struck) continue;
       const bonus = def.bonusVs.some(t => (o.attrs || []).includes(t)) ? def.bonusMult : 1;
-      o.hp -= dmg0 * def.dmgMult * bonus * MG_SPLASH;
+      o.hp -= dmg0 * def.dmgMult * bonus * BAL.mgSplash;
       o.flash = 0.08;
       if (o.hp <= 0) killed.push(o);
     }
@@ -2081,9 +2144,8 @@ vec3 sceneFogT;   // what the night's fog fades this surface to (FOG_TARGET)
     // Cleanup after the Viking leaves the screen
     after(TOTAL_X / SPEED + 0.4, removeViking);
 
-    // At night the Viking also drops a parachute flare (as in Beach Head). Checked again
-    // when it fires: Y switches the cycle off without pausing.
-    if (dnEnabled && _dnFactor > 0.5) after(0.6, () => { if (dnEnabled && _dnFactor > 0.5) startFlare(); });
+    // At night the Viking also drops a parachute flare (as in Beach Head)
+    if (_dnFactor > 0.5) after(0.6, () => { if (_dnFactor > 0.5) startFlare(); });
   }
 
   function removeViking() {
@@ -2475,6 +2537,9 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   let _nukeTargetTex = null;   // SC2 nuke reticle for the target marker, loaded at boot
   ModelLoader.texture(DECALS.nukeTarget).then(t => { _nukeTargetTex = t; warmNukeShaders(); })
     .catch(() => console.warn('Nuke target texture failed to load — using a plain ring.'));
+  // Its price: it was free every 15 s, and carried Endless on its own (the desktop's bot: 75 nukes by wave 40)
+  // [minerals, gas]. Fleet logistics brings the minerals down, never under StarCraft II's 100; the gas is its flat 100
+  const nukeCost=()=>[Math.max(BAL.nukeM0,Math.round((BAL.nukeM0+BAL.nukeMW*wave)*BAL.nukeGrow**waveNukes*armoryCdMult()/5)*5),BAL.nukeG];
   function doNuke(force){
     if(!force){
       if(isPaused()) return; // command card stays clickable under the roster dim
@@ -2483,6 +2548,9 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         return;
       }
       if(_nukeInFlight){ setStatus('Nuclear launch already in progress!'); return; }
+      const [nm,ng]=nukeCost();
+      if(minerals<nm||gas<ng){ setStatus(needText(nm,ng)); SFX.play('deny'); return; }
+      minerals-=nm; gas-=ng;
       nukeCD=nukeCooldown();
       _run.usedSupport=true;
     }
@@ -3581,45 +3649,116 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     achState();
   }
 
+  const baseDamage=()=>10*(1+dmgLvl*.6)*(1+CFG.endless_dmg*endlessWaves())*(1+CFG.armory_dmg*armory.dmg);
+  // The swarm takes up room: Zerg push apart (a grid of 1-unit cells: a few hundred of them cost next to nothing), run round each
+  // other, and pile up behind those already at the hull instead of standing inside them. So a pack keeps its shape on the screen, a
+  // blast finds a crowd to hit, and only so many can bite at once
+  const _crowd = { head: new Int32Array(80 * 80), next: new Int32Array(512), px: new Float32Array(512), pz: new Float32Array(512), list: [] };
+  function crowdZerg(dt) {
+    const C = _crowd, L = C.list, G_ = 80;
+    L.length = 0;
+    for (const e of zerglings) if (!e.dead) L.push(e);
+    for (const e of roaches) if (!e.dead) L.push(e);
+    const n = L.length;
+    if (n > C.next.length) { C.next = new Int32Array(n * 2); C.px = new Float32Array(n * 2); C.pz = new Float32Array(n * 2); }
+    const { head, next, px, pz } = C, cell = v => { const c = Math.floor(v) + 40; return c < 0 ? 0 : c >= G_ ? G_ - 1 : c; };
+    head.fill(-1);
+    for (let i = 0; i < n; i++) {
+      const p = L[i].mesh.position, c = cell(p.z) * G_ + cell(p.x);
+      px[i] = pz[i] = 0;
+      next[i] = head[c];
+      head[c] = i;
+    }
+    for (let i = 0; i < n; i++) {
+      const a = L[i], pa = a.mesh.position, ra = a.type === 'r' ? 0.7 : 0.38, cx = cell(pa.x), cz = cell(pa.z);
+      for (let z = Math.max(0, cz - 1); z <= Math.min(G_ - 1, cz + 1); z++)
+        for (let x = Math.max(0, cx - 1); x <= Math.min(G_ - 1, cx + 1); x++)
+          for (let j = head[z * G_ + x]; j >= 0; j = next[j]) {
+            if (j <= i) continue;
+            const b = L[j], pb = b.mesh.position, R = ra + (b.type === 'r' ? 0.7 : 0.38), dx = pa.x - pb.x, dz = pa.z - pb.z, d2 = dx * dx + dz * dz;
+            if (d2 >= R * R) continue;
+            const d = Math.max(1e-3, Math.sqrt(d2)), f = 0.5 * (R - d) / d;
+            const ox = d2 < 1e-6 ? 0.5 * R * (Math.random() - 0.5) : dx * f, oz = d2 < 1e-6 ? 0.5 * R * (Math.random() - 0.5) : dz * f;
+            px[i] += ox; pz[i] += oz; px[j] -= ox; pz[j] -= oz;
+          }
+    }
+    const k = Math.min(1, dt * 10);
+    for (let i = 0; i < n; i++) {
+      const e = L[i], p = e.mesh.position;
+      p.x += px[i] * k; p.z += pz[i] * k;
+      const d = Math.hypot(p.x, p.z), minD = 0.92 * attackReach(e);   // not into the hull
+      if (d < minD && d > 1e-3) { p.x *= minD / d; p.z *= minD / d; }
+    }
+  }
+
   // ── Wave ─────────────────────────────────────────────────────────────────
+  // A pack: n Zerg coming in together from one side, a loose crowd over a second or so
+  function addPack(type, n, t, bearing) {
+    const spread = Math.min(1.2, 0.3 + n * 0.02), deep = 1.5 + n * 0.05;
+    for (let i = 0; i < n; i++) spawnQueue.push({ t: t + i * 0.025, type, angle: bearing + (Math.random() - 0.5) * spread, r: 13.5 + Math.random() * deep });
+  }
+  const isSwarmWave = w => !(gameMode === 'campaign' && w === CFG.victory_wave) && w >= 6 && w % 3 === 0;
+  // The swarm comes in packs from all sides, larger and closer together as the waves go on; every third wave from the sixth is
+  // a SWARM: most of its Zerglings (more of them, each weaker) at once, from two to four sides. Roaches in squads, between them
   function startWave(){
-    // Gentle early ramp: 2, 3, 4, 6, 8, 10, 13, 16, 19, 23, 27 ... then linear
-    const ZERGLING_TABLE = [0, 2, 3, 4, 6, 8, 10, 13, 16, 19, 23, 27];
-    let zc = wave < ZERGLING_TABLE.length
-      ? ZERGLING_TABLE[wave]
-      : 27 + (wave - 11) * 4;
+    let zc = Math.round(wave <= 20 ? BAL.zcA + BAL.zcB * wave + BAL.zcC * wave * wave : BAL.zcA + BAL.zcB * 20 + BAL.zcC * 400 + BAL.zcLate * (wave - 20));
     let rc = wave >= CFG.roach_wave
-      ? Math.floor((wave - CFG.roach_wave + 1) * 1.8)
+      ? Math.floor((wave - CFG.roach_wave + 1) * BAL.rcK)
       : 0;
     const finalWave = gameMode === 'campaign' && wave === CFG.victory_wave;
     if (finalWave) { zc = Math.round(zc * 1.25); rc = Math.round(rc * 1.25); } // final assault
-    // Spawn interval: starts slow (1.4s), gets faster as waves progress (min 0.4s)
-    spawnInterval = Math.max(0.4, 1.4 - wave * 0.08);
-    spawnQueue = [...Array(zc).fill('z'), ...Array(rc).fill('r')].sort(() => Math.random() - 0.5);
-    spawnTimer = 0; wavePhase = 'combat'; waveKills = 0; waveNukes = 0; waveAirs = 0; waveCrates = 0;
+    waveSwarm = isSwarmWave(wave);
+    if (waveSwarm) zc = Math.round(zc * BAL.swarmCount);
+    applySky(waveSky(wave), false);
+    spawnQueue = [];
+    const packSize = Math.min(3 + wave * 0.7, 30), gap = Math.max(2.2, 5.5 - wave * 0.18);
+    if (waveSwarm) {
+      const packs = 2 + (wave >= 15 ? 1 : 0) + (wave >= 30 ? 1 : 0), a0 = Math.random() * 2 * Math.PI;
+      for (let p = 0; p < packs; p++) addPack('z', Math.floor(zc / packs) + (p < zc % packs ? 1 : 0), 0.3 + p * 0.9, a0 + p * 2 * Math.PI / packs + (Math.random() - 0.5) * 0.5);
+    } else {
+      let t = 0.3;
+      for (let left = zc; left > 0;) {
+        const n = Math.max(1, Math.min(left, Math.round(packSize * (0.6 + 0.8 * Math.random()))));
+        addPack('z', n, t, Math.random() * 2 * Math.PI);
+        left -= n;
+        t += gap * (n / packSize) * (0.8 + 0.4 * Math.random());
+      }
+    }
+    let rt = 1.5;
+    for (let left = rc; left > 0;) {
+      const n = Math.min(left, 2 + Math.floor(Math.random() * 3));
+      addPack('r', n, rt, Math.random() * 2 * Math.PI);
+      left -= n;
+      rt += gap * 1.1;
+    }
+    spawnQueue.sort((a, b) => b.t - a.t);
+    _waveT = 0; wavePhase = 'combat'; waveKills = 0; waveNukes = 0; waveAirs = 0; waveCrates = 0;
     _waveHurt = false;
     const roachMsg = rc > 0 ? ` + ${rc} Roach${rc > 1 ? 'es' : ''}` : '';
     const boostMsg = wave === CFG.metabolic_wave ? ' — Metabolic Boost: Zerglings run faster!' : endlessWaves() ? ` — bunker reinforced ×${endlessWaves()}` : '';
     setStatus(finalWave
       ? `FINAL WAVE ${wave}: ${zc} Zerglings${roachMsg} — hold the line!`
-      : `Wave ${wave}: ${zc} Zergling${zc > 1 ? 's' : ''}${roachMsg}${boostMsg}`);
+      : `${waveSwarm ? 'SWARM! ' : ''}Wave ${wave}: ${zc} Zergling${zc > 1 ? 's' : ''}${roachMsg}${boostMsg || ' — ' + skyLabel(waveSky(wave))}`);
     SFX.play('wave');
   }
 
   function waveCleared(){
     wavePhase='cleared';
-    achWaveCleared(gameMode==='endless', wave, _waveHurt, maxHp>0?bunkerHp/maxHp:0, dnEnabled&&_dnFactor>=.5);
-    const bm=40+wave*15, bg=10+wave*5;
+    achWaveCleared(gameMode==='endless', wave, _waveHurt, maxHp>0?bunkerHp/maxHp:0, _dnFactor>=.5);
+    const pay=_dnFactor>=.5?BAL.nightPay:1;   // the dark pays better
+    const bm=Math.round((BAL.clearM0+BAL.clearMW*wave)*pay), bg=Math.round((BAL.clearG0+BAL.clearGW*wave)*pay);
     minerals+=bm; gas+=bg; updateHUD();
-    setStatus(`Wave ${wave} cleared! +◆${bm} +▲${bg} — ${gameMode==='endless'?'Armory open (B) · resupply incoming...':'Resupply incoming...'}`);
+    applySky(waveSky(wave+1), false);   // the next wave's sky comes in over the break
+    setStatus(`Wave ${wave} cleared! +◆${bm} +▲${bg} — ${armoryAffordable()?'Armory open (B) · resupply incoming...':'Resupply incoming...'}`);
     SFX.play('clear');
     // Game-time sequence: frozen while paused, dropped by Restart/Load.
     after(1.5, ()=>{
       // Countdown: 3... 2... 1... once the magazine is full again
       const countdown=()=>{
-        setStatus('Next wave in 3...');
-        after(1, ()=>setStatus('Next wave in 2...'));
-        after(2, ()=>setStatus('Next wave in 1...'));
+        const sky=' — '+skyLabel(waveSky(wave+1))+(isSwarmWave(wave+1)?' · SWARM!':'');
+        setStatus('Next wave in 3...'+sky);
+        after(1, ()=>setStatus('Next wave in 2...'+sky));
+        after(2, ()=>setStatus('Next wave in 1...'+sky));
         after(3, ()=>{
           wave++;
           reinforce();                                  // Endless: the bunker is reinforced as the swarm grows
@@ -3657,8 +3796,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     floatTexts.push({x:0,y:3.4,z:0,txt:`REINFORCED  +${CFG.endless_hp*n} HP  +${Math.round(CFG.endless_dmg*100*n)}% DMG`,life:2600,maxLife:2600,color:'#ffd24a'});
   }
   const repairMult = () => 1 + CFG.endless_repair * endlessWaves();
-  // Endless armory: cost of the next purchase of a kind (+30% each), the cooldown factor,
-  // and buying (Endless only, any time — the roster button pulses between waves when one is affordable)
+  // The armory: cost of the next purchase of a kind (+30% each), the cooldown factor,
+  // and buying (any time — the roster button pulses between waves when one is affordable)
   function armoryCost(key){
     const [m,g]=ARMORY_DEF[key].cost, k=(key==='ammo'?CFG.armory_ammo_growth:CFG.armory_growth)**armory[key];
     return [Math.round(m*k/5)*5, Math.round(g*k/5)*5];
@@ -3668,7 +3807,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   const armoryAffordable = () => Object.keys(ARMORY_DEF).some(k => { const [m,g]=armoryCost(k); return !ARMORY_DEF[k].maxed?.()&&minerals>=m&&gas>=g; });
   function buyArmory(key){
     const def=ARMORY_DEF[key];
-    if(!def||gameMode!=='endless') return;
+    if(!def) return;
     if(def.maxed?.()){ setStatus(`${def.name} is maxed`); SFX.play('deny'); return; }
     const [m,g]=armoryCost(key);
     if(minerals<m||gas<g){ setStatus(needText(m,g)); SFX.play('deny'); return; }
@@ -3681,9 +3820,9 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   }
 
   // Bunker repair per second: the Lv3 hull's self-repair and the Super Stimpack (while
-  // stimmed) stack — 25 + 6 = 31 HP/s with both — and Endless reinforcements speed it up
+  // stimmed) stack, and Endless reinforcements speed it up
   function repairRate(){
-    return ((hpLvl>=3?CFG.repair_rate:0)+(superStimUnlocked&&stimT>0?CFG.superstim_heal:0))*repairMult();
+    return ((hpLvl>=3?CFG.repair_rate:0)+(superStimUnlocked&&stimT>0?CFG.superstim_heal[superStimLvl]:0))*repairMult();
   }
 
   // ── Shoot ────────────────────────────────────────────────────────────────
@@ -3751,13 +3890,13 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if(ammo===0) setStatus('Out of ammo — R: Airstrike  N: Nuke');
   }
 
-  // ── Marauders: a punisher grenade each every MG_INTERVAL s, on their own ──
+  // ── Marauders: a punisher grenade each every BAL.mgInterval s, on their own ──
   // Not with the volleys; every MG_PER_ROUND grenades (the Marauders' together) cost a round;
   // stimmed, 50% faster. Each picks its target among the enemies in sight (at night: lit, or a
   // Sensor Tower blip) within MG_REACH: the nearest one not slowed yet and outside the blasts
   // already on their way (the grenades in flight), else the nearest not slowed, else the nearest
   // outside them, else the nearest. None: it holds its fire
-  const MG_INTERVAL = 0.7, MG_REACH = 14, MG_PER_ROUND = 3;
+  const MG_REACH = 14, MG_PER_ROUND = 3;
   function _marauderTarget() {
     const onTheWay = bullets.filter(b => b.alive && b.unitType === 'marauder').map(b => b.aim), blastR = MG_RADIUS[concussiveLvl];
     const pick = [null, null, null, null], pd = [0, 0, 0, 0];
@@ -3787,7 +3926,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       _marauderShots++;
       if (stimAuto && stimT <= 0) doStim(true);                  // autocast: its attack stims too
       // the next one: a full interval on, nudged apart from the others so they keep a ripple
-      marauderReady[mi] = _gameT + MG_INTERVAL / (stimT > 0 ? 1.5 : 1) * (0.94 + 0.12 * Math.random());
+      marauderReady[mi] = _gameT + BAL.mgInterval / (stimT > 0 ? 1.5 : 1) * (0.94 + 0.12 * Math.random());
       const p = bunkerPort(Math.atan2(t[1], t[0]) + (mi - (n - 1) / 2) * 0.2);
       const b = makeBulletTyped(t[0], t[1], 0, 'marauder', p.x, p.y, p.z, 0.15);
       b.range = Math.min(18, Math.hypot(t[0] - p.x, t[1] - p.z)); b.trail = []; b.aim = t;   // the grenade comes down on its target
@@ -3899,7 +4038,6 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if(e.key==='b'||e.key==='B') G.openRoster();   // B = Bunker roster
     if(e.key==='q'||e.key==='Q') toggleGfx();      // Q = toggle graphics quality
     if(e.key==='m'||e.key==='M') openMenu();        // M = menu
-    if(e.key==='y'||e.key==='Y') toggleDayNight(); // Y = day/night toggle
     if(e.key==='Escape') openMenu();               // (roster/menu/cheat cases handled above)
     // Secret cheat sequence
     _cheatBuf = (_cheatBuf + e.key.toLowerCase()).slice(-4);
@@ -4315,13 +4453,13 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     // ── Command card: abilities ──
     const airBlocked=airCD>0||ammo>0||wavePhase!=='combat';
     _cmdState('cmd-air',{disabled:airBlocked, ready:!airBlocked, cd:airCD>0?airCD/strikeCooldown():0, cdText:airCD>0?Math.ceil(airCD):''});
-    const nukeLocked=wave<CFG.nuke_wave, nukeReady=!nukeLocked&&nukeCD===0&&!_nukeInFlight;
+    const nukeLocked=wave<CFG.nuke_wave, [nukeM,nukeG]=nukeCost(), nukeReady=!nukeLocked&&nukeCD===0&&!_nukeInFlight&&minerals>=nukeM&&gas>=nukeG;
     const stimOn=stimT>0, stimReady=stimUnlocked()&&!stimOn&&(!stimCost()||bunkerHp>stimCost())&&wavePhase==='combat';
     _cmdState('cmd-stim',{disabled:!stimReady&&!stimOn, ready:stimReady,
       cd:stimOn?stimT/CFG.stim_duration:!stimUnlocked()?1:0, cdText:stimOn?Math.ceil(stimT):!stimUnlocked()?stimNeed()+'M':''});
     $('cmd-stim')?.classList.toggle('stim-on',stimOn);
     $('cmd-stim')?.classList.toggle('autocast',stimAuto);   // SC2's autocast mark (css)
-    $('cmd-roster')?.classList.toggle('ready',gameMode==='endless'&&wavePhase!=='combat'&&phase==='playing'&&armoryAffordable());   // Endless: shop before the next wave
+    $('cmd-roster')?.classList.toggle('ready',wavePhase!=='combat'&&phase==='playing'&&armoryAffordable());   // shop before the next wave
     _cmdState('cmd-nuke',{disabled:!nukeReady, ready:nukeReady,
       cd:nukeLocked?1:nukeCD>0?nukeCD/nukeCooldown():0, cdText:nukeLocked?'W'+CFG.nuke_wave:nukeCD>0?Math.ceil(nukeCD):''});
 
@@ -4352,8 +4490,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   const CMD_INFO = {
     air:    { t:'AIRSTRIKE', k:'R', d:'A Viking fires a missile at every enemy cluster and drops an ammo crate by the bunker — your reload once the magazine is empty.' },
     stim:   { t:'STIMPACK', k:'T', d:'Unlocked by six Marines in the bunker (fewer with Super Stimpack\'s tiers: 4, 2, 1). For 11 s the Marines and Marauders fire 50% faster (Marines: an extra round every other volley, no extra ammo). Costs 10 HP per Marine and 20 per Marauder, paid by the bunker — free and repairing with the Super Stimpack research, which also lets you right-click it for autocast: it stims whenever you fire (a gold light runs round the button).' },
-    nuke:   { t:'NUKE', k:'N', d:'Tactical nuke on the centre of the swarm after a 2-second warning. Wipes out everything in a huge radius.' },
-    roster: { t:'BUNKER ROSTER', k:'B', d:'Hire Marines, Marauders and Ghosts (6 slots) and research their upgrades. In Endless its armory sells more HP, damage, ammo and shorter strike / nuke cooldowns. The game pauses while it is open.' },
+    nuke:   { t:'NUKE', k:'N', d:'Tactical nuke on the centre of the swarm after a 2-second warning. Wipes out everything in a huge radius. Its price rises with the wave and with each nuke already launched in this wave; Fleet logistics in the armory brings it down, to 100 minerals and 100 gas at the least.' },
+    roster: { t:'BUNKER ROSTER', k:'B', d:'Hire Marines, Marauders and Ghosts (6 slots) and research their upgrades. Its armory sells more HP, damage, ammo and shorter strike / nuke cooldowns, again and again. The game pauses while it is open.' },
     view:   { t:'RESET VIEW', k:'HOME', d:'Back to the overview. Mouse wheel or + / − zooms in on the bunker; Insert / Delete rotate the view 90°.' },
     menu:   { t:'MENU', k:'M', d:'Save / load, graphics and sound, the controls, the tutorial, the main menu. The game pauses while it is open.' },
     dmg:    { t:'WEAPON DAMAGE', k:'1', d:'Every round from every unit hits harder.',
@@ -4402,8 +4540,12 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if(_tipCmd==='nuke'){
       if(wave<CFG.nuke_wave) warn='Unlocks at wave '+CFG.nuke_wave;
       else if(_nukeInFlight) warn='Launch in progress';
-      else if(nukeCD>0) warn='Recharging — '+Math.ceil(nukeCD)+' s';
-      else { warn='READY'; ok=true; }
+      else {
+        const [nm,ng]=nukeCost(), price='◆'+nm+' ▲'+ng;
+        if(nukeCD>0) warn='Recharging — '+Math.ceil(nukeCD)+' s · next: '+price;
+        else if(minerals<nm||gas<ng) warn='Needs '+price;
+        else { warn='READY — '+price; ok=true; }
+      }
     }
     _setHTML('cmd-tip', `<div class="tip-h"><span class="tip-t">${info.t}</span><span class="tip-k">${info.k}</span>${lv?`<span class="tip-lv">${lv}</span>`:''}</div>`+
       `<div class="tip-d">${info.d}</div>${fx?`<div class="tip-fx">${fx}</div>`:''}${cost}${warn?`<div class="tip-w"${ok?' style="color:var(--ok)"':''}>${warn}</div>`:''}`);
@@ -4528,6 +4670,10 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   // three r128 will not allocate an RGB float target (it asks for RGBA), and R11F_G11F_B10F takes only RGB: the upload's format is put right here
   const _glTexImage2D = _gl.texImage2D;
   _gl.texImage2D = function (...a) { if (a.length === 9 && a[2] === _gl.R11F_G11F_B10F) a[6] = _gl.RGB; return _glTexImage2D.apply(_gl, a); };
+  // three r128 resolves a multisampled target's depth and stencil as well, and nothing reads them. Colour only: on an Iris Xe at 720p
+  // (ANGLE on Direct3D 11) the scene pass falls from 14 ms to under 5, with the 4x MSAA kept
+  const _glBlit = _gl.blitFramebuffer;
+  _gl.blitFramebuffer = function (...a) { a[8] &= _gl.COLOR_BUFFER_BIT; return _glBlit.apply(_gl, a); };
   if (_post.ok) for (const m of [_postPre, _postDown, _postUp, _postComp]) { _postTri.material = m; renderer.compile(_postTri, _postCam); }   // no hitch on the first frame
   // A target: the scene's has depth (24-bit with stencil: three's depth-only buffer is 16-bit) and 4x MSAA on HIGH
   function _postTarget(w, h, fmt, sceneRT) {
@@ -4556,6 +4702,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   // the post off for the session
   function _postEnsure() {
     const v = renderer.getDrawingBufferSize(_postV), q = POST_Q[gfxQuality];
+    v.x = Math.max(16, Math.round(v.x * _aa.scale)); v.y = Math.max(16, Math.round(v.y * _aa.scale));   // (the composite stretches it over the canvas)
     if (!_post.on) { _postFree(); return; }
     if (_post.rt && v.x === _post.w && v.y === _post.h && q === _post.q) return;
     _postFree();
@@ -4583,29 +4730,79 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     renderer.setRenderTarget(dst);
     renderer.render(_postTri, _postCam);
   }
-  // 4x MSAA costs an integrated GPU some 10 ms a frame (Iris Xe at 720p: 30 ms with it, 19 ms without, the rest of HIGH
-  // keeping 50 FPS). Under 45 FPS for two windows of 4 s with it on: off, for the session. (Frames over 250 ms are not
-  // counted: a hidden tab, a hitch)
-  const _aa = { t: 0, n: 0, last: 0, slow: 0 };
+  // Automatic resolution (Menu → Settings, stored, on by default). Under 50 FPS for two windows of 3 s the 3D scene drops to 85%,
+  // then 70% of the resolution, then gives up 4x MSAA, for the session; the HUD stays sharp. (Frames over 250 ms are not counted: a
+  // hidden tab, a hitch)
+  const AUTORES_KEY = 'dotd_autores';
+  const _aa = { t: 0, n: 0, last: 0, slow: 0, scale: 1, on: (() => { try { return localStorage.getItem(AUTORES_KEY) !== '0'; } catch (e) { return true; } })() };
   function _aaWatch() {
     const q = _post.q, now = performance.now(), d = now - _aa.last;
     _aa.last = now;
-    if (!q || !q.samples || d > 250) return;
+    if (!_aa.on || !q || d > 250 || gfxQuality !== 'HIGH' || (!q.samples && _aa.scale <= 0.7)) return;
     _aa.t += d; _aa.n++;
-    if (_aa.t < 4000) return;
-    _aa.slow = _aa.t / _aa.n > 1000 / 45 ? _aa.slow + 1 : 0;
+    if (_aa.t < 3000) return;
+    _aa.slow = _aa.t / _aa.n > 1000 / 50 ? _aa.slow + 1 : 0;
     _aa.t = _aa.n = 0;
     if (_aa.slow < 2) return;
-    q.samples = 0; _postFree(); _postEnsure();
-    console.info('Post-processing: under 45 FPS with 4x MSAA: drawing without it');
+    _aa.slow = 0;
+    if (_aa.scale > 0.7) _aa.scale = _aa.scale > 0.85 ? 0.85 : 0.7;
+    else q.samples = 0;
+    _postFree(); _postEnsure();
+    console.info(`Auto resolution: ${q.samples}x MSAA, 3D at ${Math.round(_aa.scale * 100)}%`);
+  }
+  function setAutoRes(on) {
+    _aa.on = !!on; _store.set(AUTORES_KEY, on ? '1' : '0');
+    $('menu-autores-cb').checked = _aa.on;
+    if (_aa.on) return;
+    _aa.scale = 1; _aa.slow = _aa.t = _aa.n = 0; POST_Q.HIGH.samples = 4;
+    _postFree(); _postEnsure();
+  }
+  // The ground is the dearest thing drawn (seven reads and its arithmetic for nearly every pixel), and the camera moves only as the
+  // player zooms or turns it: its dry colour and slope are kept per pixel once the view has held still for two frames (two passes,
+  // RGBA16F), and its shader reads those instead. The same values: no pop. Float targets only (the post path's)
+  const _gc = { baked: false, still: 0, w: 0, h: 0, last: new THREE.Matrix4(), m: new THREE.Matrix4(), rt: [], scene: null, mesh: null, mat: null };
+  function _bakeGround() {
+    const U = _groundU;
+    U.groundCached.value = 0;
+    if (gfxQuality !== 'HIGH' || !groundMesh || !_post.rt) return;
+    camera.updateMatrixWorld();
+    _gc.m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorld);
+    const w = _post.rt.width, h = _post.rt.height;
+    if (!_gc.m.equals(_gc.last) || w !== _gc.w || h !== _gc.h) { _gc.last.copy(_gc.m); _gc.w = w; _gc.h = h; _gc.still = 0; _gc.baked = false; return; }
+    if (!_gc.baked) {
+      if (++_gc.still < 2) return;
+      if (!_gc.scene) {
+        const vs = 'varying vec3 vGroundW;\nvoid main() { vec4 w = modelMatrix * vec4( position, 1.0 ); vGroundW = w.xyz; gl_Position = projectionMatrix * viewMatrix * w; }';
+        const fs = out => '#define NOISE_LOD( t, u, l ) textureLod( t, u, l )\n' + _GROUND_READ_FS + _GROUND_CORE + `varying vec3 vGroundW;
+void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroundW.xz ) ), length( dFdy( vGroundW.xz ) ) ) ); gl_FragColor = ${out}; }`;
+        _gc.mat = ['vec4( G.alb, G.dirt )', 'vec4( G.N.x, G.N.z, 0.0, 1.0 )'].map(out => new THREE.ShaderMaterial({ uniforms: U, vertexShader: vs, fragmentShader: fs(out), blending: THREE.NoBlending, depthTest: false, depthWrite: false, fog: false, toneMapped: false }));
+        _gc.mesh = new THREE.Mesh(groundMesh.geometry, _gc.mat[0]);
+        _gc.mesh.rotation.copy(groundMesh.rotation); _gc.mesh.position.copy(groundMesh.position); _gc.mesh.frustumCulled = false;
+        _gc.scene = new THREE.Scene(); _gc.scene.add(_gc.mesh);
+      }
+      if (!_gc.rt[0] || _gc.rt[0].width !== w || _gc.rt[0].height !== h) {
+        _gc.rt.forEach(t => t.dispose());
+        _gc.rt = [0, 1].map(() => new THREE.WebGLRenderTarget(w, h, { format: THREE.RGBAFormat, type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false, stencilBuffer: false }));
+      }
+      for (let i = 0; i < 2; i++) {
+        _gc.mesh.material = _gc.mat[i];
+        renderer.setRenderTarget(_gc.rt[i]);
+        renderer.render(_gc.scene, camera);
+      }
+      U.gc0.value = _gc.rt[0].texture; U.gc1.value = _gc.rt[1].texture;
+      _gc.baked = true;
+    }
+    U.groundCached.value = 1;
   }
   // The frame: through the post passes when they run, else straight to the canvas
   function renderFrame() {
     syncGround();
     _aaWatch();
+    if (gfxQuality === 'HIGH') renderer.shadowMap.autoUpdate = _sunLight.intensity > 0;   // (no sun at night: no shadow map to draw)
     _hdr = !!_post.rt;
-    if (!_hdr) { renderer.setRenderTarget(null); renderScene(); return; }
+    if (!_hdr) { _groundU.groundCached.value = 0; renderer.setRenderTarget(null); renderScene(); return; }
     const rt = _post.rt, B = _post.bloom, n = B.length, u = _postComp.uniforms;
+    _bakeGround();
     renderer.setRenderTarget(rt);
     renderer.render(scene, camera);   // (and resolves the MSAA)
     // the heat haze: its offsets, by which the composite bends the scene
@@ -4961,25 +5158,12 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     }
   }
 
-  // ── Day/Night cycle update ───────────────────────────────────────────────
-  // Night factor at time t of the cycle: 0 through the day, eased up through dusk,
-  // 1 through the night, eased down through dawn (smootherstep: no jump in the
-  // level, its rate or its acceleration). The old curve snapped from full night
-  // back to day at the end of dusk, then faded in again.
-  function _dnCycleFactor(t) {
-    const ease = x => x * x * x * (x * (x * 6 - 15) + 10);
-    if (t < DN_DAY) return 0;
-    if (t < DN_DAY + DN_FADE) return ease((t - DN_DAY) / DN_FADE);
-    if (t < DN_DAY + DN_FADE + DN_NIGHT) return 1;
-    return 1 - ease((t - DN_DAY - DN_FADE - DN_NIGHT) / DN_FADE);
-  }
+  // ── Day / night ──────────────────────────────────────────────────────────
+  // The night falls or lifts in the break before its wave (smootherstep: no jump in the level, its rate or its acceleration)
   function updateDayNight(dt) {
-    if (dnEnabled) _dnTime = (_dnTime + dt) % DN_CYCLE;
-    const target = dnEnabled ? _dnCycleFactor(_dnTime) : 0;
-    // Slew-limited: the cycle itself moves slower than this, so only switching
-    // the cycle on / off is blended (the night lifts over DN_SLEW s, not at once)
-    const step = dt / DN_SLEW;
-    _dnFactor = Math.max(_dnFactor - step, Math.min(_dnFactor + step, target));
+    const step = dt / DN_TURN;
+    _dnT = _dnT < _dnTarget ? Math.min(_dnTarget, _dnT + step) : Math.max(_dnTarget, _dnT - step);
+    _dnFactor = _dnT * _dnT * _dnT * (_dnT * (_dnT * 6 - 15) + 10);
     // Lights and fog follow the effective factor (a burning flare lifts the
     // night); the DAY / NIGHT label and the flare trigger keep the true one
     const fe = _dnEffFactor();
@@ -5043,27 +5227,42 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     _wxLights(f);   // under the clouds (weather)
   }
 
+  // ── A wave's sky ─────────────────────────────────────────────────────────
+  // The campaign's fifteen waves are levels, each under its own sky (Beach Head's nights, Plants vs. Zombies' maps; our pool is the
+  // rain): c clear, o overcast, d a drizzle, p a downpour by day; the capitals by night. The desktop's table
+  const SKY_CAMPAIGN = { daylight: 'ccodccocpcodpcp', daynight: 'ccodcCCcpCoDpCP' };
+  // { night, rain }: rain 0 clear · 1 overcast · 2 a drizzle · 3 a downpour
+  function waveSky(w) {
+    if (w >= 1 && w <= CFG.victory_wave) {
+      const c = SKY_CAMPAIGN[theatre][w - 1], l = c.toLowerCase();
+      return { night: c !== l, rain: l === 'o' ? 1 : l === 'd' ? 2 : l === 'p' ? 3 : 0 };
+    }
+    // Endless: from the game's own seed, so a loaded game has the same forecast
+    let h = (skySeed ^ Math.imul(w, 2654435761)) >>> 0;
+    h = (h ^ (h >>> 13)) >>> 0;
+    h = Math.imul(h, 1274126177) >>> 0;
+    h = (h ^ (h >>> 16)) >>> 0;
+    const a = h % 100, b = (h >>> 8) % 100;
+    return { night: theatre === 'daynight' && a < 45, rain: b < 18 ? 3 : b < 34 ? 2 : b < 50 ? 1 : 0 };
+  }
+  function applySky(s, instant) {
+    _dnTarget = s.night ? 1 : 0;
+    if (instant) _dnT = _dnFactor = _dnTarget;
+    const want = s.rain >= 2 ? 'rain' : s.rain === 1 ? 'overcast' : 'clear';
+    if (want !== wx.sky || (want === 'rain' && (s.rain === 3) !== wxHeavy())) wxSet(want, s.rain === 3, instant);
+    if (instant) { _dnLitF = _dnEffFactor(); _applyDNLights(_dnLitF); }
+  }
+  const SKY_RAIN = ['', ' · OVERCAST', ' · DRIZZLE', ' · DOWNPOUR'];
+  const skyLabel = s => (s.night ? '☽ NIGHT' : '☀ DAY') + SKY_RAIN[s.rain];
+  // The top bar: the sky now (DUSK and DAWN while it turns), and the next wave's
   function _updateDNIndicator() {
     const el = document.getElementById('tv-dn');
     if (!el) return;
-    // (a night still lifting after the cycle restarted at day reads DAWN)
-    const text = !dnEnabled ? '' : (_dnFactor > 0.5 ? '☽ ' : '☀ ') + (_dnFactor > 0.97 ? 'NIGHT' : _dnFactor < 0.03 ? 'DAY'
-      : _dnTime >= DN_DAY && _dnTime < DN_DAY + DN_FADE + DN_NIGHT ? 'DUSK' : 'DAWN');
-    // the countdown to the next phase: "DUSK IN 0:42" (day), "NIGHT IN" (dusk), "DAWN IN" (night), "DAY IN" (dawn)
+    const text = (_dnFactor > 0.97 ? '☽ NIGHT' : _dnFactor < 0.03 ? '☀ DAY' : _dnTarget > 0.5 ? '☽ DUSK' : '☀ DAWN')
+      + (wx.sky === 'rain' ? (wxHeavy() ? ' · DOWNPOUR' : ' · DRIZZLE') : wx.sky === 'overcast' ? ' · OVERCAST' : '');
     const next = document.getElementById('tv-dn-next');
     if (next) {
-      const ends = [DN_DAY, DN_DAY + DN_FADE, DN_DAY + DN_FADE + DN_NIGHT, DN_CYCLE], names = ['DUSK', 'NIGHT', 'DAWN', 'DAY'];
-      let k = 0;
-      while (k < 3 && _dnTime >= ends[k]) k++;
-      let until = ends[k] - _dnTime;
-      // the label turns NIGHT / DAY at factor 0.97 / 0.03, a moment before that phase begins:
-      // then count to the one after ("NIGHT IN 0:01" under NIGHT read wrong)
-      if (names[k] === (_dnFactor > 0.97 ? 'NIGHT' : _dnFactor < 0.03 ? 'DAY' : '')) {
-        until = k < 3 ? ends[k + 1] - _dnTime : DN_CYCLE + ends[0] - _dnTime;
-        k = (k + 1) % 4;
-      }
-      const sec = Math.max(0, Math.ceil(until));
-      const nt = !dnEnabled ? '' : `${names[k]} IN ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+      const nt = gameMode === 'campaign' && wave >= CFG.victory_wave ? '' : 'NEXT: ' + skyLabel(waveSky(wave + 1)) + (isSwarmWave(wave + 1) ? ' · SWARM' : '');   // (time to save a nuke)
       if (next.textContent !== nt) next.textContent = nt;
     }
     if (el.textContent === text) return;   // called every frame
@@ -5071,83 +5270,50 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     el.style.color = _dnFactor > 0.5 ? '#8899ff' : '#ffcc44';
   }
 
-  function toggleDayNight() {
-    dnEnabled = !dnEnabled;
-    if (!dnEnabled) {
-      // Back to day: the night lifts over DN_SLEW s (updateDayNight — run by the
-      // loop while the cycle is off even when the game is paused or over)
-      _dnTime = 0;
-      _updateDNIndicator();
-    }
-    // Update MENU checkbox
-    const cb = document.getElementById('menu-dn-cb');
-    if (cb) cb.checked = dnEnabled;
-    // Show/hide top-bar indicator wrapper
-    const wrap = document.getElementById('tv-dn-wrap');
-    if (wrap) wrap.style.display = dnEnabled ? '' : 'none';
-    if (!dnEnabled) { const lbl = document.getElementById('tv-dn'); if(lbl) lbl.textContent=''; }
-    setStatus(dnEnabled ? 'Day/Night cycle ON — [Y] to toggle' : 'Day/Night cycle OFF');
-  }
-
   // ── Weather ──────────────────────────────────────────────────────────────
-  // The sky wanders at random between clear, clouded over and rain (desktop
-  // weather.cpp), on game time: live frames only. Rounds miss in the rain
-  // (rainMiss), the clouds dim and grey the light (_wxLights), the rain falls
-  // in a box over the field and is heard (RainBed). Every game starts clear;
-  // not saved. Menu → Settings switches it (stored, on by default).
-  const WX_KEY = 'dotd_weather', RAIN_MISS = [0.05, 0.10];
-  let wxOn = (() => { try { return localStorage.getItem(WX_KEY) !== '0'; } catch (e) { return true; } })();   // (_store is defined further down)
-  const wx = { sky: 'clear', hold: 0, afterRain: false, showerMax: 0, spell: 0, cloud: 0, rain: 0,
-               windX: 0, windZ: 0, blownX: 0, blownZ: 0, driftX: 0, driftZ: 0, fall: 0, t: 0, wet: 0, puddle: 0 };   // spell: before a shower may turn · blown / fall: the drops (m)
+  // Each wave's sky (waveSky) sets it, on game time: live frames only (desktop weather.cpp). Rounds miss in the rain
+  // (rainMiss), the clouds dim and grey the light (_wxLights), the rain falls in a box over the field and is heard (RainBed)
+  const RAIN_MISS = [0.05, 0.10];
+  const wx = { sky: 'clear', showerMax: 0, cloud: 0, rain: 0,
+               windX: 0, windZ: 0, blownX: 0, blownZ: 0, driftX: 0, driftZ: 0, fall: 0, t: 0, wet: 0, puddle: 0 };   // blown / fall: the drops (m)
   let _wxLitC = 0, _wxLitR = 0, _wxSaid = 'CLEAR';   // the cloud / rain the lights were last applied at · the sky last announced
   const _uni = (a, b) => a + Math.random() * (b - a);
   const wxHeavy = () => wx.showerMax >= 0.5;
   const wxName = () => wx.sky === 'rain' ? (wxHeavy() ? 'DOWNPOUR' : 'DRIZZLE') : wx.sky === 'overcast' ? 'OVERCAST' : 'CLEAR';
   function _wxWind(s) { const a = _uni(0, 6.2832); wx.windX = Math.cos(a) * s; wx.windZ = Math.sin(a) * s; }
-  function wxReset() {               // a new game (and the title): clear and dry, the first change a while off
-    Object.assign(wx, { sky: 'clear', hold: _uni(45, 100), afterRain: false, showerMax: 0, spell: 0, cloud: 0, rain: 0, blownX: 0, blownZ: 0, fall: 0, t: 0 });
+  function wxReset() {               // a new game (and the title): clear and dry
+    Object.assign(wx, { sky: 'clear', showerMax: 0, cloud: 0, rain: 0, blownX: 0, blownZ: 0, fall: 0, t: 0 });
     _wxWind(1.2); _wxSaid = 'CLEAR';
     if (_wxLitC || _wxLitR) _applyDNLights(_dnLitF);
     syncRain();
   }
-  function wxPour(hard) { wx.showerMax = hard ? _uni(0.7, 1) : _uni(0.15, 0.35); wx.spell = _uni(15, 30); }   // a downpour, or a drizzle
-  function wxSet(sky) {
-    wx.sky = sky; wx.afterRain = false;
-    if (sky === 'rain') {             // a drizzle or a downpour (even odds), its wind (harder in a downpour), how long it lasts
-      wxPour(Math.random() < 0.5);
+  // hard: a downpour, else a drizzle (rain only: its wind too, harder in a downpour). instant: no easing in
+  function wxSet(sky, hard, instant) {
+    wx.sky = sky;
+    if (sky === 'rain') {
+      wx.showerMax = hard ? _uni(0.7, 1) : _uni(0.15, 0.35);
       _wxWind(wxHeavy() ? _uni(1.2, 3.2) : _uni(0.3, 1.2));
-      wx.hold = _uni(40, 90);
-    } else wx.hold = sky === 'clear' ? _uni(80, 170) : _uni(25, 45);
-  }
-  // Clear (80-170 s) → overcast (25-45 s) → a shower half the time (40-90 s), else clear; after a shower
-  // it stays overcast a while (20-40 s) and rains again a quarter of the time. Every 15-30 s a shower may
-  // turn from a drizzle to a downpour or back (two times in five). Off: the sky clears
-  function wxUpdate(dt) {
-    const on = wxOn;
-    wx.t += dt;
-    if (on && wx.sky === 'rain' && (wx.spell -= dt) <= 0) { if (Math.random() < 0.4) wxPour(!wxHeavy()); else wx.spell = _uni(15, 30); }
-    if (on && (wx.hold -= dt) <= 0) {
-      if (wx.sky === 'clear') { wx.sky = 'overcast'; wx.afterRain = false; wx.hold = _uni(25, 45); }
-      else if (wx.sky === 'overcast') wxSet(Math.random() < (wx.afterRain ? 0.25 : 0.5) ? 'rain' : 'clear');
-      else { wx.sky = 'overcast'; wx.afterRain = true; wx.hold = _uni(20, 40); }
     }
-    // the clouds roll in (and out) over ~18 s; the rain starts once they are in, comes up over ~6 s
-    // and stops over ~4 s, wavering a little as it falls
-    wx.cloud += Math.max(-dt / 18, Math.min(dt / 18, (on && wx.sky !== 'clear' ? 1 : 0) - wx.cloud));
+    if (instant) { wx.cloud = sky === 'clear' ? 0 : 1; wx.rain = sky === 'rain' ? wx.showerMax : 0; }
+  }
+  // The sky turns in the break before a wave: the clouds roll in (and out) over ~7 s; the rain starts once they are in,
+  // comes up over ~4 s (a drizzle swells into a downpour as fast) and stops over ~4 s, wavering a little as it falls
+  function wxUpdate(dt) {
+    wx.t += dt;
+    wx.cloud += Math.max(-dt / 7, Math.min(dt / 7, (wx.sky !== 'clear' ? 1 : 0) - wx.cloud));
     const waver = 0.88 + 0.12 * Math.sin(0.31 * wx.t) * Math.sin(0.13 * wx.t + 1);
-    wx.rain += Math.max(-dt / 4, Math.min(dt / 6, (on && wx.sky === 'rain' && wx.cloud > 0.75 ? wx.showerMax * waver : 0) - wx.rain));
+    wx.rain += Math.max(-dt / 4, Math.min(dt / 4, (wx.sky === 'rain' && wx.cloud > 0.6 ? wx.showerMax * waver : 0) - wx.rain));
     wx.blownX += wx.windX * dt; wx.blownZ += wx.windZ * dt;
     wx.fall += (5 + 7 * wx.rain) * dt;  // a drizzle's fine drops fall at ~6 m/s, a downpour's at 12
     wx.driftX += wx.windX * 1.5 * dt; wx.driftZ += wx.windZ * 1.5 * dt;   // the clouds drift with the wind
     // the ground: soaked after ~12 s of a downpour, the puddles full after ~45 s more; once the rain stops it dries in
-    // about a minute under the sun (two under clouds), the puddles seep away slower. Switched off, four times as fast
-    const off = on ? 1 : 4;
+    // about a minute under the sun (two under clouds), the puddles seep away slower
     if (wx.rain > 0.02) {
       wx.wet = Math.min(1, wx.wet + dt * wx.rain / 12);
       wx.puddle = Math.min(1, wx.puddle + dt * wx.rain * wx.wet / 45);
     } else {
-      wx.wet = Math.max(0, wx.wet - dt * off / (50 + 70 * wx.cloud));
-      wx.puddle = Math.max(0, wx.puddle - dt * off / (100 + 100 * wx.cloud));
+      wx.wet = Math.max(0, wx.wet - dt / (50 + 70 * wx.cloud));
+      wx.puddle = Math.max(0, wx.puddle - dt / (100 + 100 * wx.cloud));
     }
   }
   function updateWeather(dt) {        // a live frame: the sky, the light under it, the rain
@@ -5165,12 +5331,6 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   function rainMiss() {
     const r = wx.rain, s = Math.max(0, Math.min(1, (r - 0.35) / 0.35));
     return r < 0.05 ? 0 : RAIN_MISS[0] + (RAIN_MISS[1] - RAIN_MISS[0]) * s * s * (3 - 2 * s);
-  }
-  function setWeather(on) {           // Menu → Settings
-    wxOn = !!on; _store.set(WX_KEY, wxOn ? '1' : '0');
-    if (wxOn) RainBed.prime();
-    $('menu-wx-cb').checked = wxOn;
-    setStatus(wxOn ? 'Weather ON — clear skies, clouds, now and then rain' : 'Weather OFF — the sky clears');
   }
   // After _applyDNLights (day / night, a flare's or a nuke's lift): clouds dim the sun and grey it,
   // flatten the ambient toward grey and dim it a little, dim the fill as it fades at dusk; a downpour
@@ -5303,10 +5463,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if(phase!=='playing'||isPaused()){
       // Game clock, survival timer and scheduled events are frozen here
       if(phase==='playing'){ syncEnemyPools(); syncBullets(); updateParticles(_glow,0); updateParticles(_smoke,0); }
-      // A night switched off still lifts behind the menu, title and results (it is
-      // not game time: with the cycle off nothing else moves). Left frozen, the
-      // title showed the night and the next game started in it.
-      if(!dnEnabled&&_dnFactor>0) updateDayNight(dt);
+      // Back on the title the night lifts (it is not game time: nothing else moves there)
+      if(phase!=='playing'&&_dnT!==_dnTarget) updateDayNight(dt);
       drawCH();tickPortrait(dt);renderFrame();return;
     }
     _gameT+=dt;
@@ -5342,14 +5500,12 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     beams=beams.filter(b=>b.life>0);
 
     // Spawn
-    if(wavePhase==='combat'&&spawnQueue.length>0){
-      spawnTimer-=dt;
-      if(spawnTimer<=0){
-        const type=spawnQueue.pop();
-        const r=13+Math.random()*2,a=Math.random()*Math.PI*2;
-        if(type==='z') zerglings.push(makeZergling(Math.cos(a)*r,Math.sin(a)*r));
-        else           roaches.push(makeRoach(Math.cos(a)*r,Math.sin(a)*r));
-        spawnTimer = type === 'r' ? spawnInterval * 1.6 : spawnInterval;
+    if(wavePhase==='combat'){
+      _waveT+=dt;
+      while(spawnQueue.length&&spawnQueue[spawnQueue.length-1].t<=_waveT){
+        const ev=spawnQueue.pop(), x=Math.cos(ev.angle)*ev.r, z=Math.sin(ev.angle)*ev.r;
+        if(ev.type==='z') zerglings.push(makeZergling(x,z));
+        else              roaches.push(makeRoach(x,z));
       }
     }
 
@@ -5412,13 +5568,14 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         e.mesh.rotation.y=Math.atan2(-ex,-ez);
       }
     });
+    crowdZerg(dt);
     zerglings=zerglings.filter(z=>!z.dead);
     roaches=roaches.filter(r=>!r.dead);
     updateAcids(dt);                                    // acid in flight (keeps going if its Roach died)
     if(bunkerHp<=0){gameOver();return;}
 
     // Bullets
-    const baseDmg=10*(1+dmgLvl*.6)*(1+CFG.endless_dmg*endlessWaves())*(1+CFG.armory_dmg*armory.dmg);
+    const baseDmg=baseDamage();
     // Tick slow debuff expiry (game time — slows don't run out while paused)
     slowedEnemies.forEach((v,uuid)=>{if(_gameT>v.until)slowedEnemies.delete(uuid);});
     const _fs=dt*60; // frame scale: movement tuned at 60fps, now Hz-independent
@@ -5557,7 +5714,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     set(k, v) { _mem[k] = String(v); try { localStorage.setItem(k, v); } catch (e) {} },
   };
   function endlessUnlocked() { return _store.get(ENDLESS_KEY) === '1'; }
-  function _bestEndless() { try { return JSON.parse(_store.get(BEST_KEY) || 'null'); } catch (e) { return null; } }
+  const _bestKey = () => BEST_KEY + (theatre === 'daynight' ? '_dn' : '');   // a record per theatre (the old key: the old all-day games)
+  function _bestEndless() { try { return JSON.parse(_store.get(_bestKey()) || 'null'); } catch (e) { return null; } }
 
   function gameOver(){
     achFlush();
@@ -5566,7 +5724,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     let record=false;
     if(gameMode==='endless'){
       const b=_bestEndless();
-      if(!b||wave>b.wave||(wave===b.wave&&score>b.score)){ _store.set(BEST_KEY,JSON.stringify({wave,score})); record=true; }
+      if(!b||wave>b.wave||(wave===b.wave&&score>b.score)){ _store.set(_bestKey(),JSON.stringify({wave,score})); record=true; }
     }
     showResults(false,false,record);
   }
@@ -5632,7 +5790,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     ['sensor3', 'EYES IN THE DARK', 'Research the Sensor Tower to level 3.', 3, 10, 'svg:sensor'],
     ['untouchable', 'UNTOUCHABLE', 'Clear wave 5 or later with no Zerg damage to the bunker.', 4, 20, 'btn-upgrade-terran-buildingarmor.png'],
     ['last_stand', 'LAST STAND', 'Clear a wave with the bunker below 10% HP.', 4, 20, 'btn-upgrade-terran-neosteelframe.png', '', 0, true],
-    ['night_watch', 'NIGHT WATCH', 'Clear a wave at night (Menu → Settings → day/night cycle).', 4, 10, 'svg:sensor'],
+    ['night_watch', 'NIGHT WATCH', 'Clear a wave at night.', 4, 10, 'svg:sensor'],
     ['marines_only', 'BAND OF BROTHERS', 'Win the campaign without hiring a Marauder or a Ghost.', 4, 50, 'svg:roster'],
     ['no_support', 'NO AIR SUPPORT', 'Win the campaign without calling an airstrike or a nuke.', 4, 50, 'svg:lock'],
   ].map(([id, name, desc, cat, points, icon, stat = '', goal = 0, hidden = false]) => ({ id, name, desc, cat, points, icon, stat, goal, hidden }));
@@ -5867,10 +6025,16 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     { id:'ghost', when:()=>wavePhase==='combat'&&roster.includes('ghost'), title:'GHOST',
       text:'Your Ghost fires with your volleys — click where it should shoot — with +150% damage to Light Zerg (Zerglings). Research Snipe in the roster ' +
            '(<kbd>B</kbd>) and it also snipes the most dangerous Zerg on its own every few seconds.' },
+    { id:'night', when:()=>wavePhase==='combat'&&_dnFactor>.9, title:'NIGHT',
+      text:'Night has fallen: only the ground by the bunker is lit, and the Zerg come out of the dark. Research the <b>Sensor Tower</b> in the roster (<kbd>B</kbd>) to see their blips further out. An airstrike\'s Viking drops a flare that lights the field, and a wave cleared at night pays 25% more.' },
+    { id:'rain', when:()=>wavePhase==='combat'&&wx.rain>.1, title:'RAIN',
+      text:'It is raining: some of your rounds miss, 5% in a drizzle, 10% in a downpour. Marauder grenades and Ghost snipes still strike. The next wave\'s sky is in the top bar.' },
+    { id:'swarm', when:()=>wavePhase==='combat'&&waveSwarm, title:'SWARM',
+      text:'A <b>SWARM</b> wave: far more Zerglings, each weaker, all at once from several sides. This is what Marauder blasts and the nuke are for.' },
     { id:'roach', when:()=>roaches.some(r=>!r.dead), title:'ROACHES',
       text:'Roaches are <b>Armored</b> and spit acid from range. Marauders deal Armored enemies double damage; armor (<kbd>2</kbd>) cuts the damage the bunker takes.' },
     { id:'nuke', when:()=>wave>=CFG.nuke_wave&&wavePhase==='combat'&&nukeCD<=0&&!_nukeInFlight, focus:['#cmd-nuke'], keys:['n'], title:'NUKE READY',
-      text:`From wave ${CFG.nuke_wave}, press <kbd>N</kbd> or click NUKE: a Ghost marks the middle of the swarm and the warhead wipes out everything in the blast. It recharges after each launch.` },
+      text:`From wave ${CFG.nuke_wave}, press <kbd>N</kbd> or click NUKE: a Ghost marks the middle of the swarm and the warhead wipes out everything in the blast. It recharges after each launch, costs minerals and gas, and each one in a wave costs more than the last (Fleet logistics in the armory brings the price down).` },
     { id:'hull', when:()=>wavePhase==='combat'&&bunkerHp<maxHp*0.5, focus:['#hp-bar'], title:'BUNKER DAMAGED',
       text:'Below half HP the bunker burns — if it falls, the game is lost. Armor reduces the damage; bunker hull level 3 mounts a Shrike turret and repairs itself.' },
     { id:'stim', when:()=>wavePhase==='combat'&&stimUnlocked()&&stimT<=0, focus:['#cmd-stim'], keys:['t'], title:'STIMPACK',
@@ -6014,12 +6178,18 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     closeRoster(); closeMenu(); closeCheat(); tutDismiss();
     phase='menu'; wavePhase='idle';
     $('tv-cheat').hidden=true;   // no game on: no CHEATS chip (updateHUD does not run on the title)
+    $('tv-dn-wrap').style.display='none'; _dnTarget=0;   // (the night lifts behind the title)
+    theatre=_store.get(THEATRE_KEY)==='daylight'?'daylight':'daynight';   // (a loaded game's went with it)
     const unlocked=endlessUnlocked(), best=_bestEndless();
     const auto=_readSave(AUTO_KEY), manual=_readSave(SAVE_KEY);
     _showCard(`<div class="ov-kicker">TERRAN DOMINION · BUNKER DEFENSE</div>
       <div class="ov-title">DEFENSE OF THE<br>DOMINION</div>
       <div class="ov-sub">Hold the bunker. Click to fire — the Marauders lob grenades on their own.</div>
       <div class="ov-modes">
+        <div class="ov-pair ov-theatre">
+          <button class="ov-btn ${theatre==='daylight'?'on':''}" onclick="G.setTheatre('daylight')"><span><span class="ob-t">☀ DAYLIGHT</span><span class="ob-d">Sun and rain, never dark</span></span></button>
+          <button class="ov-btn ${theatre==='daynight'?'on':''}" onclick="G.setTheatre('daynight')"><span><span class="ob-t">☽ DAY &amp; NIGHT</span><span class="ob-d">Some waves in the dark, better paid</span></span></button>
+        </div>
         <button class="ov-btn" data-play onclick="G.start('campaign')"><svg class="ico"><use href="#i-campaign"/></svg>
           <span><span class="ob-t">CAMPAIGN</span><span class="ob-d">Clear ${CFG.victory_wave} waves of the swarm to win</span></span></button>
         <button class="ov-btn gold" data-play data-locked="${unlocked?0:1}" ${unlocked?'':'disabled'} onclick="G.start('endless')"><svg class="ico"><use href="#i-${unlocked?'endless':'lock'}"/></svg>
@@ -6031,7 +6201,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         <div class="ov-pair"><button class="ov-btn" onclick="G.showHowTo()"><svg class="ico"><use href="#i-help"/></svg>
           <span><span class="ob-t">HOW TO PLAY</span><span class="ob-d">Rules, controls, units</span></span></button>
         <button class="ov-btn" onclick="G.menuTab('settings');G.openMenu()"><svg class="ico"><use href="#i-gfx"/></svg>
-          <span><span class="ob-t">SETTINGS</span><span class="ob-d">Graphics, sound, day/night</span></span></button></div>
+          <span><span class="ob-t">SETTINGS</span><span class="ob-d">Graphics, sound</span></span></button></div>
         <button class="ov-btn gold" onclick="G.showAchievements()"><svg class="ico"><use href="#i-trophy"/></svg>
           <span><span class="ob-t">ACHIEVEMENTS</span><span class="ob-d" id="ov-ach-sum">${_achSum()}</span></span></button>
       </div>
@@ -6052,7 +6222,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         <b>MONEY</b><span>Kills and cleared waves pay minerals and gas. Spend them on upgrades <kbd>1</kbd>–<kbd>4</kbd> (damage, armor, hull, ammo) and on units in the roster <kbd>B</kbd>, which pauses the game.</span>
         <b>UNITS</b><span>The bunker has 6 slots. <b>Marine</b> (1 slot): fires where you click, the cheapest. <b>Ghost</b> (2): fires where you click, +150% damage to Light; researches Snipe, which fires on its own. <b>Marauder</b> (2): fires on its own at the Zerg not slowed yet, a grenade that blasts and slows an area, double damage to Armored — every 3 grenades cost 1 round. You choose the unit that runs out for supply crates in the roster.</span>
         <b>POWERS</b><span><kbd>N</kbd> nuke from wave ${CFG.nuke_wave}. <kbd>T</kbd> Stimpack with six Marines (fewer with Super Stimpack's tiers), for Marines and Marauders. Bunker hull level 3: Shrike auto-turret and self-repair.</span>
-        <b>ZERG</b><span>Zerglings: fast, Light, bite the hull. Roaches from wave ${CFG.roach_wave}: Armored, spit acid from range. From wave ${CFG.metabolic_wave} the Zerglings run faster.</span>
+        <b>ZERG</b><span>Zerglings: fast, Light, bite the hull, come in packs. Roaches from wave ${CFG.roach_wave}: Armored, spit acid from range. From wave ${CFG.metabolic_wave} the Zerglings run faster. Every third wave from the sixth is a <b>SWARM</b>: far more Zerglings, weaker, all at once — blasts and nukes earn their keep.</span>
+        <b>SKY</b><span>Each wave has its sky; the top bar tells you the next. Choose on the title screen: <b>Daylight</b>, or <b>Day &amp; Night</b>, where some waves are fought in the dark: only the ground by the bunker is lit, the Sensor Tower shows what is coming, a Viking drops a flare, and the wave pays 25% more. Rain: rounds miss, 5% in a drizzle, 10% in a downpour (grenades and snipes do not).</span>
       </div>
       ${_KEYS_HTML}
       <label class="menu-check ov-tut"><input type="checkbox" id="ov-tut-cb" ${_tut.on ? 'checked' : ''} onchange="G.setTutorial(this.checked)">TUTORIAL HINTS IN GAME — pause on each new mechanic</label>
@@ -6102,17 +6273,25 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         <button class="ov-btn" onclick="G.showTitle()"><svg class="ico"><use href="#i-home"/></svg><span class="ob-t">MAIN MENU</span></button></div>`);
   }
 
+  function setTheatre(t){
+    if(phase!=='menu'||(t!=='daylight'&&t!=='daynight')) return;
+    _store.set(THEATRE_KEY,t);
+    showTitle();
+  }
   // mode: 'campaign' | 'endless' (needs the unlock) | omitted = keep the current mode
   function start(mode){
     if(mode==='endless'&&gameMode!=='endless'&&!endlessUnlocked()) return; // replaying Endless never needs the flag
     if(mode==='campaign'||mode==='endless') gameMode=mode;
     SFX.ensure();             // start() always runs from a click — unlocks Web Audio
-    if(wxOn) RainBed.prime();
+    RainBed.prime();
     Music.play('battle');
     achFlush();               // the last game's lifetime stats
     clearEntities();
     newGameState();
     _run=_newRun(); _runAch=[]; _airRunKills=0;   // a new game (loadGame restores a saved one's flags after this)
+    skySeed=(Math.random()*4294967296)>>>0;
+    applySky(waveSky(wave),true);
+    $('tv-dn-wrap').style.display='';
     tutDismiss(); _tutNext=0;       // a hint left open (Restart / Load from the menu) goes with the old game
     $('overlay').style.display='none';
     phase='playing';
@@ -6217,7 +6396,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       if (key === 'snipe')      snipeUnlocked      = true;
       if (key === 'superstim')  superStimUnlocked  = true;
       if (key === 'sensor')     sensorLvl          = 1;
-      setStatus(key === 'sensor' ? def.tiers[0].desc : `${def.name} researched!`);
+      setStatus(key === 'sensor' ? def.tiers[0].desc : def.done || `${def.name} researched!`);
     } else {
       // Tier upgrade
       const td = def.tiers[tier];
@@ -6311,7 +6490,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         const cdLeft = Math.max(0, (snipeReady[ghostOrd] || 0) - _gameT);
         tag = cdLeft > 0 ? 'SNIPE ' + Math.ceil(cdLeft) + 's' : 'SNIPE RDY'; tagCol = cdLeft > 0 ? '#d6b0ff' : '#e08aff';
       }
-      if (utype === 'marauder' && concussiveUnlocked) { tag = 'SLOW' + (concussiveLvl > 0 ? ' A' + concussiveLvl : ''); tagCol = '#ffbd8a'; }
+      if (utype === 'marauder' && concussiveUnlocked) { tag = 'BLAST ' + MG_RADIUS[concussiveLvl].toFixed(1); tagCol = '#ffbd8a'; }
       if (utype === 'ghost') ghostOrd++;
       el.innerHTML = `<span>${def.label}</span><span class="rs-lbl"${tag ? ` style="color:${tagCol};opacity:1"` : ''}>${tag || def.name}</span><span class="rs-rem" title="Dismiss (75% refund)">✕</span>`;
       // Only the ✕ dismisses (a click anywhere on the tile used to, and a
@@ -6365,6 +6544,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     const upgRow = document.getElementById('upgrade-row');
     upgRow.innerHTML = '';
     Object.entries(UPGRADE_DEF).forEach(([key, def]) => {
+      if (key === 'sensor' && theatre !== 'daynight') return;   // (by day there are no blips to see)
       const [unlocked, curTierLvl] = { concussive: [concussiveUnlocked, concussiveLvl], snipe: [snipeUnlocked, snipeLvl], superstim: [superStimUnlocked, superStimLvl],
                                        sensor: [sensorLvl > 0, sensorLvl] }[key];
       const hasUnit    = !def.unit || roster.includes(def.unit);   // the Sensor Tower needs no unit
@@ -6376,8 +6556,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       let statusLine = def.desc;
       if (unlocked) {
         if (key === 'snipe')      statusLine = `CD: ${(SNIPE_CD[snipeLvl]/1000).toFixed(1)}s | tier ${snipeLvl}/3`;
-        if (key === 'concussive') statusLine = `Slow 40% for 2.5s | blast radius ${MG_RADIUS[concussiveLvl].toFixed(1)} | tier ${concussiveLvl}/3`;
-        if (key === 'superstim')  statusLine = `Stim: no HP cost, +${CFG.superstim_heal} HP/s to the bunker | needs ${superStimLvl >= 3 ? 'a Marine or a Marauder' : stimNeed() + ' Marines'} | tier ${superStimLvl}/3`;
+        if (key === 'concussive') statusLine = `Zerg caught in a blast run at ${BAL.mgSlow[1] * 100}% speed for ${BAL.mgSlowDur[1]} s. Blast radius ${MG_RADIUS[concussiveLvl].toFixed(1)} | tier ${concussiveLvl}/3`;
+        if (key === 'superstim')  statusLine = `Stim: no HP cost, +${CFG.superstim_heal[superStimLvl]} HP/s to the bunker | needs ${superStimLvl >= 3 ? 'a Marine or a Marauder' : stimNeed() + ' Marines'} | tier ${superStimLvl}/3`;
         if (key === 'sensor')     statusLine = `Blips out to ${SENSOR_RANGE[sensorLvl]} | tier ${sensorLvl}/3`;
       }
 
@@ -6393,7 +6573,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
         const td = def.tiers[curTierLvl];
         const [mc,gc2] = td.cost;
         const canAfford = minerals >= mc && gas >= gc2;
-        btnLabel = !canAfford ? `LV.${curTierLvl+1}: ${resHTML(mc, gc2)} — NEED ${shortfallHTML(mc, gc2)}` : `UPGRADE LV.${curTierLvl+1}  ${resHTML(mc, gc2)}`;
+        btnLabel = !canAfford ? `${def.tierShort ? def.tierShort(curTierLvl) : 'LV.' + (curTierLvl+1)}: ${resHTML(mc, gc2)} — NEED ${shortfallHTML(mc, gc2)}`
+                              : `${def.tierLabel ? def.tierLabel(curTierLvl) : 'UPGRADE LV.' + (curTierLvl+1)}  ${resHTML(mc, gc2)}`;
         btnDisabled = !canAfford;
         btnHandler = () => researchUpgrade(key, curTierLvl);
       } else {
@@ -6414,11 +6595,11 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       upgRow.appendChild(el);
     });
 
-    // ── Endless armory ──
-    if (gameMode === 'endless') {
+    // ── The armory ──
+    {
       const head = document.createElement('div');
       head.className = 'armory-head';
-      head.innerHTML = 'ENDLESS ARMORY <span>spend the surplus — each purchase costs 30% more (ammo 15%)</span>';
+      head.innerHTML = 'ARMORY <span>spend the surplus — each purchase costs 30% more (ammo 15%)</span>';
       upgRow.appendChild(head);
       const grid = document.createElement('div');
       grid.className = 'armory-grid';
@@ -6481,8 +6662,9 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   }
 
   // ── Ghost auto-snipe AI ──────────────────────────────────────────────────
-  // Priority: threat score = hp / distance. High-HP enemies near the bunker
-  // (e.g. Roach) are eliminated first — they deal the most damage if ignored.
+  // Priority: threat score = hp / distance, among the Zerg in sight (by night: lit, or a Sensor Tower blip). High-HP
+  // enemies near the bunker (e.g. Roach) come first — they deal the most damage if ignored. A heavy round, not a sure
+  // kill: a late Roach takes several.
   function ghostSnipeTick(dt) {
     if (!snipeUnlocked) return;
     const ghosts = roster.filter(u => u === 'ghost').length;
@@ -6492,7 +6674,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
 
       // Threat score = hp / distance: high-HP enemies close to the bunker are most dangerous.
       // This naturally prioritises tanky units (Roach > Zergling) that are near the base.
-      const alive = allEnemies().filter(e => !e.dead);
+      const alive = allEnemies().filter(e => !e.dead && (e.mesh.visible || _sensed(e)));
       if (!alive.length) return;
 
       const target = alive.reduce((best, e) => {
@@ -6515,12 +6697,18 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       scene.add(beam);
       beams.push({mesh: beam, life: 0.3});
 
-      killEnemy(target, true);
-      achSnipe();
+      const dmg = baseDamage() * UNIT_DEF.ghost.dmgMult * BAL.snipeMult;
+      target.hp -= dmg;
+      target.flash = 0.08;
+      hitText(target, Math.round(dmg).toString(), '#cc44ff');
       spawnParts(target.mesh.position.clone(), 0xcc44ff, 18);
-      const tname = target.type === 'r' ? 'Roach' : target.type === 'h' ? 'Hydralisk' : 'Zergling';
-      setStatus(`Ghost snipe — ${tname} eliminated!`);
       SFX.play('snipe');
+      if (target.hp <= 0) {
+        killEnemy(target, true);
+        achSnipe();
+        const tname = target.type === 'r' ? 'Roach' : target.type === 'h' ? 'Hydralisk' : 'Zergling';
+        setStatus(`Ghost snipe — ${tname} eliminated!`);
+      }
     }
   }
 
@@ -6648,11 +6836,10 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       }
     },
     'rain': {
-      desc: '🌧️ A downpour now (again: a drizzle, then clear)',
+      desc: '🌧️ A downpour now (again: a drizzle, then clear), till the next wave\'s sky',
       fn: () => {   // the clouds in at once (≥ .8): the downpour starts now; the status line follows (updateWeather)
-        if(!wxOn){ setStatus('Weather is off — Menu → Settings'); return; }
-        if(wx.sky!=='rain'){ wxSet('rain'); wxPour(true); wx.cloud=Math.max(wx.cloud,.8); }
-        else if(wxHeavy()) wxPour(false);
+        if(wx.sky!=='rain'){ wxSet('rain',true); wx.cloud=Math.max(wx.cloud,.8); }
+        else if(wxHeavy()) wxSet('rain',false);
         else wxSet('clear');
       }
     },
@@ -6816,10 +7003,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     _syncSoundUI();
     _syncSaveUI();
     _syncTutUI();
-    // Sync day/night checkbox
-    const cb = document.getElementById('menu-dn-cb');
-    if (cb) cb.checked = dnEnabled;
-    $('menu-wx-cb').checked = wxOn;
+    $('menu-autores-cb').checked = _aa.on;
     $('menu-dmg-cb').checked = dmgNumbersOn;
     $('menu-dust-cb').checked = dustOn;
   }
@@ -6857,7 +7041,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       concussiveUnlocked, snipeUnlocked, concussiveLvl, snipeLvl, superStimUnlocked, superStimLvl, stimAuto, runnerIdx, sensorLvl,
       armory: { ...armory }, endlessSteps,
       gfxQuality,
-      wavePhase, gameT: _gameT, victoryAchieved, gameMode,
+      wavePhase, gameT: _gameT, victoryAchieved, gameMode, theatre, skySeed,
       // An airstrike's crate run / a nuke countdown can't be saved; loading would
       // keep the cooldown but lose the effect (e.g. 0 ammo with R blocked for 20 s).
       airCD: (vikingActive || marines.some(m => m.cb)) ? 0 : airCD,
@@ -6880,7 +7064,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' d ago';
   }
   function _saveLabel(d) {
-    return (d.gameMode === 'endless' ? 'Endless' : 'Campaign') + ' · wave ' + d.wave + (d.wavePhase === 'combat' ? '' : ' cleared') + ' · ' + _ago(d.ts);
+    return (d.gameMode === 'endless' ? 'Endless' : 'Campaign') + (d.theatre === 'daynight' ? ' · Day & Night' : ' · Daylight') + ' · wave ' + d.wave + (d.wavePhase === 'combat' ? '' : ' cleared') + ' · ' + _ago(d.ts);
   }
   // Menu save panel: slot description, or the result of the last action
   function _syncSaveUI(msg, ok) {
@@ -6909,6 +7093,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     try {
       // Restart cleanly then restore state
       start();
+      theatre = d.theatre === 'daynight' ? 'daynight' : 'daylight';   // older saves: fought by day
+      skySeed = (d.skySeed || 0) >>> 0;
       wave = d.wave; score = d.score; kills = d.kills || 0;
       minerals = d.minerals; gas = d.gas;
       bunkerHp = d.bunkerHp; maxHp = d.maxHp;
@@ -6943,6 +7129,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       endlessSteps = typeof d.endlessSteps === 'number' ? d.endlessSteps : 0;
       reinforce();
       _slotSig = null;
+      applySky(waveSky(wave), true);
       startWave();
       updateHUD();
       _shrikeOD = shrikeOverdrive();   // a restored overdrive is not news: keep the "Loaded" message
@@ -6958,6 +7145,6 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   _syncSoundUI();
   showTitle();
   return {start, buy, buyArmory, skipAssetWait, doAirstrike, doNuke, doStim, toggleStimAuto, openCheat, closeCheat, submitCheat, toggleRoster, openRoster, closeRoster, toggleGfx, setGfx, openMenu, closeMenu,
-          saveGame, loadGame, toggleDayNight, setVolume, setMuted, setMusic, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode,
-          showHowTo, tutDismiss, tutNext, tutBack, tutSkip, startTour, setTutorial, replayTutorial, menuTab, setWeather, setDust, showAchievements, achTab, setDmgNumbers};
+          saveGame, loadGame, setTheatre, setAutoRes, setVolume, setMuted, setMusic, toggleMute, resetView, showTitle, continueEndless, mode: () => gameMode,
+          showHowTo, tutDismiss, tutNext, tutBack, tutSkip, startTour, setTutorial, replayTutorial, menuTab, setDust, showAchievements, achTab, setDmgNumbers};
 })();

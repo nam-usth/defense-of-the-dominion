@@ -53,6 +53,12 @@ THREE.ShaderChunk.fog_pars_fragment = `#ifdef USE_FOG
   }
   #endif
 #endif`;
+// no light, no shadow to read (the sun at night)
+{
+  const a = 'directLight.color *= all( bvec2( directLight.visible, receiveShadow ) ) ? getShadow( directionalShadowMap[ i ]';
+  if (!THREE.ShaderChunk.lights_fragment_begin.includes(a)) console.error('radial-fog: the sun\'s shadow read was not found');
+  else THREE.ShaderChunk.lights_fragment_begin = THREE.ShaderChunk.lights_fragment_begin.replace(a, 'directLight.color *= all( bvec3( directLight.visible, receiveShadow, dot( directLight.color, directLight.color ) > 0.0 ) ) ? getShadow( directionalShadowMap[ i ]');
+}
 // the sun (lit first: it casts the shadow) dims under the clouds
 {
   const c = THREE.ShaderChunk.lights_fragment_begin, at = c.indexOf('RE_Direct', c.indexOf('directionalLightShadows[ i ]'));
@@ -103,6 +109,17 @@ THREE.ShaderChunk.fog_fragment = `#ifdef USE_FOG
   #endif
   gl_FragColor.rgb = mix( gl_FragColor.rgb, FOG_TARGET, fogFactor * ( 1.0 - glowLift ) );
 #endif`;
+// The soft shadow filter reads the map 16 times, unpacking a depth each time, for every lit pixel, and most of the field
+// lies wholly in the sun: six reads spread over its footprint first, and if they agree that is the answer
+{
+  const c = THREE.ShaderChunk.shadowmap_pars_fragment, m = c.match(/shadow\s*=\s*\(\s*texture2DCompare\(\s*shadowMap,\s*uv,\s*shadowCoord\.z\s*\)/);
+  if (!m) console.error('radial-fog: the soft shadow filter was not found: it reads in full');
+  else THREE.ShaderChunk.shadowmap_pars_fragment = c.slice(0, m.index) + `float sAgree = texture2DCompare( shadowMap, uv + vec2( -dx, -dy ), shadowCoord.z ) + texture2DCompare( shadowMap, uv + vec2( 2.0 * dx, -dy ), shadowCoord.z )
+			+ texture2DCompare( shadowMap, uv + vec2( -dx, 2.0 * dy ), shadowCoord.z ) + texture2DCompare( shadowMap, uv + vec2( 2.0 * dx, 2.0 * dy ), shadowCoord.z )
+			+ texture2DCompare( shadowMap, uv, shadowCoord.z ) + texture2DCompare( shadowMap, uv + texelSize, shadowCoord.z );
+			if ( sAgree <= 0.0 || sAgree >= 6.0 ) shadow = sAgree / 6.0;
+			else ` + c.slice(m.index);
+}
 // Small lights that also lift the night fog around them (a Marauder grenade in flight, its burst),
 // up to 8: xyz + reach, rgb + how much of the night they lift. game.js fills them every frame.
 // Every material gets these shared uniforms through onBeforeCompile (wrapped, so a material's own

@@ -38,7 +38,7 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .tb-mode{font-size:11px;font-weight:700;letter-spacing:2px;padding:1px 8px;border:1px solid var(--edge);color:var(--mineral);background:rgba(40,90,150,.18)}
 .tb-mode.endless{color:var(--gold);border-color:#8a6a10;background:rgba(160,110,10,.16)}
 .tb-stat{flex-shrink:0}
-@media (max-width:1100px){ #topbar{gap:12px} #tv-mode,#tv-rank,.tb-stat:nth-child(4){display:none} }
+@media (max-width:1100px){ #topbar{gap:12px} #tv-mode,#tv-rank,#tv-dn-next,.tb-stat:nth-child(4){display:none} }
 @media (max-width:860px){ .tb-l{display:none} }
 #tv-status{flex:1;min-width:0;text-align:center;font-size:14px;font-weight:600;letter-spacing:.6px;color:var(--warn);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 0 8px rgba(255,170,60,.35)}
@@ -409,6 +409,11 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .ov-btn.gold{border-color:#8a6a10} .ov-btn.gold .ico,.ov-btn.gold .ob-t{color:var(--gold)}
 .ov-btn:disabled{cursor:not-allowed;filter:saturate(.2) brightness(.6)}
 .ov-pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}   /* title: HOW TO PLAY | SETTINGS */
+.ov-theatre .ov-btn{padding:7px 12px}   /* title: the sky a new game is fought under */
+.ov-theatre .ob-t{font-size:15px;letter-spacing:2px}
+.ov-theatre .ob-d{font-size:12px}
+.ov-theatre .ov-btn.on{border-color:var(--edge-hi);background:linear-gradient(180deg,#2e6fc0,#18427a)}
+.ov-theatre .ov-btn.on .ob-d{color:#d8e8fb}
 @media (max-width:520px){ .ov-pair{grid-template-columns:1fr} }
 .ov-row{display:flex;flex-wrap:wrap;gap:8px}   /* a phone: the buttons stack instead of running off the card */
 .ov-row .ov-btn{justify-content:center;text-align:center;width:auto;flex:1 1 auto}   /* the same padding on both (in halves, CONTINUE · ENDLESS filled its button edge to edge) */
