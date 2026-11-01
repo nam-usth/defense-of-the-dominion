@@ -3747,9 +3747,19 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     achWaveCleared(gameMode==='endless', wave, _waveHurt, maxHp>0?bunkerHp/maxHp:0, _dnFactor>=.5);
     const pay=_dnFactor>=.5?BAL.nightPay:1;   // the dark pays better
     const bm=Math.round((BAL.clearM0+BAL.clearMW*wave)*pay), bg=Math.round((BAL.clearG0+BAL.clearGW*wave)*pay);
-    minerals+=bm; gas+=bg; updateHUD();
+    minerals+=bm; gas+=bg;
+    // The rounds left turn into gas: a wave won on few rounds pays. (After a Viking's crate there are none to count: the magazine
+    // had been emptied. The resupply below fills it again)
+    const saved=waveCrates===0?ammo:0, savedGas=Math.round(saved*BAL.ammoGas);
+    let savedMsg='';
+    if(savedGas>0){
+      gas+=savedGas; ammo=0;
+      savedMsg=` +▲${savedGas} (${saved} rounds saved)`;
+      floatTexts.push({x:0,y:3.4,z:0,txt:`+${savedGas} GAS  ${saved} ROUNDS SAVED`,life:2600,maxLife:2600,color:'#7dffa0'});
+    }
+    updateHUD();
     applySky(waveSky(wave+1), false);   // the next wave's sky comes in over the break
-    setStatus(`Wave ${wave} cleared! +◆${bm} +▲${bg} — ${armoryAffordable()?'Armory open (B) · resupply incoming...':'Resupply incoming...'}`);
+    setStatus(`Wave ${wave} cleared! +◆${bm} +▲${bg}${savedMsg} — ${armoryAffordable()?'Armory open (B) · resupply incoming...':'Resupply incoming...'}`);
     SFX.play('clear');
     // Game-time sequence: frozen while paused, dropped by Restart/Load.
     after(1.5, ()=>{
@@ -6012,7 +6022,7 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
     { id:'strike', when:()=>wavePhase==='combat'&&ammo<=0&&airCD<=0&&!vikingActive, focus:['#cmd-air'], keys:['r'], title:'OUT OF AMMO',
       text:'Call an airstrike: press <kbd>R</kbd> or click STRIKE. A Viking fires a missile at every Zerg group and drops an ammo crate by the bunker — that crate is also this wave\'s resupply.' },
     { id:'cleared', when:()=>wavePhase==='cleared', focus:['#res-min','#res-gas'], title:'WAVE CLEARED',
-      text:'Kills and cleared waves pay minerals and vespene gas. A Marine runs out for the wave\'s supply crate (unless the Viking\'s crate already came in), the magazine is refilled, then the next wave comes. The game autosaves after every wave.' },
+      text:'Kills and cleared waves pay minerals and vespene gas, and the rounds you did not fire turn into gas, one for one. A Marine runs out for the wave\'s supply crate (unless the Viking\'s crate already came in), the magazine is refilled, then the next wave comes. The game autosaves after every wave.' },
     { id:'upgrade', after:'cleared', when:_canUpgrade, focus:['#cmd-dmg','#cmd-ammo'], keys:['1','2','3','4'], title:'UPGRADES',
       text:'You can afford an upgrade: press <kbd>1</kbd>–<kbd>4</kbd> or click a lit button — damage, armor, bunker hull, ammo storage.' },
     { id:'roster', after:'cleared', when:()=>wave>=2&&wavePhase!=='combat', focus:['#cmd-roster'], keys:['b'], title:'BUNKER ROSTER',
@@ -6219,7 +6229,7 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
         <b>GOAL</b><span>Hold the bunker against the Zerg swarm. Campaign: clear ${CFG.victory_wave} waves to win — that unlocks Endless mode.</span>
         <b>FIRE</b><span>Click the ground: every Marine and Ghost inside the bunker fires one volley at that spot, for one round (the Marauders fire on their own). Hold the button for full auto — it empties the magazine fast.</span>
         <b>AMMO</b><span>After each wave a Marine fetches a supply crate that refills the magazine. Out of ammo mid-wave? <kbd>R</kbd> calls a Viking: it fires missiles into the swarm and drops an ammo crate — one crate covers the wave.</span>
-        <b>MONEY</b><span>Kills and cleared waves pay minerals and gas. Spend them on upgrades <kbd>1</kbd>–<kbd>4</kbd> (damage, armor, hull, ammo) and on units in the roster <kbd>B</kbd>, which pauses the game.</span>
+        <b>MONEY</b><span>Kills and cleared waves pay minerals and gas, and the rounds left in the magazine when a wave is cleared turn into gas, one for one: a wave won on few rounds pays. Spend them on upgrades <kbd>1</kbd>–<kbd>4</kbd> (damage, armor, hull, ammo) and on units in the roster <kbd>B</kbd>, which pauses the game.</span>
         <b>UNITS</b><span>The bunker has 6 slots. <b>Marine</b> (1 slot): fires where you click, the cheapest. <b>Ghost</b> (2): fires where you click, +150% damage to Light; researches Snipe, which fires on its own. <b>Marauder</b> (2): fires on its own at the Zerg not slowed yet, a grenade that blasts and slows an area, double damage to Armored — every 3 grenades cost 1 round. You choose the unit that runs out for supply crates in the roster.</span>
         <b>POWERS</b><span><kbd>N</kbd> nuke from wave ${CFG.nuke_wave}. <kbd>T</kbd> Stimpack with six Marines (fewer with Super Stimpack's tiers), for Marines and Marauders. Bunker hull level 3: Shrike auto-turret and self-repair.</span>
         <b>ZERG</b><span>Zerglings: fast, Light, bite the hull, come in packs. Roaches from wave ${CFG.roach_wave}: Armored, spit acid from range. From wave ${CFG.metabolic_wave} the Zerglings run faster. Every third wave from the sixth is a <b>SWARM</b>: far more Zerglings, weaker, all at once — blasts and nukes earn their keep.</span>

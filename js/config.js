@@ -29,10 +29,11 @@ const BAL = {
   zcA: 2, zcB: 1.3, zcC: 0.2, zcLate: 9, rcK: 1.8,
   swarmCount: 1.25, swarmHp: 0.5,                     // a SWARM wave's Zerglings: more of them, each weaker (and worth less)
   lingHp0: 45, lingHpW: 14, lingHpLate: 10, lingDmg0: 8, lingDmgW: 1.6, lingSpeedMax: 0.108,   // (HP: lingHpLate a wave past 20)
-  lingMin0: 3, lingMinW: 0.85, lingGas0: 0.25, lingGasW: 0.32,
+  lingMin0: 3, lingMinW: 0.85, lingGas0: 0.25, lingGasW: 0.28,
   roachHp0: 180, roachHpW: 60, roachDmg0: 14, roachDmgW: 2.8, roachSpeedMax: 0.058,
-  roachMin0: 11, roachMinW: 2.4, roachGas0: 3, roachGasW: 0.95,
-  clearM0: 40, clearMW: 15, clearG0: 12, clearGW: 6, nightPay: 1.25,   // a wave cleared; by night it pays more
+  roachMin0: 11, roachMinW: 2.4, roachGas0: 3, roachGasW: 0.8,
+  clearM0: 40, clearMW: 15, clearG0: 12, clearGW: 5, nightPay: 1.25,   // a wave cleared; by night it pays more
+  ammoGas: 1,                                         // a round left when a wave is cleared turns into this much gas
   marauderMult: 2.2, ghostMult: 1.8,
   mgSplash: 0.8, mgInterval: 0.7,                     // Marauder grenades: the blast's share of a hit, seconds apart (radius: MG_RADIUS)
   mgSlow: [0.8, 0.6], mgSlowDur: [1, 1.5],            // their slow: speed left, seconds; [1]: with Concussive Shells
