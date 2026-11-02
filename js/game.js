@@ -4538,6 +4538,8 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
               fx: l => l<3 ? `${maxAmmo} → ${maxAmmo+10} rounds` : '' },
   };
   let _tipCmd=null;
+  // A price in a tooltip: the mineral and gas icons, red where it is short
+  const _tipCost=(m,g)=>`<div class="tip-c"><span class="m${minerals<m?' no':''}">${MIN_ICON}${m}</span><span class="g${gas<g?' no':''}">${GAS_ICON}${g}</span></div>`;
   function _renderTip(){
     const tip=$('cmd-tip'), info=CMD_INFO[_tipCmd];
     if(!tip||!info) return;
@@ -4552,7 +4554,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       if(l>=3) warn='FULLY UPGRADED';
       else {
         const [m,g]=costs[l];
-        cost=`<div class="tip-c"><span class="m${minerals<m?' no':''}">${MIN_ICON}${m}</span><span class="g${gas<g?' no':''}">${GAS_ICON}${g}</span></div>`;
+        cost=_tipCost(m,g);
         if(minerals<m||gas<g) warn='Need '+shortfallHTML(m,g)+' more';
       }
     }
@@ -4575,10 +4577,11 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       if(wave<CFG.nuke_wave) warn='Unlocks at wave '+CFG.nuke_wave;
       else if(_nukeInFlight) warn='Launch in progress';
       else {
-        const [nm,ng]=nukeCost(), price='◆'+nm+' ▲'+ng;
-        if(nukeCD>0) warn='Recharging — '+Math.ceil(nukeCD)+' s · next: '+price;
-        else if(minerals<nm||gas<ng) warn='Needs '+price;
-        else { warn='READY — '+price; ok=true; }
+        const [nm,ng]=nukeCost();   // the next one's price: the cost row, as an upgrade's
+        cost=_tipCost(nm,ng);
+        if(nukeCD>0) warn='Recharging — '+Math.ceil(nukeCD)+' s';
+        else if(minerals<nm||gas<ng) warn='Need '+shortfallHTML(nm,ng)+' more';
+        else { warn='READY'; ok=true; }
       }
     }
     _setHTML('cmd-tip', `<div class="tip-h"><span class="tip-t">${info.t}</span><span class="tip-k">${info.k}</span>${lv?`<span class="tip-lv">${lv}</span>`:''}</div>`+
