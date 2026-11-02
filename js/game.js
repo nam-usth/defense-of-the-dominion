@@ -7,7 +7,7 @@ const G = (() => {
   let W, H;
   let _logW = 0, _logH = 0; // logical (CSS) canvas dimensions — never multiplied by devicePixelRatio
 
-  let gfxQuality = 'HIGH'; // 'LOW' | 'HIGH'
+  let gfxQuality = (() => { try { const q = localStorage.getItem('dotd_gfx'); if (q === 'LOW' || q === 'HIGH') return q; } catch (e) {} return matchMedia('(pointer: coarse)').matches ? 'LOW' : 'HIGH'; })(); // 'LOW' | 'HIGH' (a phone starts on LOW)
   let _ambientLight, _sunLight, _fillLight, _bunkerLight, _fireLight, _muzzleLight, _gunLight, _nukeLight;
   let _gunI = 0;   // its strength before the night's share (muzzleFlash)
 
@@ -58,7 +58,10 @@ const G = (() => {
   // also lowers its angle as it comes in); Insert / Delete rotate the view 90°
   // left / right; Home resets. Zoom and rotation ease toward their targets.
   const CAM = { farDist: Math.hypot(22, 8), farElev: Math.atan2(22, 8),   // overview = the original (0, 22, 8)
-                nearDist: 6.5, nearElev: 0.62, nearLookY: 1.0 };
+                nearDist: 6.5, nearElev: 0.62, nearLookY: 1.0,
+                sideR: 13 };   // a view narrower than tall (a phone in portrait) still shows ±13 across the bunker (the Zerg spawn at 13.5–15)
+  // A touch screen (css/mobile.css): the words say "tap", a long press is the hover, two fingers zoom and turn the view
+  const TOUCH = matchMedia('(pointer: coarse)').matches;
   let _zoom = 0, _zoomT = 0, _camYaw = 0, _camYawT = 0;
   function updateCamera(dt) {
     const k = Math.min(1, dt * 9);
@@ -67,7 +70,9 @@ const G = (() => {
     if (Math.abs(_zoomT - _zoom) < 1e-4) _zoom = _zoomT;   // at rest (the ground's cache waits for that: _bakeGround)
     if (Math.abs(_camYawT - _camYaw) < 1e-4) _camYaw = _camYawT;
     const z = _zoom * _zoom * (3 - 2 * _zoom);                  // smoothstep
-    const dist = CAM.farDist + (CAM.nearDist - CAM.farDist) * z;
+    // portrait: back off along the same line until ±CAM.sideR fits across (1 on desktop and landscape)
+    const fit = Math.max(1, CAM.sideR / (CAM.farDist * Math.tan(camera.fov * Math.PI / 360) * camera.aspect));
+    const dist = (CAM.farDist + (CAM.nearDist - CAM.farDist) * z) * fit;
     const elev = CAM.farElev + (CAM.nearElev - CAM.farElev) * z;
     const ly = CAM.nearLookY * z, hz = Math.cos(elev) * dist;
     camera.position.set(Math.sin(_camYaw) * hz, ly + Math.sin(elev) * dist, Math.cos(_camYaw) * hz);
@@ -3897,7 +3902,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     });
     new Set(roster.filter(u=>u!=='marauder')).forEach(u=>SFX.play(u));   // one gunshot voice per unit type
     updateHUD();
-    if(ammo===0) setStatus('Out of ammo — R: Airstrike  N: Nuke');
+    if(ammo===0) setStatus(TOUCH?'Out of ammo — STRIKE or NUKE':'Out of ammo — R: Airstrike  N: Nuke');
   }
 
   // ── Marauders: a punisher grenade each every BAL.mgInterval s, on their own ──
@@ -3930,7 +3935,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       if (!t) { marauderReady[mi] = _gameT + 0.1; continue; }   // look again shortly
       if (_marauderShots % MG_PER_ROUND === 0) {                  // every third grenade costs a round
         if (ammo <= 0) { marauderReady[mi] = _gameT + 0.1; continue; }   // out of ammo: they hold fire too
-        if (--ammo === 0) setStatus('Out of ammo — R: Airstrike  N: Nuke');
+        if (--ammo === 0) setStatus(TOUCH?'Out of ammo — STRIKE or NUKE':'Out of ammo — R: Airstrike  N: Nuke');
         updateHUD();
       }
       _marauderShots++;
@@ -3973,7 +3978,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
     if(snipeUnlocked && trySnipe(e.clientX, e.clientY)) return;
     const pt=groundPt(e.clientX,e.clientY); if(!pt)return;
     if(ammo>0) shoot(pt.x,pt.z);
-    else setStatus('No ammo — R: Airstrike  N: Nuke');
+    else setStatus(TOUCH?'No ammo — STRIKE or NUKE':'No ammo — R: Airstrike  N: Nuke');
   });
   canvas.addEventListener('pointermove',e=>{
     if(!_hold||e.pointerId!==_hold.id) return;
@@ -3983,6 +3988,25 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
   });
   ['pointerup','pointercancel','lostpointercapture'].forEach(t=>canvas.addEventListener(t,e=>{ if(_hold&&e.pointerId===_hold.id) _hold=null; }));
   addEventListener('blur',()=>{ _hold=null; });
+  // Two fingers on the field: pinch = zoom, twist = rotate the view 90° (the first finger's volley has gone; it stops firing)
+  const _touch = new Map(); let _pinch = null;
+  canvas.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch') return;
+    _touch.set(e.pointerId, [e.clientX, e.clientY]);
+    if (_touch.size !== 2) return;
+    _hold = null;
+    const [[ax, ay], [bx, by]] = _touch.values();
+    _pinch = { d: Math.hypot(bx - ax, by - ay), a: Math.atan2(by - ay, bx - ax), turned: false };
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!_pinch || !_touch.has(e.pointerId)) return;
+    _touch.set(e.pointerId, [e.clientX, e.clientY]);
+    const [[ax, ay], [bx, by]] = _touch.values(), d = Math.hypot(bx - ax, by - ay), a = Math.atan2(by - ay, bx - ax);
+    zoomView((d - _pinch.d) * 0.004); _pinch.d = d;            // ~250 px of spread: overview → close-up
+    const da = Math.atan2(Math.sin(a - _pinch.a), Math.cos(a - _pinch.a));
+    if (!_pinch.turned && Math.abs(da) > 0.6) { rotateView(da > 0 ? 1 : -1); _pinch.turned = true; }
+  });
+  ['pointerup', 'pointercancel'].forEach(t => canvas.addEventListener(t, e => { _touch.delete(e.pointerId); if (_touch.size < 2) _pinch = null; }));
   function holdFire(dt){                            // live frames only: frozen while paused
     if(!_hold) return;
     _hold.t+=dt;
@@ -4545,7 +4569,7 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       else if(superStimUnlocked&&wavePhase==='combat') { warn='READY — Super Stimpack: no HP cost, repairs the bunker'+(hpLvl>=3?' (stacks with self-repair)':''); ok=true; }
       else if(wavePhase!=='combat') warn='Only during a wave';
       else { warn='READY'; ok=true; }
-      if(superStimUnlocked) warn+=stimAuto?'<br>Autocast ON — stims as you fire (right-click: off)':'<br>Right-click: autocast';
+      if(superStimUnlocked) warn+=stimAuto?`<br>Autocast ON — stims as you fire (${TOUCH?'hold the button':'right-click'}: off)`:`<br>${TOUCH?'Hold the button':'Right-click'}: autocast`;
     }
     if(_tipCmd==='nuke'){
       if(wave<CFG.nuke_wave) warn='Unlocks at wave '+CFG.nuke_wave;
@@ -4570,6 +4594,21 @@ ${_SPOT_SEEN}float spotSeen( vec3 p, vec3 l ) { mat3 r = mat3( viewMatrix ); vec
       tip.classList.add('on');
     });
     grid.addEventListener('mouseleave',()=>{ _tipCmd=null; tip.classList.remove('on'); });
+    // touch: a long press is the phone's hover (and on STIM, the right click: autocast)
+    let lp=null;
+    grid.addEventListener('pointerdown',e=>{
+      if(e.pointerType!=='touch') return;
+      const b=e.target.closest('.cmd-btn[data-cmd]'); if(!b) return;
+      lp={x:e.clientX,y:e.clientY,t:setTimeout(()=>{
+        lp.fired=true; _tipCmd=b.dataset.cmd; _renderTip(); tip.classList.add('on','peek');
+        if(b.dataset.cmd==='stim'&&superStimUnlocked) toggleStimAuto();
+      },450)};
+    });
+    grid.addEventListener('pointermove',e=>{ if(lp&&!lp.fired&&Math.hypot(e.clientX-lp.x,e.clientY-lp.y)>10){ clearTimeout(lp.t); lp=null; } });
+    const lpEnd=()=>{ if(!lp) return; clearTimeout(lp.t); if(lp.fired){ grid._swallow=true; tip.classList.remove('on','peek'); _tipCmd=null; } lp=null; };
+    ['pointerup','pointercancel'].forEach(t=>grid.addEventListener(t,lpEnd));
+    grid.addEventListener('click',e=>{ if(grid._swallow){ grid._swallow=false; e.stopPropagation(); e.preventDefault(); } },true);   // it was a peek, not a press
+    grid.addEventListener('contextmenu',e=>{ if(lp){ e.preventDefault(); e.stopPropagation(); } },true);
   })();
 
   // ── HDR post-processing ──────────────────────────────────────────────────
@@ -4842,7 +4881,8 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
     // ── Resize ───────────────────────────────────────────────────────────────
   function resize(){
     W=Math.max(1,window.innerWidth); H=window.innerHeight;
-    const consoleH=148, topBarH=32;
+    // the console's and the top bar's real heights (CSS decides them: 148 / 32 on desktop, other values on a phone)
+    const consoleH=document.getElementById('sc2-console')?.offsetHeight||148, topBarH=document.getElementById('topbar')?.offsetHeight||32;
     const gameH=Math.max(1,H-consoleH-topBarH); // a very short window gave a negative viewport
     // Store logical (CSS-pixel) dimensions BEFORE renderer.setSize, which will
     // overwrite canvas.width/height with physical pixels (logical × devicePixelRatio)
@@ -4860,6 +4900,8 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
     _postEnsure();
   }
   window.addEventListener('resize',resize); resize();
+  // A phone can drop the GL context (memory, a long background): keep the page alive, pause, and tell the player
+  renderer.domElement.addEventListener('webglcontextlost', e => { e.preventDefault(); if (phase === 'playing' && !_menuOpen) openMenu(); setStatus('Graphics were reset by the device — reload the page; the wave autosave brings the game back'); });
 
   // ── Crosshair ────────────────────────────────────────────────────────────
   // ── Enemy HP bars — 2D canvas billboard ────────────────────────────────────
@@ -5461,8 +5503,11 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
   }
 
   // ── Main loop ────────────────────────────────────────────────────────────
-  function loop(){
+  let _lastLoop = 0;
+  function loop(now){
     requestAnimationFrame(loop);
+    if (TOUCH && now - _lastLoop < 15) return;            // a phone: 60 frames a second at most (a 120 Hz screen doubles the heat for nothing)
+    _lastLoop = now;
     const dt=Math.min(clock.getDelta(),.05);
     updateCamera(dt); // also while paused: the player can look around
     placeSlotOverlay();
@@ -5475,7 +5520,8 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
       if(phase==='playing'){ syncEnemyPools(); syncBullets(); updateParticles(_glow,0); updateParticles(_smoke,0); }
       // Back on the title the night lifts (it is not game time: nothing else moves there)
       if(phase!=='playing'&&_dnT!==_dnTarget) updateDayNight(dt);
-      drawCH();tickPortrait(dt);renderFrame();return;
+      if(!(TOUCH&&_menuOpen)){ drawCH();tickPortrait(dt);renderFrame(); }   // (a phone's menu covers the screen: no 3D behind it)
+      return;
     }
     _gameT+=dt;
 
@@ -5992,7 +6038,8 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
   // The tour: welcome, the console, the ten command-card buttons (in card order,
   // with their tooltip text from CMD_INFO), ready
   const TOUR = [
-    { title:'WELCOME, COMMANDER', text:'The Zerg attack the bunker from every side, wave after wave. <b>Click on the ground</b> to fire: every unit inside the bunker shoots one volley at that spot. <b>Hold the button</b> for full auto. First, a look at your console.' },
+    { title:'WELCOME, COMMANDER', text:TOUCH?'The Zerg attack the bunker from every side, wave after wave. <b>Tap the ground</b> to fire: every unit inside the bunker shoots one volley at that spot. <b>Keep your finger down</b> for full auto; pinch to zoom. First, a look at your console.'
+                                           :'The Zerg attack the bunker from every side, wave after wave. <b>Click on the ground</b> to fire: every unit inside the bunker shoots one volley at that spot. <b>Hold the button</b> for full auto. First, a look at your console.' },
     { focus:['#hp-bar'], title:'BUNKER HP', text:'The squad\'s life. Below half the bunker burns; at zero it falls and the game is lost.' },
     { focus:['#ammo-bar'], title:'AMMO', text:'One round per volley — full auto empties it fast. The magazine is refilled after every wave.' },
     { focus:['#res-min','#res-gas'], title:'MINERALS &amp; GAS', text:'Paid for every kill and every cleared wave. Spend them on the command card and in the roster.' },
@@ -6194,7 +6241,7 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
     const auto=_readSave(AUTO_KEY), manual=_readSave(SAVE_KEY);
     _showCard(`<div class="ov-kicker">TERRAN DOMINION · BUNKER DEFENSE</div>
       <div class="ov-title">DEFENSE OF THE<br>DOMINION</div>
-      <div class="ov-sub">Hold the bunker. Click to fire — the Marauders lob grenades on their own.</div>
+      <div class="ov-sub">Hold the bunker. ${TOUCH?'Tap to fire, hold for full auto':'Click to fire'} — the Marauders lob grenades on their own.</div>
       <div class="ov-modes">
         <div class="ov-pair ov-theatre">
           <button class="ov-btn ${theatre==='daylight'?'on':''}" onclick="G.setTheatre('daylight')"><span><span class="ob-t">☀ DAYLIGHT</span><span class="ob-d">Sun and rain, never dark</span></span></button>
@@ -6227,7 +6274,7 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
       <div class="ov-title ov-title-sm">HOW TO PLAY</div>
       <div class="ov-howto">
         <b>GOAL</b><span>Hold the bunker against the Zerg swarm. Campaign: clear ${CFG.victory_wave} waves to win — that unlocks Endless mode.</span>
-        <b>FIRE</b><span>Click the ground: every Marine and Ghost inside the bunker fires one volley at that spot, for one round (the Marauders fire on their own). Hold the button for full auto — it empties the magazine fast.</span>
+        <b>FIRE</b><span>${TOUCH?'Tap':'Click'} the ground: every Marine and Ghost inside the bunker fires one volley at that spot, for one round (the Marauders fire on their own). Hold the button for full auto — it empties the magazine fast.</span>
         <b>AMMO</b><span>After each wave a Marine fetches a supply crate that refills the magazine. Out of ammo mid-wave? <kbd>R</kbd> calls a Viking: it fires missiles into the swarm and drops an ammo crate — one crate covers the wave.</span>
         <b>MONEY</b><span>Kills and cleared waves pay minerals and gas, and the rounds left in the magazine when a wave is cleared turn into gas, one for one: a wave won on few rounds pays. Spend them on upgrades <kbd>1</kbd>–<kbd>4</kbd> (damage, armor, hull, ammo) and on units in the roster <kbd>B</kbd>, which pauses the game.</span>
         <b>UNITS</b><span>The bunker has 6 slots. <b>Marine</b> (1 slot): fires where you click, the cheapest. <b>Ghost</b> (2): fires where you click, +150% damage to Light; researches Snipe, which fires on its own. <b>Marauder</b> (2): fires on its own at the Zerg not slowed yet, a grenade that blasts and slows an area, double damage to Armored — every 3 grenades cost 1 round. You choose the unit that runs out for supply crates in the roster.</span>
@@ -6343,6 +6390,7 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
   buildScene();
   warmNukeShaders(); ModelLoader.ready('nukeMissile').then(warmNukeShaders);   // (the warhead: once it has loaded)
   initPortrait(); // hologram builds itself as soon as the bunker model is cached
+  if (gfxQuality === 'LOW') setTimeout(() => applyGfx('LOW'), 0);   // (a phone, or the stored choice: the renderer was made for HIGH; after the closure has run)
   loop();
 
   // ── Bunker Roster System ─────────────────────────────────────────────────
@@ -6648,6 +6696,7 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
     }
   }
 
+  document.getElementById('pause-dim')?.addEventListener('click', () => { if (rosterPaused) closeRoster(); });   // (a phone: a tap beside the roster sheet)
   function openRoster() {
     const rp = document.getElementById('roster-panel');
     if (phase !== 'playing' && phase !== 'menu') return;
@@ -6955,6 +7004,7 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
 
   // ── Graphics quality ────────────────────────────────────────────────────────
   function applyGfx(q) {
+    try { localStorage.setItem('dotd_gfx', q); } catch (e) {}   // the choice is kept (a phone starts on LOW)
     if (q === gfxQuality && renderer.shadowMap.enabled === (q === 'HIGH')) { _syncGfxUI(); return; }
     gfxQuality = q;
     const hi = q === 'HIGH';
@@ -6997,7 +7047,8 @@ void main() { Ground G = groundDry( vGroundW.xz, -1.0, max( length( dFdx( vGroun
     if (!MENU_TABS.includes(t)) return;
     _menuTab = t;
     if (t === 'achievements') _syncAchUI();
-    document.querySelectorAll('.menu-tab').forEach(b => { const on = b.dataset.tab === t; b.classList.toggle('active', on); b.setAttribute('aria-selected', on); });
+    document.querySelectorAll('.menu-tab').forEach(b => { const on = b.dataset.tab === t; b.classList.toggle('active', on); b.setAttribute('aria-selected', on);
+      if (on && b.parentElement.scrollWidth > b.parentElement.clientWidth) b.parentElement.scrollLeft = b.offsetLeft - (b.parentElement.clientWidth - b.offsetWidth) / 2; });   // (a phone's tab row scrolls sideways; not scrollIntoView: it scrolls #gw too)
     document.querySelectorAll('.menu-page').forEach(p => p.classList.toggle('active', p.dataset.page === t));
   }
   function openMenu() {

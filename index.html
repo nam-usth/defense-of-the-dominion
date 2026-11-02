@@ -2,13 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Defense of the Dominion</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M16 2 29 9.5v13L16 30 3 22.5v-13z' fill='%230b1a2e' stroke='%234aa8ff' stroke-width='2'/%3E%3Cpath d='M10 19h12v-4l-6-4-6 4z' fill='%234aa8ff'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
-<link rel="stylesheet" href="css/hud.css?v=26">
+<link rel="stylesheet" href="css/hud.css?v=27">
+<link rel="stylesheet" href="css/mobile.css?v=1">   <!-- phones: portrait and landscape layouts, touch -->
 </head>
 <body>
 <!-- Icon sprite (24×24, stroke icons unless .solid) -->
@@ -252,6 +253,14 @@
               <kbd>Q · K</kbd><span>Graphics · sound</span>
               <kbd>M  ESC</kbd><span>This menu (pauses)</span>
             </div>
+                      <div class="menu-label" style="margin-top:12px">TOUCH</div>
+            <div class="keys">
+              <kbd>TAP</kbd><span>Fire a volley where you tap</span>
+              <kbd>HOLD</kbd><span>Keep your finger down: full auto</span>
+              <kbd>PINCH · TWIST</kbd><span>Zoom on the bunker · rotate the view 90°</span>
+              <kbd>LONG PRESS</kbd><span>A button's details (on STIM: autocast)</span>
+              <kbd>TAP BESIDE</kbd><span>Closes the roster</span>
+            </div>
           </section>
           <section class="menu-page" data-page="tutorial" role="tabpanel">
             <div class="menu-section">
@@ -333,6 +342,6 @@
 <script src="js/radial-fog.js?v=4"></script>
 <script src="js/config.js?v=22"></script>
 <script src="js/model-loader.js?v=8"></script>
-<script src="js/game.js?v=54"></script>
+<script src="js/game.js?v=55"></script>
 </body>
 </html>

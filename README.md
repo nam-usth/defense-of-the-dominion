@@ -20,7 +20,7 @@ Hold a Terran bunker against waves of Zerg. Every unit inside the bunker fires w
 
 On the web the StarCraft II assets (4.8 MiB gzipped) load in priority order — the bunker, then the Zerglings and the Marine, then the Roach, Viking and nuke, then the rest (`LOAD_STAGES` in `js/config.js`). The title screen shows the progress, and its start buttons wait for the first two stages (or *start now* skips the wait); everything else streams in while you play.
 
-To run it locally you need a desktop browser with WebGL 2 (Chrome, Edge or Firefox) and, for the local server, Node.js 18 or newer.
+It plays on phones too — see **On a phone** below. To run it locally you need a browser with WebGL 2 (Chrome, Edge, Firefox or Safari) and, for the local server, Node.js 18 or newer.
 
 ```bash
 npm start
@@ -75,6 +75,19 @@ The balance's numbers (`BAL` in `js/config.js`) are the desktop game's, tuned ag
 The command card and the upgrade chips use StarCraft II button art that follows the level: Infantry Weapons Level 0 → 3 for damage; Magrail Munitions (Lv0–1), Magfield Accelerator (Lv2) and Enhanced Munitions (Lv3) for ammo; Fleet Calldown for the airstrike, the co-op nuke, the Detector eye for the view. Research has its own art (Super Stimpack — which also replaces the STIM icon once researched —, Explosive Shrapnel Shells for Concussive Shells, Laser Targeting System for Snipe), and the Shrike turret shows as a Hi-Sec Auto Tracking chip that pulses red in overdrive.
 
 The **nuke** (N) unlocks at wave 5: a two-second warning, then the warhead streaks down the targeting laser from the sky, trailing one straight white-hot streak as in StarCraft; huge blast radius, 15 s cooldown, and a price: 100 gas, flat as in StarCraft II, and 100 + 20 × wave minerals, 1.6 times more for each one already this wave. Fleet logistics brings the minerals down, never under StarCraft II's 100. Its blast is StarCraft II's, the desktop game's value for value, timed from SC2's own (`Nuke.m3`) on one closed-form timeline (`nk` in `js/game.js`, as the desktop's `nuke_fx.h`). The flash blows the field out to white through the HDR exposure (the HUD stays clear) while a six-rayed star opens flat over the blast; then SC2's glow cards, a soft ball of light, swell round a soft fireball of overlapping fire that rises, flattens and rolls into the mushroom cloud. Its hottest parts burn past 1 and bloom. As in SC2 the fire never turns to a grey cloud: it dims and is gone by 5.4 s, and small embers keep rising off the crater until 9 s. Under the sprites, SC2's three rings of fire roll round the cap (1.1–4.7 s), streaks of flame are pulled in toward ground zero (1.4–3 s), and the air bends: a shock bubble swells out to the kill radius, a ripple runs over the ground behind it, and heat shimmers round the cap and over the crater until about 12 s. A ragged shock front races over the ground under a fading shock dome (33 units/s at the blast, past the kill radius at 0.7 s), a slow ring of burning ground spreads behind it (0.5–2.9 s), and a ring of dust with a burning leading edge rolls out past the kill radius. The Zerg within 3.5 of ground zero vanish in the fireball. The rest catch fire in the flash and run on, slowing and staggering, until the front flings them out, burning and charring, to bounce once and smoulder out where they land (no blood). The flames on the bodies share one budget: 40 bodies at full rate, 20 on GFX LOW. On LOW the cloud also has half the puffs (larger), with no shock dome or rings of fire, and the heat haze is worked out at a quarter of the resolution. Without the HDR targets (WebGL 1) the field whitens under a quad drawn over the scene and the fire stays under 1. The shock booms as it passes the bunker (sooner the closer the blast), then a long rumble. The blast leaves a small pit of scorched earth whose cracks open behind the front and glow deep red, cool and fade by 16 s (the last three are kept). Its fireball lights the field, and at night the dark lifts and settles back, out in the dark too. The nuke's shaders are compiled at load, so the first nuke does not stall a frame. A round hitting a Zerg spurts a little of its blood out the far side, and a dying Zerg leaves a low splash of blood (sparks flung up and out read as fireworks). Below 50% HP the bunker starts to burn.
+
+## On a phone
+
+<img src="docs/screenshots/phone.jpg" alt="Portrait on an iPhone 13" width="260" align="right">
+
+The game lays itself out for the screen (`css/mobile.css`; a desktop window is unchanged):
+
+- **Portrait** — the battlefield on top, framed so the whole ring the Zerg come from fits the width; under it a status strip (HP, ammo, minerals, gas, the status line, the bunker's slots); the 5 × 2 command card at the bottom, in reach of a thumb (every button ≥ 58 × 47 px, 72 × 60 on a 390 px phone). The roster opens as a sheet from the bottom (tap beside it to close it), the menu fills the screen with RESUME · RESTART · MAIN MENU at the bottom.
+- **Landscape** (a phone on its side) — StarCraft II's own shape: the field takes the full height, the status sits in the bottom-left corner and the command card in the bottom-right, both outside the battle ring.
+- **Touch** — tap the ground to fire a volley, keep your finger down for full auto; pinch to zoom on the bunker, twist two fingers to turn the view 90°; a long press on a command button shows its details (on STIM: switches autocast). Menu → CONTROLS lists them.
+- **For the phone** — it starts on GFX LOW (Q or Menu → Settings switches it; the choice is kept), runs at 60 frames a second at most, draws no 3D behind the full-screen menu, keeps clear of the notch and the home bar (`viewport-fit=cover`), and never scrolls, zooms or bounces under a finger. If the device drops the graphics context, the game pauses and asks for a reload (the wave autosave brings it back).
+
+Tested in Chromium's phone emulation (iPhone 13 and SE, Pixel 7, a 360 px Android, portrait and landscape); a real device is still the final word, Safari's toolbars above all.
 
 ## Controls
 
@@ -189,6 +202,7 @@ The field, its light and its weather are the desktop game's, with the same shade
 ```
 index.html              page markup (top bar, console, menus) — loads the scripts below in order
 css/hud.css             all styles
+css/mobile.css          the phone layouts (portrait, landscape) and touch rules, over hud.css
 js/lib/obj-loader.js    minimal OBJ parser (THREE.OBJLoader) — for the bunker, Shrike and Viking
 js/radial-fog.js        fog measured as distance from the bunker (the night vision circle), and the light's shared patches: cloud shadows, ambient by facing, sky reflections
 js/config.js            game constants (CFG), model and texture paths (ASSETS), ranks

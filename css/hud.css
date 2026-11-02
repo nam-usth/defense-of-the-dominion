@@ -13,12 +13,13 @@
   --text:#d8e8fb; --muted:#7f9cbc; --dim:#4c6683;
   --mineral:#56b8ff; --gas:#5ee69c; --gold:#ffd24a; --warn:#ffb347; --danger:#ff5a4f; --ok:#4ee07a;
   --cut:7px;
+  --con-h:148px; --top-h:32px;   /* the console and the top bar: resize() reads their real heights (css/mobile.css changes them on phones) */
 }
 body{background:var(--bg);color:var(--text);font-family:var(--ui);overflow:hidden;height:100vh;width:100vw}
 button{font-family:inherit}
-#gw{position:relative;width:100%;height:100vh;overflow:hidden}
-#gc{width:100%;height:calc(100% - 180px);margin-top:32px;display:block;cursor:crosshair;touch-action:none}   /* a held touch fires full auto, not a pan */
-#crosshair-canvas{position:absolute;left:0;right:0;top:32px;height:calc(100% - 180px);width:100%;pointer-events:none;z-index:5}
+#gw{position:relative;width:100%;height:100vh;overflow:hidden;overflow:clip;display:flow-root}   /* clip: a scrollIntoView must not scroll the HUD */
+#gc{width:100%;height:calc(100% - var(--con-h) - var(--top-h));margin-top:var(--top-h);display:block;cursor:crosshair;touch-action:none}   /* a held touch fires full auto, not a pan */
+#crosshair-canvas{position:absolute;left:0;right:0;top:var(--top-h);height:calc(100% - var(--con-h) - var(--top-h));width:100%;pointer-events:none;z-index:5}
 .num{font-family:var(--num);font-variant-numeric:tabular-nums}
 .ico{width:1em;height:1em;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .ico.solid{fill:currentColor;stroke:none}
@@ -56,7 +57,7 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 #tv-snd.off{color:var(--danger)}
 
 /* ── Bottom console ──────────────────────────────────────────────────────── */
-#sc2-console{position:absolute;bottom:0;left:0;right:0;height:148px;z-index:10;display:flex;
+#sc2-console{position:absolute;bottom:0;left:0;right:0;height:var(--con-h);z-index:10;display:flex;
   background:linear-gradient(180deg,#0f1f33 0,#081320 30%,#050c16 100%);
   border-top:2px solid var(--edge);box-shadow:0 -1px 0 rgba(130,200,255,.4),0 -8px 24px rgba(0,0,0,.6)}
 #sc2-console::before{content:'';position:absolute;left:0;right:0;top:0;height:1px;background:linear-gradient(90deg,transparent,rgba(120,200,255,.6),transparent)}
@@ -215,7 +216,7 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .cmd-btn.empty-slot:hover{border-color:#16283c;box-shadow:none;background:linear-gradient(180deg,#0a1524,#060d18)}
 
 /* Command tooltip */
-#cmd-tip{position:absolute;right:8px;bottom:156px;width:280px;z-index:30;pointer-events:none;opacity:0;transform:translateY(4px);transition:opacity .12s,transform .12s;
+#cmd-tip{position:absolute;right:8px;bottom:calc(var(--con-h) + 8px);width:280px;z-index:30;pointer-events:none;opacity:0;transform:translateY(4px);transition:opacity .12s,transform .12s;
   background:linear-gradient(180deg,rgba(14,30,52,.97),rgba(6,14,26,.98));border:1px solid var(--edge-hi);box-shadow:0 0 18px rgba(40,120,220,.35),0 6px 18px rgba(0,0,0,.6);
   padding:9px 12px 10px;clip-path:polygon(8px 0,100% 0,100% calc(100% - 8px),calc(100% - 8px) 100%,0 100%,0 8px)}
 #cmd-tip.on{opacity:1;transform:none}
@@ -438,7 +439,7 @@ img.ri{width:1.2em;height:1.2em;vertical-align:-.28em;margin-right:2px}   /* res
 .ov-tut{justify-content:center;margin:12px 0 10px;font-size:13px}
 
 /* ── Tutorial hint (pauses the game) ──────────────────────────────────────── */
-#tut-box{display:none;position:absolute;left:50%;bottom:160px;transform:translateX(-50%);z-index:28;width:min(480px,calc(100% - 24px));padding:11px 16px 12px;
+#tut-box{display:none;position:absolute;left:50%;bottom:calc(var(--con-h) + 12px);transform:translateX(-50%);z-index:28;width:min(480px,calc(100% - 24px));padding:11px 16px 12px;
   background:linear-gradient(180deg,rgba(16,32,54,.97),rgba(6,13,24,.97));border:1px solid var(--gold);box-shadow:0 0 26px rgba(255,200,60,.22),0 10px 30px rgba(0,0,0,.65);
   clip-path:polygon(12px 0,100% 0,100% calc(100% - 12px),calc(100% - 12px) 100%,0 100%,0 12px)}
 #tut-box.open{display:block;animation:tutIn .18s ease-out}
